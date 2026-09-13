@@ -7,8 +7,13 @@
 use std::{cell::Cell, rc::Rc};
 
 use incular_scroll::{
-    MetricOwner, MetricWriteError, ScrollController, ScrollNotificationType, ScrollPhysics,
+    AxisExtents, MetricOwner, MetricWriteError, ScrollController, ScrollNotificationType,
+    ScrollPhysics,
 };
+
+fn extents(content: f32, viewport: f32) -> AxisExtents {
+    AxisExtents::new(content, viewport, ScrollPhysics::default())
+}
 
 fn notification_log(
     controller: &ScrollController,
@@ -361,6 +366,182 @@ fn dropped_lease_frees_the_controller_for_reattachment() {
         .expect("new lease publishes");
     assert_eq!(controller.max_offset(), 400.);
     assert!(renewed.release());
+}
+
+#[test]
+fn pair_claim_during_first_dispatch_leaves_both_committed() {
+    // A horizontal listener claiming the vertical controller mid-flight
+    // cannot disturb the pair: both states committed before either axis
+    // dispatched, so the publication succeeds and both geometries land —
+    // with the listener's fresh claim recorded on the vertical axis.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let vertical_for_listener = vertical.clone();
+    let claimed = Rc::new(std::cell::RefCell::new(None));
+    let claimed_for_listener = claimed.clone();
+    let _guard = horizontal.add_listener(move |notification| {
+        if notification.kind == ScrollNotificationType::Metrics
+            && claimed_for_listener.borrow().is_none()
+        {
+            // Retained: a dropped handle would tear itself down, so the
+            // claim lives in the slot past the callback.
+            *claimed_for_listener.borrow_mut() = vertical_for_listener.try_attach(owner(9)).ok();
+        }
+        false
+    });
+    ScrollController::update_extent_pair(
+        &horizontal,
+        extents(300., 100.),
+        &vertical,
+        extents(500., 100.),
+    )
+    .expect("pair commits before callbacks run");
+    assert_eq!(horizontal.max_offset(), 200.);
+    assert_eq!(vertical.max_offset(), 400.);
+    let handle = claimed
+        .borrow_mut()
+        .take()
+        .expect("listener claimed during first dispatch");
+    assert_eq!(vertical.metric_owner(), Some(9));
+    assert_eq!(vertical.attachment_id(), Some(handle.id()));
+    assert!(handle.release());
+}
+
+#[test]
+fn pair_listener_sees_the_committed_pair() {
+    // Atomic commitment: when the first axis dispatches, both records
+    // already hold the new pair — listeners never observe a half-written
+    // publication.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let seen = Rc::new(Cell::new((0f32, 0f32)));
+    let seen_for_listener = seen.clone();
+    let horizontal_for_listener = horizontal.clone();
+    let vertical_for_listener = vertical.clone();
+    let _guard = horizontal_for_listener
+        .clone()
+        .add_listener(move |notification| {
+            if notification.kind == ScrollNotificationType::Metrics {
+                seen_for_listener.set((
+                    horizontal_for_listener.content_extent(),
+                    vertical_for_listener.content_extent(),
+                ));
+            }
+            false
+        });
+    ScrollController::update_extent_pair(
+        &horizontal,
+        extents(300., 100.),
+        &vertical,
+        extents(500., 100.),
+    )
+    .expect("free pair publishes");
+    assert_eq!(seen.get(), (300., 500.));
+}
+
+#[test]
+fn pair_reentrant_update_remains_valid() {
+    // Reentrant listeners may rewrite either controller mid-dispatch —
+    // borrows released before callbacks, so no lock conflicts — and the
+    // paired call still succeeds; the last writer wins as documented.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let vertical_for_listener = vertical.clone();
+    let _guard = horizontal.add_listener(move |notification| {
+        if notification.kind == ScrollNotificationType::Metrics {
+            vertical_for_listener
+                .update_extents(999., 111.)
+                .expect("free controller accepts reentrant write");
+        }
+        false
+    });
+    ScrollController::update_extent_pair(
+        &horizontal,
+        extents(300., 100.),
+        &vertical,
+        extents(500., 100.),
+    )
+    .expect("reentrant dispatch stays valid");
+    assert_eq!(horizontal.content_extent(), 300.);
+    assert_eq!(vertical.content_extent(), 999.);
+    assert_eq!(vertical.viewport_extent(), 111.);
+}
+
+#[test]
+fn pair_initially_rejected_axis_leaves_both_unchanged() {
+    // Validation precedes both commits: an owned horizontal axis fails
+    // the pair with the vertical record (extents, offset, revision)
+    // exactly as it was, and nothing dispatched anywhere.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let (horizontal_log, _horizontal_guard) = notification_log(&horizontal);
+    let (vertical_log, _vertical_guard) = notification_log(&vertical);
+    vertical
+        .update_extents(360., 200.)
+        .expect("free vertical publishes");
+    assert!(vertical.jump_to(20.));
+    let horizontal_revision = horizontal.revision();
+    let vertical_revision = vertical.revision();
+    horizontal_log.borrow_mut().clear();
+    vertical_log.borrow_mut().clear();
+    let attachment = horizontal.try_attach(owner(3)).expect("free axis attaches");
+    let error = ScrollController::update_extent_pair(
+        &horizontal,
+        extents(50., 50.),
+        &vertical,
+        extents(60., 60.),
+    )
+    .unwrap_err();
+    assert_eq!(error.owner_tree(), Some(3));
+    assert_eq!(horizontal.revision(), horizontal_revision);
+    assert_eq!(vertical.content_extent(), 360.);
+    assert_eq!(vertical.viewport_extent(), 200.);
+    assert_eq!(vertical.offset(), 20.);
+    assert_eq!(vertical.revision(), vertical_revision);
+    assert_eq!(vertical.metric_owner(), None);
+    assert!(horizontal_log.borrow().is_empty());
+    assert!(vertical_log.borrow().is_empty());
+    assert!(attachment.release());
+}
+
+#[test]
+fn pair_same_controller_alias_rejection_is_mutation_free() {
+    // One controller cannot drive two positions: aliasing rejects before
+    // borrowing or mutating, leaving revision, geometry, ownership, and
+    // silence exactly as found — even when already attached, where the
+    // alias check still runs first.
+    let controller = ScrollController::new();
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
+    let revision = controller.revision();
+    let (log, _guard) = notification_log(&controller);
+    log.borrow_mut().clear();
+    let error = ScrollController::update_extent_pair(
+        &controller,
+        extents(50., 50.),
+        &controller,
+        extents(60., 60.),
+    )
+    .unwrap_err();
+    assert_eq!(error, MetricWriteError::AliasedController);
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.revision(), revision);
+    assert_eq!(controller.metric_owner(), None);
+    assert!(log.borrow().is_empty());
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    let error = ScrollController::update_extent_pair(
+        &controller,
+        extents(50., 50.),
+        &controller,
+        extents(60., 60.),
+    )
+    .unwrap_err();
+    assert_eq!(error, MetricWriteError::AliasedController);
+    assert!(attachment.release());
 }
 
 #[test]

@@ -1,6 +1,12 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
-use crate::{controller::ScrollController, physics::ScrollPhysics};
+use crate::{
+    controller::ScrollController,
+    physics::{ExtentPublication, ScrollPhysics},
+};
 
 /// Process-wide sequence minting attachment identities. Allocation is
 /// checked: exhaustion panics explicitly rather than wrapping, so an
@@ -52,6 +58,10 @@ pub enum MetricWriteError {
         /// The owning tree, for diagnostics only.
         owner_tree: u64,
     },
+    /// Both paired axes name the same controller, which cannot drive two
+    /// positions. Rejected before borrowing or mutating either state, so
+    /// nothing was written and nothing was claimed.
+    AliasedController,
 }
 
 impl MetricWriteError {
@@ -66,7 +76,7 @@ impl MetricWriteError {
     #[must_use]
     pub fn owner_tree(&self) -> Option<u64> {
         match *self {
-            Self::StaleAttachment => None,
+            Self::StaleAttachment | Self::AliasedController => None,
             Self::AttachedOwner { owner_tree } => Some(owner_tree),
         }
     }
@@ -83,6 +93,10 @@ impl std::fmt::Display for MetricWriteError {
                 f,
                 "scroll controller is owned by tree-{owner_tree}: \
                  refusing unattached extent publication"
+            ),
+            Self::AliasedController => write!(
+                f,
+                "paired axes name the same scroll controller, which cannot drive two positions"
             ),
         }
     }
@@ -259,6 +273,166 @@ impl MetricAttachment {
             self.controller.abort_activity();
         }
     }
+}
+
+/// One axis of a paired metric publication: the geometry one controller
+/// position publishes in a two-axis layout pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AxisExtents {
+    /// Measured content extent along the axis.
+    pub content: f32,
+    /// Viewport extent along the axis.
+    pub viewport: f32,
+    /// Range policy applied to the axis.
+    pub physics: ScrollPhysics,
+}
+
+impl AxisExtents {
+    /// Bundles one axis publication. Framework-internal alongside the
+    /// paired operations below.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(content: f32, viewport: f32, physics: ScrollPhysics) -> Self {
+        Self {
+            content,
+            viewport,
+            physics,
+        }
+    }
+}
+
+impl ScrollController {
+    /// Paired unattached publication: validates both controllers before
+    /// committing either, so a rejection leaves the pair exactly as it
+    /// was. Both states commit under their locks with no callbacks in
+    /// between; borrows release before either axis dispatches.
+    /// Framework-internal: two-dimensional models publish here while
+    /// free; attached viewports use
+    /// [`publish_attached_pair`](Self::publish_attached_pair).
+    #[doc(hidden)]
+    pub fn update_extent_pair(
+        horizontal: &ScrollController,
+        horizontal_extents: AxisExtents,
+        vertical: &ScrollController,
+        vertical_extents: AxisExtents,
+    ) -> Result<(), MetricWriteError> {
+        let (horizontal_effects, vertical_effects) = commit_extent_pair(
+            horizontal,
+            horizontal_extents,
+            vertical,
+            vertical_extents,
+            PairAuthority::Unattached,
+        )?;
+        horizontal.finish_extent_publication(horizontal_effects);
+        vertical.finish_extent_publication(vertical_effects);
+        Ok(())
+    }
+
+    /// Paired attached publication: both handles must be their
+    /// controllers' live attachments (each verified against its own
+    /// controller), or nothing commits. Framework-internal: the retained
+    /// tree lends its axis pair for the call.
+    #[doc(hidden)]
+    pub fn publish_attached_pair(
+        horizontal: &ScrollController,
+        horizontal_lease: &MetricAttachment,
+        horizontal_extents: AxisExtents,
+        vertical: &ScrollController,
+        vertical_lease: &MetricAttachment,
+        vertical_extents: AxisExtents,
+    ) -> Result<(), MetricWriteError> {
+        let (horizontal_effects, vertical_effects) = commit_extent_pair(
+            horizontal,
+            horizontal_extents,
+            vertical,
+            vertical_extents,
+            PairAuthority::Attached(horizontal_lease, vertical_lease),
+        )?;
+        horizontal.finish_extent_publication(horizontal_effects);
+        vertical.finish_extent_publication(vertical_effects);
+        Ok(())
+    }
+}
+
+/// Which authority a paired commit validates. Unattached pairs require
+/// both controllers free; attached pairs require each handle live on
+/// its own controller.
+#[derive(Clone, Copy)]
+enum PairAuthority<'a> {
+    Unattached,
+    Attached(&'a MetricAttachment, &'a MetricAttachment),
+}
+
+/// Validates controller identities and both authorities, then commits
+/// both states with no application callbacks or restoration effects in
+/// between. Returns the per-axis publications for the caller to finish
+/// after all state borrows release.
+///
+/// Notification ordering versus atomic commitment: both states are final
+/// before either axis dispatches, so a listener observing the first
+/// axis's notification already sees the committed pair. Dispatch order
+/// is horizontal-then-vertical, and reentrant listeners may change
+/// either controller before its turn — historical notifications then
+/// describe superseded states, which is expected: the commit was
+/// atomic, the callbacks never are.
+fn commit_extent_pair(
+    horizontal: &ScrollController,
+    horizontal_extents: AxisExtents,
+    vertical: &ScrollController,
+    vertical_extents: AxisExtents,
+    authority: PairAuthority<'_>,
+) -> Result<(ExtentPublication, ExtentPublication), MetricWriteError> {
+    // Identity first: one controller cannot drive two positions. This
+    // runs before borrowing or mutating, so aliasing never deadlocks
+    // the two state borrows below and never mutates.
+    if Rc::ptr_eq(&horizontal.state, &vertical.state) {
+        return Err(MetricWriteError::AliasedController);
+    }
+    // Fixed borrow order on distinct states; both guards drop before any
+    // callback below can reenter either controller.
+    let mut horizontal_state = horizontal.state.borrow_mut();
+    let mut vertical_state = vertical.state.borrow_mut();
+    match authority {
+        PairAuthority::Unattached => {
+            if let Some(live) = horizontal_state.metric_attachment {
+                return Err(MetricWriteError::attached(live.tree));
+            }
+            if let Some(live) = vertical_state.metric_attachment {
+                return Err(MetricWriteError::attached(live.tree));
+            }
+        }
+        PairAuthority::Attached(horizontal_lease, vertical_lease) => {
+            // Each handle must name its own controller as well as the
+            // live attachment: a crossed pair refuses instead of
+            // publishing to the wrong record.
+            if !Rc::ptr_eq(&horizontal_lease.controller.state, &horizontal.state)
+                || !Rc::ptr_eq(&vertical_lease.controller.state, &vertical.state)
+            {
+                return Err(MetricWriteError::StaleAttachment);
+            }
+            match horizontal_state.metric_attachment {
+                Some(live) if live.id == horizontal_lease.id => {}
+                _ => return Err(MetricWriteError::StaleAttachment),
+            }
+            match vertical_state.metric_attachment {
+                Some(live) if live.id == vertical_lease.id => {}
+                _ => return Err(MetricWriteError::StaleAttachment),
+            }
+        }
+    }
+    let horizontal_effects = ScrollController::commit_extent_state(
+        &mut horizontal_state,
+        horizontal_extents.content,
+        horizontal_extents.viewport,
+        horizontal_extents.physics,
+    );
+    let vertical_effects = ScrollController::commit_extent_state(
+        &mut vertical_state,
+        vertical_extents.content,
+        vertical_extents.viewport,
+        vertical_extents.physics,
+    );
+    Ok((horizontal_effects, vertical_effects))
 }
 
 /// The controller's current owner record: attachment identity plus the
