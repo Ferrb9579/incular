@@ -232,29 +232,32 @@ impl WidgetTree {
         let horizontal = viewport.horizontal_controller();
         let vertical = viewport.vertical_controller();
         self.claim_2d_viewport(element_id, &horizontal, &vertical)?;
-        // Lend the owned pair to the model call: owned handles need no
-        // map borrow, and a panic drops them through silent teardown
-        // instead of stranding the owner slots. The pair is restored
-        // before any error propagates, so the next layout reuses it.
-        let leases = self
+        // Lend the stored pair in place: disjoint field borrows keep the
+        // leases in the map for the whole model call, so a panic unwinds
+        // with the attachment pair preserved — no guard, no reinsert, no
+        // teardown. Policy: unwind preserves the pair; a retry reuses it
+        // through the claim fast path. Only this tree releases its
+        // handles, and no releasing code runs between claim and
+        // publication, so the lent pair stays live for the call.
+        let pair = self
             .scroll_attachments
-            .remove(&element_id)
+            .get(&element_id)
             .expect("axis pair claimed above is live");
-        let [first, second] = leases.as_slice() else {
+        let [first, second] = pair.as_slice() else {
             unreachable!("2D claim stores exactly the axis pair");
         };
-        let output = self
-            .two_dimensional_state_live_mut(id)
-            .viewport
-            .as_mut()
+        let layout = self
+            .renders
+            .get_mut(id.0)
+            .and_then(|render| render.two_dimensional_state_mut())
+            .and_then(|state| state.viewport.as_mut())
             .expect("two-dimensional render must own retained viewport")
             .layout_with_attachments(
                 viewport_size,
                 |_, child_constraints| child_constraints.biggest(),
                 (first, second),
-            );
-        self.scroll_attachments.insert(element_id, leases);
-        let layout = output.expect("lent axis pair stays live for the call");
+            )
+            .expect("lent axis pair stays live for the call");
         let desired = layout
             .children
             .iter()

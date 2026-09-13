@@ -811,6 +811,90 @@ fn two_dimensional_rejected_layout_preserves_axis_context() {
 }
 
 #[test]
+fn two_dimensional_layout_panic_preserves_the_pair_for_retry() {
+    // A panic inside 2D layout unwinds with the attachment pair
+    // preserved: owner slots still name this tree, identities unchanged,
+    // open activities untouched — no silent teardown fired, no claim
+    // orphaned. A retry reuses the pair with no duplicates and no
+    // cancelled tenures.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let healthy = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let panicking = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| -> Option<Widget> {
+            panic!("application measurement failure")
+        })
+    };
+    let view = |delegate: TwoDimensionalChildDelegate<Widget>| -> Widget {
+        let viewport: Widget =
+            TwoDimensionalViewport::new(delegate, horizontal.clone(), vertical.clone(), 20., 30.)
+                .into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(view(healthy()))
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    assert!(vertical.begin_activity());
+    let horizontal_attachment = horizontal.attachment_id().expect("H owned");
+    let vertical_attachment = vertical.attachment_id().expect("V owned");
+    // Swapping in the failing delegate clears the child cache, so the
+    // next layout actually measures — straight into the panic.
+    tree.update(root, view(panicking())).expect("update");
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+    }));
+    assert!(outcome.is_err(), "measurement panic propagates");
+    // Pair preserved across the unwind: same owners, same identities,
+    // activities still open — nothing torn down, nothing orphaned.
+    assert_eq!(horizontal.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(vertical.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert_eq!(vertical.attachment_id(), Some(vertical_attachment));
+    assert!(
+        !horizontal.begin_activity() && !vertical.begin_activity(),
+        "open tenures survive the unwind"
+    );
+    // Retry with a healthy delegate re-measures fully, reuses the pair,
+    // and republishes both axes.
+    tree.update(root, view(healthy())).expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("retry layout");
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert_eq!(vertical.attachment_id(), Some(vertical_attachment));
+    assert_eq!(horizontal.content_extent(), 360.);
+    assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.max_offset(), 260.);
+    assert_eq!(vertical.max_offset(), 100.);
+    // No duplicate attachments: a probe claim is still rejected, and the
+    // surviving tenures close normally.
+    let mut probe = WidgetTree::new();
+    probe
+        .mount(view(healthy()))
+        .expect("mount defers attachment");
+    match probe
+        .layout(Constraints::tight(Size::new(100., 100.)))
+        .unwrap_err()
+    {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner: _,
+            attempted: _,
+        } => assert_eq!(owner_tree, tree.tree_id()),
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    assert!(horizontal.end_activity());
+    assert!(vertical.end_activity());
+}
+
+#[test]
 fn two_dimensional_delegate_and_constraints() {
     // from_rows derives counts from the grid shape.
     let delegate =
