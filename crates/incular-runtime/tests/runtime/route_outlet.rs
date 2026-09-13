@@ -51,9 +51,13 @@ fn repaint(harness: &mut OutletHarness) -> DisplayList {
 }
 
 fn paints(commands: &[PaintCommand], color: Color) -> bool {
-    commands
-        .iter()
-        .any(|command| matches!(command, PaintCommand::Rect { color: c, .. } if *c == color))
+    commands.iter().any(|command| match command {
+        PaintCommand::Rect { color: c, .. } => *c == color,
+        PaintCommand::RRect { brush, .. } => {
+            matches!(brush, incular_rendering::Brush::Solid(c) if *c == color)
+        }
+        _ => false,
+    })
 }
 
 fn tap(harness: &mut OutletHarness, x: f32, y: f32) {
@@ -683,14 +687,34 @@ fn outlet_rejects_overlay_routes_explicitly() {
             Widget::box_(Size::new(40., 40.), GREEN),
         )]),
     );
+    let overlay_id = navigator.current().expect("overlay route").id;
+    // Presenting fails typed before mounting or committing anything: the
+    // overlay content is portal-managed, and silent omission is not an
+    // option. Ordinary state stays exactly as it was.
+    let error = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("overlay stacks are rejected");
+    assert_eq!(
+        error,
+        OutletError::UnsupportedPresentation {
+            routes: vec![overlay_id]
+        }
+    );
+    assert!(harness.runtime.focused_element().is_none());
+    assert!(
+        harness
+            .outlet
+            .borrow()
+            .route_task_scope(overlay_id)
+            .is_none()
+    );
+    // Removing the offending route recovers the outlet immediately.
+    navigator.pop();
     present(&mut harness);
-    // The overlay route is active but never outlet-mounted: its content
-    // paints nowhere here (a portal host owns it), while ordinary content
-    // is unaffected.
-    let commands = repaint(&mut harness).commands().to_vec();
-    assert!(paints(&commands, RED));
-    assert!(!paints(&commands, GREEN));
-    assert_eq!(navigator.routes().len(), 2);
+    assert_eq!(navigator.routes().len(), 1);
 }
 
 #[test]
@@ -1295,7 +1319,7 @@ fn outlet_rebuild_failure_consumes_nothing() {
         Ok(_) => panic!("duplicate keys must fail the rebuild"),
     };
     assert!(
-        matches!(error, TreeError::DuplicateKey { .. }),
+        matches!(error, OutletError::Frame(TreeError::DuplicateKey { .. })),
         "unexpected failure: {error:?}"
     );
     // Nothing consumed at the integration level: A still active and bound,
@@ -1535,6 +1559,105 @@ fn outlet_restore_schedules_followup_for_stale_visuals() {
     assert!(semantics_marks_focused(&harness.runtime, "a-btn"));
     tab_until(&mut harness.runtime, &node_plain);
     assert!(harness.runtime.focused_element().is_some());
+}
+
+#[test]
+fn outlet_covered_veil_deactivates_with_its_route() {
+    // A retained covered modal keeps its content mounted but must not keep
+    // an active veil: no veil paint, no veil hit interception, no veil
+    // semantics while covered. Uncovering reactivates both together.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let taps_a = Rc::new(Cell::new(0_u32));
+    let taps_c = Rc::new(Cell::new(0_u32));
+    navigator.push(
+        Route::new("a", tappable_rect(RED, 200., 200., &taps_a))
+            .presentation(RoutePresentation::page()),
+    );
+    navigator.push(
+        Route::new("b", Widget::box_(Size::new(40., 40.), BLUE)).modal(ModalBarrier {
+            color: GREEN,
+            ..Default::default()
+        }),
+    );
+    navigator.push(Route::new("c", tappable_rect(RED, 200., 200., &taps_c)));
+    present(&mut harness);
+    let commands = repaint(&mut harness).commands().to_vec();
+    assert!(paints(&commands, RED));
+    assert!(!paints(&commands, GREEN), "covered veil paints nothing");
+    assert!(!paints(&commands, BLUE));
+    // Taps land on the cover itself: with the veil gone, nothing
+    // intercepts above it (a present veil would absorb the tap and neither
+    // counter would move).
+    tap(&mut harness, 100., 100.);
+    assert_eq!(taps_c.get(), 1);
+    assert_eq!(taps_a.get(), 0);
+    // Uncover: veil and content reactivate together.
+    navigator.pop();
+    present(&mut harness);
+    let commands = repaint(&mut harness).commands().to_vec();
+    eprintln!("UNCOVER DUMP: {commands:#?}");
+    assert!(paints(&commands, GREEN));
+    assert!(paints(&commands, BLUE));
+}
+
+#[test]
+fn outlet_close_window_cancels_bindings_and_releases() {
+    // Real Application::close_window through an adopted runtime: the
+    // window-scope cancel cascades into route bindings through existing
+    // ownership (no outlet-specific close path, no test-only accessor),
+    // and teardown releases builders, registrations, records, and
+    // bindings per policy — proven by the outlet actually dropping.
+    let navigator = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    // Bind under the real window scope so close reaches the binding.
+    let parent = runtime.window_task_scope();
+    let outlet = Rc::new(RefCell::new(RouteOutlet::new(&navigator, &parent)));
+    let outlet_for_build = outlet.clone();
+    let root = runtime.tree().root().expect("root");
+    runtime
+        .register_builder(root, move || {
+            Column::new(vec![SizedBox::from_dimensions(
+                Some(200.),
+                Some(200.),
+                Some(outlet_for_build.borrow().widget()),
+            )])
+            .into()
+        })
+        .expect("builder registers");
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet, &mut runtime).expect("outer mounted");
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    RouteOutlet::present_frame(
+        &outlet,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("present");
+    tab_until(&mut runtime, &node_a);
+    let id = navigator.current().expect("mounted").id;
+    let scope = outlet.borrow().route_task_scope(id).expect("bound");
+    assert!(!scope.is_cancelled());
+    let weak_outlet = Rc::downgrade(&outlet);
+    let mut app = Application::from_runtime(runtime, |_| {});
+    app.close_window(app.primary_window());
+    assert!(
+        scope.is_cancelled(),
+        "window close cascades through existing ownership"
+    );
+    // Teardown releases everything the outlet owned: builders (registered
+    // closures), nested registrations, focus records, and bindings. The
+    // weak handle dying proves no retainer survives close plus drop.
+    drop(outlet);
+    drop(app);
+    assert!(
+        weak_outlet.upgrade().is_none(),
+        "outlet fully released after close and drop"
+    );
+    assert!(scope.is_cancelled());
 }
 
 #[test]

@@ -1,11 +1,12 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: complete — reopened twice for production integration, re-closed
-again: presentation policy, single-operation frame drive, and
-nearest-outlet ownership are now established alongside the earlier
-outlet/panic/save-ownership work. Modal focus containment stays
-explicitly separate future work (removing `focus_trap` implemented
-nothing). Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
+Status: complete — reopened for hardening packages A–D, then re-closed:
+frame transitions are transactional, restoration runs inside an explicit
+frame contract, nested attachment has an owned lifecycle, and unsupported
+configurations plus teardown fail or release explicitly. Modal focus
+containment stays explicitly separate future work (removing `focus_trap`
+implemented nothing). Audit Q04/Q05; specializes plan 15 W4. Depends on
+plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
 `RouteEntry` collection replaces the parallel routes/restorable_routes vectors,
@@ -193,6 +194,38 @@ the outlet composes (no second presentation engine); event `Route`
 snapshots carry no lifetime handle; supported usage runs through the
 outlet drive contract, so cleanup needs no undocumented maintenance
 sequence — manual helpers stay as documented lower-level coverage.
+
+Hardening pass (reopen → re-close):
+- Frame transitions are transactional: pending capture (outgoing route,
+  incoming route, saved focus read once) versus committed records and
+  presented identity. Rebuild/frame failures keep the capture for retry
+  without re-saving; navigation mid-frame or removal abandons it without
+  touching records. Proved by rebuild-failure, frame-panic, mid-build
+  navigation, and mid-build removal tests with exact focus/binding
+  state. Found on the way: failed tree updates may leave partial state
+  (update_existing is not transactional) — recovery heals through the
+  next present, pinned by test.
+- Restoration runs inside an explicit frame contract: build/layout mount
+  first, reconcile restores after, and the restore flags follow-up work
+  through the existing scheduler instead of silently stale visuals. No
+  unconditional extra frame, no second loop, no new hook (set_focus
+  already flags). Pinned across styling (focus ring), semantics
+  (focused node), keyboard target, and slot, plus deferred and
+  autofocus scheduling.
+- Nested attachment has an owned lifecycle: weak registrations that
+  prune on present (bounded across replacement, released on unmount),
+  one-frame cascaded driving (no per-outlet frames), and a supported
+  `nested_widget` composition helper so hosts never assemble
+  stateful-builder slots by hand. The `revision()` handle was removed
+  rather than exposed for bookkeeping. Proven by replacement-bounded,
+  detach-release, and cascade-only nested tests.
+- Unsupported and teardown behavior is explicit: overlay stacks fail
+  typed (`OutletError::UnsupportedPresentation`) before changing
+  anything; covered veils deactivate with their routes; real
+  `Application::close_window` cancels bindings through existing
+  ownership and releases builders, registrations, records, and bindings
+  (proven by handle death, with no test-only window accessor).
+  Panic policy re-reviewed unchanged.
 
 Second production-integration pass (reopen → re-close):
 - Presentation is an explicit `OutletPlacement` policy, not an

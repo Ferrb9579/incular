@@ -94,6 +94,52 @@ struct PendingTransition {
     saved: Option<ElementId>,
 }
 
+/// A route outlet refusing to present.
+///
+/// Returned before changing any mounted or committed state, so hosts can
+/// fix the stack (portal-mount the listed routes, or keep them out of
+/// outlet-driven navigators) instead of debugging silently omitted content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutletError {
+    /// One or more routes use portal-managed overlay presentations, which
+    /// the outlet never mounts. Carries the offending route ids.
+    UnsupportedPresentation { routes: Vec<RouteId> },
+    /// The underlying rebuild or frame failed.
+    Frame(TreeError),
+}
+
+impl std::fmt::Display for OutletError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedPresentation { routes } => {
+                write!(
+                    formatter,
+                    "route outlet cannot present portal-managed overlay routes: {routes:?} \
+                     (host overlay entries in an OverlayPortal separately)"
+                )
+            }
+            Self::Frame(error) => {
+                write!(formatter, "route outlet frame failed: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for OutletError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::UnsupportedPresentation { .. } => None,
+            Self::Frame(error) => Some(error),
+        }
+    }
+}
+
+impl From<TreeError> for OutletError {
+    fn from(error: TreeError) -> Self {
+        Self::Frame(error)
+    }
+}
+
 /// Mounts one [`Navigator`] as presentation-aware stack content.
 ///
 /// The outlet owns the integration state the navigator cannot: per-route
@@ -263,6 +309,24 @@ impl RouteOutlet {
         &self.navigator
     }
 
+    /// Rejects stacks containing portal-managed overlay routes, which the
+    /// outlet never mounts. Pure check: no state changes either way.
+    fn check_supported(navigator: &Navigator) -> Result<(), OutletError> {
+        let unsupported: Vec<RouteId> = navigator
+            .routes()
+            .iter()
+            .filter(|route| route.presentation.is_overlay())
+            .map(|route| route.id)
+            .collect();
+        if unsupported.is_empty() {
+            Ok(())
+        } else {
+            Err(OutletError::UnsupportedPresentation {
+                routes: unsupported,
+            })
+        }
+    }
+
     /// Attaches the outlet to its mounted widget so [`Self::present_frame`]
     /// rebuilds outlet content every frame. Call once after mounting
     /// [`Self::widget`]: the mount element is located through the outlet
@@ -356,8 +420,11 @@ impl RouteOutlet {
             // Veil before content: semantic blocking hides preceding
             // siblings only, so the veil must precede its route's content
             // (paint and hit order still resolve top-down correctly, since
-            // the veil sits above every earlier route).
-            if let Some(barrier) = barrier {
+            // the veil sits above every earlier route). Veils follow
+            // visibility: a covered retained route keeps its content but
+            // not an active veil — the veil would dim and intercept input
+            // for content the user can no longer see.
+            if visible && let Some(barrier) = barrier {
                 children.push(self.veil_widget(route.id, &barrier));
             }
             children.push(self.content_widget(route, visible));
@@ -456,7 +523,10 @@ impl RouteOutlet {
         outlet: &Rc<RefCell<Self>>,
         runtime: &mut Runtime,
         constraints: Constraints,
-    ) -> Result<(DisplayList, FrameStats), TreeError> {
+    ) -> Result<(DisplayList, FrameStats), OutletError> {
+        // Unsupported stacks fail before capture, rebuild, frame, or
+        // reconcile — nothing mounted or committed changes on this path.
+        Self::check_supported(&outlet.borrow().navigator)?;
         {
             let mut outlet = outlet.borrow_mut();
             outlet.begin_frame(runtime);
@@ -473,7 +543,7 @@ impl RouteOutlet {
                 Err(TreeError::MissingElement(_)) => {
                     outlet.borrow_mut().mount.set(None);
                 }
-                Err(error) => return Err(error),
+                Err(error) => return Err(OutletError::Frame(error)),
             }
         }
         let output = runtime.run_frame(constraints)?;
