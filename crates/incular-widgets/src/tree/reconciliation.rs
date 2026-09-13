@@ -1367,13 +1367,17 @@ impl WidgetTree {
     }
 
     /// Claims both axis controllers for the two-dimensional viewport at
-    /// `element`: each independent axis gets clearly defined ownership
-    /// under one element entry. Reuse and replacement follow the same
-    /// rules as the single-controller claim — a same-pair layout reuses
-    /// both leases without re-acquiring, and a controller swap acquires
-    /// newcomers only for changed axes before detaching replaced
-    /// predecessors, so a failure leaves the live pair exactly as it was
-    /// and an unchanged axis keeps its lease, activity, and identity.
+    /// `element`, treating the entry as a set of owned positions rather
+    /// than fixed slots. Each desired axis reuses a stored lease driving
+    /// the same controller — wherever it sits — and acquires only when
+    /// no stored lease matches. Consequences: an axis swap (`[H, V]` to
+    /// `[V, H]`) moves both leases with no detach and no notifications
+    /// (the following layout refreshes axis context coherently); a
+    /// duplicate assignment (`[X, X]`) fails because the second axis
+    /// finds its controller already consumed; a failure anywhere
+    /// releases newcomers acquired in this call and leaves the stored
+    /// set exactly as it was. Planning touches nothing, so failures
+    /// never need restoration.
     pub(super) fn claim_2d_viewport(
         &mut self,
         element: ElementId,
@@ -1388,71 +1392,93 @@ impl WidgetTree {
         {
             return Ok(());
         }
-        // Per-axis reuse (borrow ends with the statement): an unchanged
-        // axis keeps its stored handle; only changed axes acquire.
-        let (reuse_horizontal, reuse_vertical) =
-            match self.scroll_attachments.get(&element).map(Vec::as_slice) {
-                Some([first, second]) => (
-                    first.controller() == horizontal,
-                    second.controller() == vertical,
-                ),
-                _ => (false, false),
-            };
         let owner = MetricOwner::of_tree(self.tree_id);
-        let new_horizontal = if reuse_horizontal {
-            None
-        } else {
-            match horizontal.try_attach(owner) {
+        // Plan against the stored set without mutating it: match each
+        // desired axis to an unconsumed stored lease, acquiring only on
+        // a miss. Each stored lease moves at most once, so a swap finds
+        // both axes and a duplicate finds the second axis consumed.
+        // Nothing below mutates the tree, so any failure returns with
+        // the stored set exactly as it was.
+        let stored_len = self.scroll_attachments.get(&element).map_or(0, Vec::len);
+        let mut used = vec![false; stored_len];
+        let horizontal_use = self.find_unused_lease(element, &used, horizontal);
+        let horizontal_newcomer = match horizontal_use {
+            Some(index) => {
+                used[index] = true;
+                None
+            }
+            None => match horizontal.try_attach(owner) {
                 Ok(attachment) => Some(attachment),
                 Err(conflict) => return Err(self.attachment_conflict(conflict, element)),
-            }
+            },
         };
-        let new_vertical = if reuse_vertical {
-            None
-        } else {
-            match vertical.try_attach(owner) {
+        // Re-check after the horizontal acquisition: a duplicate desired
+        // controller is now owned (by this call's newcomer or the stored
+        // set) and correctly refuses.
+        let vertical_use = self.find_unused_lease(element, &used, vertical);
+        let vertical_newcomer = match vertical_use {
+            Some(index) => {
+                used[index] = true;
+                None
+            }
+            None => match vertical.try_attach(owner) {
                 Ok(attachment) => Some(attachment),
                 Err(conflict) => {
-                    // A horizontal newcomer never escapes unleashed: its
-                    // controller saw no traffic yet, so release it and
-                    // fail with the stored pair untouched.
-                    if let Some(acquired) = new_horizontal {
+                    // Release a horizontal newcomer acquired above (a
+                    // planned stored move was never taken).
+                    if let Some(acquired) = horizontal_newcomer {
                         let _ = acquired.release();
                     }
                     return Err(self.attachment_conflict(conflict, element));
                 }
-            }
+            },
         };
-        // Commit the swap with no map borrow held, then detach replaced
-        // predecessors outside any borrow: reused handles move into the
-        // new pair, leftovers detach with tenure `End`.
-        let mut previous = self.scroll_attachments.remove(&element).unwrap_or_default();
-        let mut pair = Vec::with_capacity(2);
-        match new_horizontal {
-            Some(acquired) => pair.push(acquired),
-            None => {
-                let position = previous
-                    .iter()
-                    .position(|lease| lease.controller() == horizontal)
-                    .expect("reused axis handle is stored");
-                pair.push(previous.remove(position));
-            }
+        // Commit: drain planned leases in descending index order (so
+        // positions stay valid), pair them with newcomers in axis order,
+        // store the new pair, and detach leftovers outside any borrow.
+        let mut stored = self.scroll_attachments.remove(&element).unwrap_or_default();
+        let mut moved: [Option<MetricAttachment>; 2] = [None, None];
+        let mut drains: Vec<(usize, usize)> = Vec::new();
+        if let Some(index) = horizontal_use {
+            drains.push((0, index));
         }
-        match new_vertical {
-            Some(acquired) => pair.push(acquired),
-            None => {
-                let position = previous
-                    .iter()
-                    .position(|lease| lease.controller() == vertical)
-                    .expect("reused axis handle is stored");
-                pair.push(previous.remove(position));
-            }
+        if let Some(index) = vertical_use {
+            drains.push((1, index));
         }
+        drains.sort_by_key(|drain| std::cmp::Reverse(drain.1));
+        for (axis, index) in drains {
+            moved[axis] = Some(stored.remove(index));
+        }
+        let horizontal_lease = moved[0].take().or(horizontal_newcomer);
+        let vertical_lease = moved[1].take().or(vertical_newcomer);
+        let pair = vec![
+            horizontal_lease.expect("horizontal axis resolved"),
+            vertical_lease.expect("vertical axis resolved"),
+        ];
         self.scroll_attachments.insert(element, pair);
-        for stale in previous {
+        for stale in stored {
             stale.detach();
         }
         Ok(())
+    }
+
+    /// Finds an unconsumed stored lease driving `controller`, if any.
+    /// Plan-phase helper for the 2D set reconciliation above.
+    fn find_unused_lease(
+        &self,
+        element: ElementId,
+        used: &[bool],
+        controller: &ScrollController,
+    ) -> Option<usize> {
+        self.scroll_attachments.get(&element).and_then(|leases| {
+            leases
+                .iter()
+                .enumerate()
+                .find(|(index, lease)| {
+                    !used.get(*index).copied().unwrap_or(true) && lease.controller() == controller
+                })
+                .map(|(index, _)| index)
+        })
     }
 
     /// Publishes metric extents for a viewport layout. A live lease

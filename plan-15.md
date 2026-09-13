@@ -2743,7 +2743,7 @@ packages A–D):
 | Family | Position record | Extent writers | Multi-attach | Replacement | Unmount / window close |
 | Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus one authoritative attachment slot (opaque id; owner tree is diagnostic only) | lease-authorized publication (`MetricAttachment::update_extents`, live-handle-only); checked unattached publication (`update_extents*`, free-only, rejecting without mutation) | enforced: occupied rejects every newcomer (same-tree names the owner element; cross-tree names the owner tree — pinned); steady layouts reuse the lease without re-acquiring (attachment id stable — pinned); rejections preserve extents, offset, revision, ownership, and silence — pinned | acquire-before-release: failure leaves lease, ownership, activity, and metrics untouched (local + foreign conflicts pinned with third-tree ownership proof); success commits first, then detaches the replaced-away tenure (release + `End`) so no flag strands — metrics survive | unmount detaches owned leases (release, then `End`); tree drop drains leases with per-handle silent teardown. Stale handles release/end/abort nothing — pinned |
 | Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | retained wheel layouts claim then publish through the lease (one shared layout tail); every public headless alias (`layout`, `layout_with_measure`, view `layout`) publishes checked-unattached, rejecting before any side effect — pinned | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount, all-alias headless rejection all pinned) | same as ordinary, cross-tree included | same as ordinary |
-| Two-dimensional (H/V pair) | two independent `ScrollController`s, one element entry holding the axis pair | retained layouts claim both axes then lend the stored pair in place through disjoint field borrows (one shared layout tail); every public alias (`layout`, `layout_with_measure`, scrollable `update_extents`) commits through the Scroll owner's paired operation — pinned atomic | enforced per axis: a shared axis fails the second viewport naming the owning element, with the live pair untouched — pinned; axis swaps acquire newcomers per changed axis and reuse the untouched lease (identity and activity preserved — pinned) | per-axis acquire-before-release with tenure detach | unmount drains the pair; tree drop tears down both; layout panic preserves the pair for retry (no guard, no reinsert — pinned) |
+| Two-dimensional (H/V pair) | two independent `ScrollController`s, one element entry holding the axis pair | retained layouts claim both axes then lend the stored pair in place through disjoint field borrows (one shared layout tail); every public alias (`layout`, `layout_with_measure`, scrollable `update_extents`) commits through the Scroll owner's paired operation — pinned atomic | enforced per axis: a shared axis fails the second viewport naming the owning element, with the live pair untouched — pinned; replacement reconciles owned positions as a set — full swaps move both leases silently (no detach, activities continue), duplicates fail without mutation, foreign conflicts preserve — pinned | set reconciliation (reuse-by-controller, acquire-on-miss, detach-leftovers) with tenure detach | unmount drains the pair with an End per open tenure; tree drop tears both down silently; layout panic preserves the pair for retry (no guard, no reinsert — pinned) |
 | Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | inner list viewport publishes through its ordinary lease; the sheet never claims — `set_inner_extents` is checked-unattached, refusing while the inner list owns — pinned | one position, one attachment: sheet/inner sharing needs no second claim by design | previous handle detaches | sheet state drops with the tree |
 
 Contested headless writes (defined interaction, pinned): metric writes
@@ -2789,6 +2789,8 @@ check (no unchecked public writer remains):
 
 | Method | Authority rule |
 | `ScrollController::update_extents` / `update_extents_with_physics` | free-only: rejects with `AttachedOwner` before any mutation |
+| `ScrollController::update_extent_pair` | both axes free, validated before either commits; same-controller aliasing rejected before borrowing (`AliasedController`) |
+| `ScrollController::publish_attached_pair` | each handle live on its own controller (crossed pairs refused); both commit before either dispatches |
 | `MetricAttachment::update_extents` | live-handle-only: stale handles get `StaleAttachment`, nothing written |
 | `ListWheelViewport::layout` / `layout_with_measure`, `ListWheelScrollView::layout` | free-only, validated before measuring children, selection, or callbacks |
 | `TwoDimensionalViewport::layout` / `layout_with_measure`, `TwoDimensionalScrollView::layout`, `TwoDimensionalScrollable::update_extents` | both axes validated free before either writes (pair-atomic; lease-driven retained path publishes through the lent pair instead) |
@@ -2824,10 +2826,13 @@ sliver element-less fallbacks publish checked and skip when owned.
 Two-dimensional viewports claim the axis pair per element and lend the
 stored pair in place through disjoint field borrows (policy: unwind
 preserves; retry reuses — proven by a retained-tree panic/recovery
-test, not by handle-Drop tests alone); the sheet never claims its
-shared inner controller — `set_inner_extents` is checked-unattached.
-Host adapters and restoration never published geometry (offsets and
-persisted positions only) and needed no changes.
+test, not by handle-Drop tests alone); model-level axis pre-checks are
+early-outs only — the paired commit re-validates both authorities under
+the state locks, so prechecking two axes is never equated with
+committing them before callbacks. The sheet never claims its shared
+inner controller — `set_inner_extents` is checked-unattached. Host
+adapters and restoration never published geometry (offsets and persisted
+positions only) and needed no changes.
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on

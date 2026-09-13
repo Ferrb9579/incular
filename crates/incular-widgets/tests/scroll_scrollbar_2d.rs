@@ -895,6 +895,337 @@ fn two_dimensional_layout_panic_preserves_the_pair_for_retry() {
 }
 
 #[test]
+fn two_dimensional_full_swap_moves_both_leases_silently() {
+    // `[H, V]` to `[V, H]` reuses both stored leases by controller
+    // identity — no acquisition, no detach, no notifications — with each
+    // handle now driving the other axis. Activities continue undisturbed
+    // and the following layout refreshes axis context coherently.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let horizontal_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let vertical_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_horizontal = horizontal_ends.clone();
+    let counted_vertical = vertical_ends.clone();
+    let _horizontal_subscription = horizontal.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_horizontal.set(counted_horizontal.get() + 1);
+        }
+        false
+    });
+    let _vertical_subscription = vertical.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_vertical.set(counted_vertical.get() + 1);
+        }
+        false
+    });
+    let delegate = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let view = |h: ScrollController, v: ScrollController| -> Widget {
+        let viewport: Widget = TwoDimensionalViewport::new(delegate(), h, v, 20., 30.).into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(view(horizontal.clone(), vertical.clone()))
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    assert!(vertical.begin_activity());
+    let horizontal_attachment = horizontal.attachment_id().expect("H owned");
+    let vertical_attachment = vertical.attachment_id().expect("V owned");
+    tree.update(root, view(vertical.clone(), horizontal.clone()))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    // Same handles, swapped positions: no detach ran on either tenure.
+    assert_eq!(vertical.attachment_id(), Some(vertical_attachment));
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert_eq!(horizontal_ends.get(), 0);
+    assert_eq!(vertical_ends.get(), 0);
+    assert!(!horizontal.begin_activity() && !vertical.begin_activity());
+    // Each controller now carries its new axis geometry.
+    assert_eq!(vertical.content_extent(), 360.);
+    assert_eq!(vertical.viewport_extent(), 100.);
+    assert_eq!(horizontal.content_extent(), 200.);
+    assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(vertical.metric_owner(), Some(tree.tree_id()));
+    assert!(horizontal.end_activity());
+    assert!(vertical.end_activity());
+}
+
+#[test]
+fn two_dimensional_duplicate_assignment_fails_without_mutation() {
+    // One controller cannot drive both axes: assigning a free handle to
+    // both fails on the second axis and leaves the stored pair — lease
+    // identities, geometry, activities — exactly as it was, with the
+    // duplicate handle free again.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let duplicate = ScrollController::new();
+    let delegate = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let view = |h: ScrollController, v: ScrollController| -> Widget {
+        let viewport: Widget = TwoDimensionalViewport::new(delegate(), h, v, 20., 30.).into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(view(horizontal.clone(), vertical.clone()))
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    let horizontal_attachment = horizontal.attachment_id().expect("H owned");
+    let vertical_attachment = vertical.attachment_id().expect("V owned");
+    tree.update(root, view(duplicate.clone(), duplicate.clone()))
+        .expect("update");
+    let error = tree
+        .layout(Constraints::tight(Size::new(100., 100.)))
+        .unwrap_err();
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: _,
+        } => {
+            // The horizontal newcomer released itself on the vertical
+            // failure, so no same-tree lease names it.
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, None);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert_eq!(vertical.attachment_id(), Some(vertical_attachment));
+    assert_eq!(horizontal.max_offset(), 260.);
+    assert_eq!(vertical.max_offset(), 100.);
+    assert!(!horizontal.begin_activity());
+    assert_eq!(duplicate.metric_owner(), None);
+    // Repair with the original pair reuses both leases.
+    tree.update(root, view(horizontal.clone(), vertical.clone()))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert!(horizontal.end_activity());
+}
+
+#[test]
+fn two_dimensional_foreign_axis_conflict_preserves_the_pair() {
+    // An axis owned abroad fails the whole claim with the foreign tree
+    // named — the live pair (identities, geometry, activities) is
+    // untouched and repair resumes normally.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let abroad = ScrollController::new();
+    let mut foreign = WidgetTree::new();
+    let abroad_viewport: Widget = TwoDimensionalViewport::new(
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        }),
+        abroad.clone(),
+        ScrollController::new(),
+        20.,
+        30.,
+    )
+    .into();
+    let abroad_boxed: Widget =
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(abroad_viewport))
+            .into();
+    foreign
+        .mount(abroad_boxed)
+        .expect("mount defers attachment");
+    foreign
+        .layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let delegate = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let view = |h: ScrollController, v: ScrollController| -> Widget {
+        let viewport: Widget = TwoDimensionalViewport::new(delegate(), h, v, 20., 30.).into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    assert_ne!(foreign.tree_id(), tree.tree_id());
+    let root = tree
+        .mount(view(horizontal.clone(), vertical.clone()))
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    assert!(vertical.begin_activity());
+    let horizontal_attachment = horizontal.attachment_id().expect("H owned");
+    let vertical_attachment = vertical.attachment_id().expect("V owned");
+    tree.update(root, view(abroad.clone(), vertical.clone()))
+        .expect("update");
+    let error = tree
+        .layout(Constraints::tight(Size::new(100., 100.)))
+        .unwrap_err();
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: _,
+        } => {
+            assert_eq!(owner_tree, foreign.tree_id());
+            assert_eq!(owner, None);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert_eq!(vertical.attachment_id(), Some(vertical_attachment));
+    assert_eq!(horizontal.max_offset(), 260.);
+    assert!(!horizontal.begin_activity() && !vertical.begin_activity());
+    tree.update(root, view(horizontal.clone(), vertical.clone()))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert!(horizontal.end_activity());
+    assert!(vertical.end_activity());
+}
+
+#[test]
+fn two_dimensional_reentrant_attach_during_replacement_end_survives() {
+    // During a replaced axis's End, a listener attaches the freed
+    // controller and begins fresh — the transfer's trailing state
+    // cancels nothing the listener starts.
+    let horizontal = ScrollController::new();
+    let outgoing = ScrollController::new();
+    let incoming = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let tree_id = tree.tree_id();
+    let reattached = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let reattached_for_listener = reattached.clone();
+    let outgoing_for_listener = outgoing.clone();
+    let _subscription = outgoing.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End
+            && reattached_for_listener.borrow().is_none()
+        {
+            let handle = outgoing_for_listener
+                .try_attach(incular_scroll::MetricOwner::of_tree(tree_id))
+                .expect("tenure released before End");
+            assert!(outgoing_for_listener.begin_activity());
+            *reattached_for_listener.borrow_mut() = Some(handle);
+        }
+        false
+    });
+    let delegate = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let view = |h: ScrollController, v: ScrollController| -> Widget {
+        let viewport: Widget = TwoDimensionalViewport::new(delegate(), h, v, 20., 30.).into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let root = tree
+        .mount(view(horizontal.clone(), outgoing.clone()))
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(outgoing.begin_activity());
+    tree.update(root, view(horizontal.clone(), incoming.clone()))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    // The listener's tenure on the replaced-away controller is live and
+    // open; the viewport's new axis drives with a fresh lease.
+    let handle = reattached
+        .borrow_mut()
+        .take()
+        .expect("listener attached during transfer End");
+    assert_eq!(outgoing.metric_owner(), Some(tree_id));
+    assert_eq!(outgoing.attachment_id(), Some(handle.id()));
+    assert!(!outgoing.begin_activity());
+    assert_eq!(incoming.metric_owner(), Some(tree_id));
+    assert_eq!(horizontal.metric_owner(), Some(tree_id));
+    drop(_subscription);
+    assert!(handle.release());
+    assert!(outgoing.end_activity());
+    assert_eq!(outgoing.metric_owner(), None);
+}
+
+#[test]
+fn two_dimensional_teardown_releases_both_axes() {
+    // Unmount detaches the pair with an End per open tenure; dropping a
+    // tree with a live pair tears both down silently — and both
+    // controllers remount cleanly afterward.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let horizontal_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let vertical_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_horizontal = horizontal_ends.clone();
+    let counted_vertical = vertical_ends.clone();
+    let _horizontal_subscription = horizontal.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_horizontal.set(counted_horizontal.get() + 1);
+        }
+        false
+    });
+    let _vertical_subscription = vertical.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_vertical.set(counted_vertical.get() + 1);
+        }
+        false
+    });
+    let delegate = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let view = || -> Widget {
+        let viewport: Widget =
+            TwoDimensionalViewport::new(delegate(), horizontal.clone(), vertical.clone(), 20., 30.)
+                .into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Column::new(vec![view()]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    assert!(vertical.begin_activity());
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert_eq!(horizontal_ends.get(), 1);
+    assert_eq!(vertical_ends.get(), 1);
+    assert_eq!(horizontal.metric_owner(), None);
+    assert_eq!(vertical.metric_owner(), None);
+    // Drop path: a live pair tears down silently mid-activity.
+    let mut second = WidgetTree::new();
+    second.mount(view()).expect("mount defers attachment");
+    second
+        .layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    assert!(vertical.begin_activity());
+    drop(second);
+    assert_eq!(horizontal.metric_owner(), None);
+    assert_eq!(vertical.metric_owner(), None);
+    assert_eq!(horizontal_ends.get(), 1);
+    assert_eq!(vertical_ends.get(), 1);
+    assert!(horizontal.begin_activity());
+    assert!(vertical.begin_activity());
+    assert!(horizontal.end_activity());
+    assert!(vertical.end_activity());
+}
+
+#[test]
 fn two_dimensional_delegate_and_constraints() {
     // from_rows derives counts from the grid shape.
     let delegate =
