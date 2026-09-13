@@ -5,13 +5,14 @@ use std::{
 };
 
 use incular_config::Constraints;
-use incular_widgets::internal::WidgetTree;
+use incular_widgets::internal::{TreeError, WidgetTree};
 use incular_widgets::{
-    Axis, CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, Clip, Color,
+    Axis, CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, Clip, Color, Column,
     DiagonalDragBehavior, DraggableScrollableActuator, DraggableScrollableSheet,
-    ListWheelScrollView, ListWheelViewport, Offset, RawScrollbar, RawScrollbarOrientation,
-    RawScrollbarStyle, ScrollController, Size, TwoDimensionalChildDelegate,
-    TwoDimensionalScrollView, TwoDimensionalViewport, WheelChildDelegate, Widget,
+    FixedExtentScrollController, ListWheelScrollView, ListWheelViewport, Offset, RawScrollbar,
+    RawScrollbarOrientation, RawScrollbarStyle, ScrollController, SingleChildScrollView, Size,
+    SizedBox, TwoDimensionalChildDelegate, TwoDimensionalScrollView, TwoDimensionalViewport,
+    WheelChildDelegate, Widget,
 };
 
 fn wheel_children(count: usize) -> Vec<Widget> {
@@ -362,4 +363,178 @@ fn retained_draggable_sheet_preserves_extent_and_rebinds_updated_config() {
     assert!(replacement_controller.is_attached());
     assert_eq!(replacement_controller.size(), Some(0.75));
     assert_eq!(replacement_builds.get(), 1);
+}
+
+#[test]
+fn two_wheels_competing_for_one_controller_rejected() {
+    // Same metric-owner principle as ordinary viewports: the second live
+    // wheel fails before overwriting the shared record, with both
+    // viewport identities, while the first keeps its range.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let wheel = |controller: ScrollController, items: usize| -> Widget {
+        let view: Widget = ListWheelScrollView::new(
+            controller,
+            20.0,
+            WheelChildDelegate::children(wheel_children(items)),
+        )
+        .into();
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(view)).into()
+    };
+    let root = tree
+        .mount(
+            Column::new(vec![
+                wheel(controller.clone(), 8),
+                wheel(controller.clone(), 5),
+            ])
+            .into(),
+        )
+        .expect("mount defers attachment");
+    let error = tree
+        .layout(Constraints::tight(Size::new(200., 250.)))
+        .unwrap_err();
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert!(owner.is_some());
+            assert_ne!(owner, Some(attempted));
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    // First wheel's range stands (8 items): the rejected second wrote
+    // nothing.
+    assert_eq!(controller.max_offset(), 140.);
+    let _ = root;
+}
+
+#[test]
+fn ordinary_and_wheel_sharing_one_controller_rejected() {
+    // An ordinary viewport and a wheel viewport are different writers to
+    // the same record: the second one fails regardless of family.
+    let controller = ScrollController::new();
+    let scrolled: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(controller.clone())
+            .into();
+    let ordinary: Widget = SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into();
+    let wheel_view: Widget = ListWheelScrollView::new(
+        controller.clone(),
+        20.0,
+        WheelChildDelegate::children(wheel_children(8)),
+    )
+    .into();
+    let wheeled: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(wheel_view)).into();
+    let mut tree = WidgetTree::new();
+    tree.mount(Column::new(vec![ordinary, wheeled]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(200., 250.)))
+        .expect_err("mixed-family sharing is rejected");
+    // The ordinary viewport laid out first and owns the record.
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+}
+
+#[test]
+fn fixed_extent_wrapper_shares_without_claiming() {
+    // The wrapper is not a viewport: pre-attachment operations and reads
+    // never claim ownership, while two wheels built from its single inner
+    // handle still compete (proved by the rejection below, not by
+    // labeling).
+    let fixed = FixedExtentScrollController::new(2);
+    assert_eq!(fixed.controller().metric_owner(), None);
+    assert_eq!(fixed.selected_item(20.0), 2);
+    assert!(fixed.jump_to_item(4, 20.0));
+    assert_eq!(fixed.controller().metric_owner(), None);
+    let first_wheel: Widget = ListWheelScrollView::new(
+        fixed.controller(),
+        20.0,
+        WheelChildDelegate::children(wheel_children(8)),
+    )
+    .into();
+    let second_wheel: Widget = ListWheelScrollView::new(
+        fixed.controller(),
+        20.0,
+        WheelChildDelegate::children(wheel_children(8)),
+    )
+    .into();
+    let boxed_first: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(first_wheel)).into();
+    let boxed_second: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(second_wheel)).into();
+    let mut tree = WidgetTree::new();
+    tree.mount(Column::new(vec![boxed_first, boxed_second]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(200., 250.)))
+        .expect_err("two wheels on one inner controller compete");
+    assert_eq!(fixed.controller().max_offset(), 140.);
+}
+
+#[test]
+fn wheel_replacement_unmount_and_preattach_behave() {
+    // Replacement swaps the driver with the old handle freed; unmount
+    // releases for remount; deferred pre-attachment jumps apply on first
+    // layout; reads never claim.
+    let first = ScrollController::new();
+    let second = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let wheel = |controller: ScrollController| -> Widget {
+        let view: Widget = ListWheelScrollView::new(
+            controller,
+            20.0,
+            WheelChildDelegate::children(wheel_children(8)),
+        )
+        .into();
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(view)).into()
+    };
+    let root = tree
+        .mount(Column::new(vec![wheel(first.clone())]).into())
+        .expect("mount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(first.max_offset(), 140.);
+    // Replacement: the new controller drives, the old one is free.
+    tree.update(root, Column::new(vec![wheel(second.clone())]).into())
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(second.max_offset(), 140.);
+    // The replaced-away handle is free across trees too: a foreign
+    // mount claims it, and dropping that tree releases it again.
+    {
+        let mut foreign = WidgetTree::new();
+        let abroad: Widget = ListWheelScrollView::new(
+            first.clone(),
+            20.0,
+            WheelChildDelegate::children(wheel_children(8)),
+        )
+        .into();
+        let boxed: Widget = SizedBox::from_dimensions(Some(200.), Some(100.), Some(abroad)).into();
+        foreign
+            .mount(Column::new(vec![boxed]).into())
+            .expect("mount");
+        foreign
+            .layout(Constraints::tight(Size::new(200., 150.)))
+            .expect("replaced-away handle remounts abroad");
+        assert_eq!(first.max_offset(), 140.);
+        assert_eq!(first.metric_owner(), Some(foreign.tree_id()));
+    }
+    assert_eq!(first.metric_owner(), None);
+    // Unmount releases; remount elsewhere reclaims with new geometry.
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    let root = tree
+        .mount(Column::new(vec![wheel(first.clone())]).into())
+        .expect("remount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(first.max_offset(), 140.);
+    let _ = root;
 }

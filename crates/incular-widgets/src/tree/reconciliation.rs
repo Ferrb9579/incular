@@ -1316,6 +1316,15 @@ impl WidgetTree {
         element: ElementId,
         controller: &ScrollController,
     ) -> Result<(), TreeError> {
+        // Replacement turnover: this element previously drove a different
+        // controller whose record still names this tree. Release it — the
+        // render already moved on — so a replaced-away handle stays free
+        // across trees. Same-handle reclaims skip this harmlessly.
+        if let Some(previous) = self.scroll_attachments.get(&element)
+            && *previous != *controller
+        {
+            previous.clear_metric_owner(self.tree_id);
+        }
         match controller.metric_owner() {
             Some(owner) if owner != self.tree_id => {
                 return Err(TreeError::DuplicateScrollAttachment {

@@ -2742,7 +2742,7 @@ change; enforcement follows in Package C for the ordinary path):
 
 | Family | Position record | Extent writers | Multi-attach today | Replacement | Unmount / window close |
 | Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus authoritative `metric_owner` tree id | claiming viewport layouts first; public `update_extents` stays open for hosts | enforced: second live viewport fails typed before overwriting (same-tree names the owner element; cross-tree names the owner tree — pinned) | render takes the new controller; old keeps isolated record (pinned) | unmount releases; tree drop releases owned slots |
-| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | wheel layout feeds the ordinary record | allowed, unenforced | same as ordinary | nothing |
+| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | claiming wheel layouts feed the ordinary record; headless model layouts bypass (no element) | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount all pinned) | same as ordinary, cross-tree included | unmount releases; tree drop releases owned slots |
 | Two-dimensional (H/V pair) | two independent `ScrollController`s | 2D layout per axis | N/A by construction | per axis, as ordinary | nothing |
 | Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | sheet extent logic; `set_inner_extents` | sheet attach tracked; inner shared with the inner list by design | previous handle detaches | sheet state drops with the tree |
 
@@ -2783,6 +2783,17 @@ lifecycle + ordinary attachment enforcement. Remaining families,
 explicit: wheel/2D/draggable attachment rules; window-close activity
 sweep; broader animation (ballistic driver) policy; scrollbar-thumb
 drags stay unbracketed programmatic moves by current design.
+
+Enforced versus audited (Package D): ordinary Scroll viewports —
+enforced (duplicate, replacement, unmount, remount, failure, clones,
+pre-attach, teardown); wheel viewports — enforced (two wheels,
+ordinary+wheel, replacement, unmount, pre-attachment ops, read-only
+consumers; the `FixedExtent` wrapper itself never claims, proven by
+`metric_owner` staying empty through wrapper-only use); headless
+model layouts bypass by construction (no element to attribute).
+Explicitly pending, untouched: two-dimensional viewports, draggable
+sheet/inner coordination beyond the existing attach model, ballistic
+animation policy, and scrollbar-thumb activity bracketing.
 
 ## W6 — Input, text and semantic consistency
 
