@@ -99,14 +99,18 @@ fn wheel_viewport_and_scroll_view_layout_hit_test_and_retain_public_models() {
         Some(move |index| selected_for_callback.borrow_mut().push(index)),
     );
 
-    let initial = viewport.layout(Size::new(100.0, 100.0));
+    let initial = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(initial.selected_index, Some(0));
     assert_eq!(initial.max_scroll_extent, 140.0);
     assert_eq!(initial.hit_test(Offset::new(50.0, 50.0)), Some(0));
     assert!(initial.children.iter().any(|child| child.visible));
 
     assert!(viewport.jump_to_item(3));
-    let scrolled = viewport.layout(Size::new(100.0, 100.0));
+    let scrolled = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(scrolled.selected_index, Some(3));
     assert_eq!(viewport.selected_item(), Some(3));
     assert!(selected.borrow().contains(&3));
@@ -127,7 +131,9 @@ fn wheel_viewport_and_scroll_view_layout_hit_test_and_retain_public_models() {
         20.0,
         WheelChildDelegate::children(wheel_children(5)),
     );
-    let scroll_layout = scroll_view.layout(Size::new(100.0, 80.0));
+    let scroll_layout = scroll_view
+        .layout(Size::new(100.0, 80.0))
+        .expect("free controller publishes");
     assert_eq!(scroll_layout.selected_index, Some(0));
     assert_eq!(scroll_layout.hit_test(Offset::new(50.0, 40.0)), Some(0));
 
@@ -546,7 +552,7 @@ fn headless_wheel_publication_rejected_while_attached() {
         20.0,
         WheelChildDelegate::children(wheel_children(8)),
     );
-    let error = match model.layout_unattached(Size::new(100.0, 100.0)) {
+    let error = match model.layout(Size::new(100.0, 100.0)) {
         Ok(_) => panic!("owned controller refuses headless wheel publication"),
         Err(error) => error,
     };
@@ -561,6 +567,80 @@ fn headless_wheel_publication_rejected_while_attached() {
     tree.layout(Constraints::tight(Size::new(200., 150.)))
         .expect("owner drives on");
     assert_eq!(controller.max_offset(), 200.);
+}
+
+#[test]
+fn wheel_layout_aliases_reject_before_any_side_effect() {
+    // Every public wheel layout alias enforces the same rule: against an
+    // occupied controller both fail before measuring children, reporting
+    // selection, or emitting anything — geometry, offset, revision,
+    // ownership, and notifications all preserved.
+    let controller = ScrollController::new();
+    let scrolled: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(controller.clone())
+            .into();
+    let ordinary: Widget = SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into();
+    let mut tree = WidgetTree::new();
+    tree.mount(Column::new(vec![ordinary]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert!(controller.jump_to(30.));
+    let attachment = controller.attachment_id().expect("ordinary owns");
+    let revision = controller.revision();
+    let selected = Rc::new(RefCell::new(Vec::new()));
+    let selected_for_callback = selected.clone();
+    for attempt in 0..2 {
+        let mut model = ListWheelViewport::new(
+            controller.clone(),
+            20.0,
+            WheelChildDelegate::children(wheel_children(8)),
+        );
+        let selected_for_attempt = selected_for_callback.clone();
+        model.set_selection_callback(
+            ChangeReportingBehavior::OnScrollUpdate,
+            Some(move |index| selected_for_attempt.borrow_mut().push(index)),
+        );
+        let error = match attempt {
+            0 => match model.layout(Size::new(100.0, 100.0)) {
+                Ok(_) => panic!("occupied controller refuses layout"),
+                Err(error) => error,
+            },
+            _ => match model.layout_with_measure(Size::new(100.0, 100.0), |_, constraints| {
+                constraints.biggest()
+            }) {
+                Ok(_) => panic!("occupied controller refuses layout_with_measure"),
+                Err(error) => error,
+            },
+        };
+        assert_eq!(error.owner_tree(), Some(tree.tree_id()));
+        assert!(selected.borrow().is_empty(), "no selection callback fired");
+        assert_eq!(controller.content_extent(), 300.);
+        assert_eq!(controller.viewport_extent(), 100.);
+        assert_eq!(controller.max_offset(), 200.);
+        assert_eq!(controller.offset(), 30.);
+        assert_eq!(controller.revision(), revision);
+        assert_eq!(controller.attachment_id(), Some(attachment));
+        assert_eq!(controller.metric_owner(), Some(tree.tree_id()));
+    }
+    // Free headless use of both aliases still works.
+    let free = ScrollController::new();
+    let mut model = ListWheelViewport::new(
+        free.clone(),
+        20.0,
+        WheelChildDelegate::children(wheel_children(8)),
+    );
+    let headless = model
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller lays out");
+    assert_eq!(headless.max_scroll_extent, 140.);
+    let measured = model
+        .layout_with_measure(Size::new(100.0, 100.0), |_, constraints| {
+            constraints.biggest()
+        })
+        .expect("free controller measures");
+    assert_eq!(measured.max_scroll_extent, 140.);
 }
 
 #[test]

@@ -37,7 +37,9 @@ fn wheel_projects_children_and_selects_by_fixed_extent() {
         Some(move |index| selected_for_callback.borrow_mut().push(index)),
     );
 
-    let first = viewport.layout(Size::new(100.0, 100.0));
+    let first = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 220.0);
     assert_eq!(first.selected_index, Some(0));
     let center = first
@@ -52,7 +54,9 @@ fn wheel_projects_children_and_selects_by_fixed_extent() {
     assert!(first.children.iter().any(|child| child.opacity < 1.0));
 
     assert!(viewport.jump_to_item(5));
-    let fifth = viewport.layout(Size::new(100.0, 100.0));
+    let fifth = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(fifth.selected_index, Some(5));
     assert_eq!(viewport.selected_item(), Some(5));
     assert!(selected.borrow().contains(&5));

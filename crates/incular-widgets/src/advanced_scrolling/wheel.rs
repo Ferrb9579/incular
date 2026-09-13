@@ -691,27 +691,28 @@ impl<T> ListWheelViewport<T> {
         selected
     }
 
-    /// Performs a layout pass using full-width children.
-    pub fn layout(&mut self, size: Size) -> WheelLayout<T>
+    /// Performs a layout pass using full-width children, publishing
+    /// through the checked unattached path: succeeds only while no
+    /// viewport owns the controller, failing without mutating anything
+    /// otherwise. Retained viewports publish through their attachment
+    /// instead (see the tree's wheel preparation).
+    pub fn layout(&mut self, size: Size) -> Result<WheelLayout<T>, MetricWriteError>
     where
         T: Clone,
     {
         self.layout_with_measure(size, |_, constraints| constraints.biggest())
     }
 
-    /// Performs a layout pass with a child measurement callback.
-    ///
-    /// Headless entry over a controller the caller drives outright: the
-    /// publication below expects a free controller. Retained viewports
-    /// publish through their attachment instead (see the tree's wheel
-    /// preparation); ownership-respecting headless callers use
-    /// [`layout_unattached`](Self::layout_unattached), which refuses to
-    /// disturb a live owner.
+    /// Performs a layout pass with a child measurement callback, under
+    /// the same checked-publication rule as [`layout`](Self::layout).
+    /// Authority is validated before the tail runs, so a rejection
+    /// happens before selection callbacks, measurements, or any other
+    /// observable side effect.
     pub fn layout_with_measure(
         &mut self,
         size: Size,
         measure: impl Fn(&T, Constraints) -> Size,
-    ) -> WheelLayout<T>
+    ) -> Result<WheelLayout<T>, MetricWriteError>
     where
         T: Clone,
     {
@@ -720,27 +721,6 @@ impl<T> ListWheelViewport<T> {
         // The wheel's centered first/last item makes its controller range equal
         // to `(count - 1) * itemExtent`, so add the viewport extent back when
         // feeding the ordinary content-minus-viewport controller.
-        // Headless entry: the caller owns this controller outright, so
-        // a live owner here is a caller error. Retained viewports never
-        // reach this write (they publish through their lease).
-        self.controller
-            .update_extents_with_physics(max_scroll_extent + size.height, size.height, self.physics)
-            .expect("headless wheel layout needs a free controller");
-        let scroll_offset = self.controller.offset();
-        let consumed_revision = self.controller.revision();
-        self.layout_with_offset(size, measure, scroll_offset, consumed_revision)
-    }
-
-    /// Headless layout that publishes through the unattached-checked
-    /// path: succeeds only while no viewport owns the controller, and
-    /// fails without mutating anything otherwise — extents, offset,
-    /// revision, ownership, and notifications are all preserved.
-    pub fn layout_unattached(&mut self, size: Size) -> Result<WheelLayout<T>, MetricWriteError>
-    where
-        T: Clone,
-    {
-        self.controller.set_metrics_context(Axis::Vertical, false);
-        let max_scroll_extent = self.max_scroll_extent();
         self.controller.update_extents_with_physics(
             max_scroll_extent + size.height,
             size.height,
@@ -748,16 +728,16 @@ impl<T> ListWheelViewport<T> {
         )?;
         Ok(self.layout_with_offset(
             size,
-            |_, constraints| constraints.biggest(),
+            measure,
             self.controller.offset(),
             self.controller.revision(),
         ))
     }
 
     /// Lays out children from an already-published offset. The single
-    /// tail behind every publication path — unrestricted headless,
-    /// unattached-checked, and lease-driven retained — so all three share
-    /// identical child measurement, selection, and reporting behavior.
+    /// tail behind every publication path — checked headless and
+    /// lease-driven retained — so both share identical child
+    /// measurement, selection, and reporting behavior.
     pub(crate) fn layout_with_offset(
         &mut self,
         size: Size,
@@ -982,8 +962,9 @@ impl<T> ListWheelScrollView<T> {
         self.viewport.into_retained_config()
     }
 
-    /// Lays out the wheel.
-    pub fn layout(&mut self, size: Size) -> WheelLayout<T>
+    /// Lays out the wheel, under the same checked-publication rule as
+    /// the viewport's [`layout`](ListWheelViewport::layout).
+    pub fn layout(&mut self, size: Size) -> Result<WheelLayout<T>, MetricWriteError>
     where
         T: Clone,
     {

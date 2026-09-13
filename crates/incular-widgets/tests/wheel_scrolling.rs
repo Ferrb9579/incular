@@ -41,16 +41,22 @@ fn wheel_reports_selection_on_update_but_defers_on_end() {
         ChangeReportingBehavior::OnScrollUpdate,
         Some(move |index| reported_for_callback.borrow_mut().push(index)),
     );
-    let first = viewport.layout(Size::new(100.0, 100.0));
+    let first = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(first.selected_index, Some(0));
     assert_eq!(*reported.borrow(), vec![0]);
 
     // An unchanged layout reports nothing new.
-    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let _ = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(*reported.borrow(), vec![0]);
 
     assert!(viewport.jump_to_item(5));
-    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let _ = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(*reported.borrow(), vec![0, 5]);
 
     // End-of-scroll mode stays silent through scrolls and layouts and
@@ -67,7 +73,9 @@ fn wheel_reports_selection_on_update_but_defers_on_end() {
         Some(move |index| reported_for_callback.borrow_mut().push(index)),
     );
     assert!(settling.jump_to_item(5));
-    let _ = settling.layout(Size::new(100.0, 100.0));
+    let _ = settling
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert!(reported.borrow().is_empty());
     assert_eq!(settling.settle(), Some(5));
     assert_eq!(*reported.borrow(), vec![5]);
@@ -80,7 +88,9 @@ fn wheel_delegate_builder_known_unknown_and_empty() {
         WheelChildDelegate::builder(Some(12), |index| (index < 12).then_some(index));
     assert_eq!(known_delegate.child_count(), Some(12));
     let mut known = ListWheelViewport::new(ScrollController::new(), 20.0, known_delegate);
-    let layout = known.layout(Size::new(100.0, 100.0));
+    let layout = known
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(layout.selected_index, Some(0));
     assert_eq!(known.selected_item(), Some(0));
     assert!(!layout.children.is_empty());
@@ -91,7 +101,9 @@ fn wheel_delegate_builder_known_unknown_and_empty() {
         20.0,
         WheelChildDelegate::builder(Some(12), |index| (index < 3).then_some(index)),
     );
-    let layout = short.layout(Size::new(100.0, 100.0));
+    let layout = short
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert!(layout.children.iter().all(|child| child.index < 3));
 
     // An unknown tail reports a rounded selection with a huge range and
@@ -100,7 +112,9 @@ fn wheel_delegate_builder_known_unknown_and_empty() {
     assert_eq!(lazy_delegate.child_count(), None);
     let mut lazy = ListWheelViewport::new(ScrollController::new(), 20.0, lazy_delegate);
     assert!(lazy.jump_to_item(5));
-    let layout = lazy.layout(Size::new(100.0, 100.0));
+    let layout = lazy
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(layout.selected_index, Some(5));
     assert_eq!(lazy.selected_item(), Some(5));
     assert!(layout.max_scroll_extent > 1.0e30);
@@ -112,7 +126,9 @@ fn wheel_delegate_builder_known_unknown_and_empty() {
         20.0,
         WheelChildDelegate::children(Vec::<u32>::new()),
     );
-    let layout = empty.layout(Size::new(100.0, 100.0));
+    let layout = empty
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(layout.selected_index, None);
     assert_eq!(empty.selected_item(), None);
     assert!(layout.children.is_empty());
@@ -128,7 +144,9 @@ fn wheel_bounds_clamp_and_settle_keeps_logical_and_visual_agreement() {
         20.0,
         WheelChildDelegate::children(numbered(12)),
     );
-    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let _ = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 220.0);
 
     // Jumping past the final item clamps to it; there is no looping
@@ -152,7 +170,9 @@ fn wheel_bounds_clamp_and_settle_keeps_logical_and_visual_agreement() {
         assert!(controller.jump_to(target as f32 * 20.0 + 5.0));
         assert_eq!(viewport.settle(), Some(target));
         assert_eq!(controller.offset(), target as f32 * 20.0);
-        let layout = viewport.layout(Size::new(100.0, 100.0));
+        let layout = viewport
+            .layout(Size::new(100.0, 100.0))
+            .expect("free controller publishes");
         assert_eq!(layout.selected_index, Some(target));
         let center = layout
             .children
@@ -237,14 +257,20 @@ fn wheel_rendering_policy_magnifier_opacity_and_measure() {
         20.0,
         WheelChildDelegate::children(numbered(12)),
     );
-    let plain = viewport.layout(Size::new(100.0, 100.0));
+    let plain = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     viewport.set_rendering_policy(true, Clip::None);
-    let eager = viewport.layout(Size::new(100.0, 100.0));
+    let eager = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert!(eager.children.len() > plain.children.len());
 
     viewport.set_rendering_policy(false, Clip::HardEdge);
     viewport.set_magnifier(true, 1.5);
-    let magnified = viewport.layout(Size::new(100.0, 100.0));
+    let magnified = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     let plain_center = plain
         .children
         .iter()
@@ -263,7 +289,9 @@ fn wheel_rendering_policy_magnifier_opacity_and_measure() {
 
     viewport.set_magnifier(false, 1.0);
     viewport.set_over_under_center_opacity(0.25);
-    let faded = viewport.layout(Size::new(100.0, 100.0));
+    let faded = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert!(!faded.children.is_empty());
     for child in &faded.children {
         if child.in_center {
@@ -275,9 +303,11 @@ fn wheel_rendering_policy_magnifier_opacity_and_measure() {
 
     // Custom measurement keeps its width while the fixed extent still
     // dictates the item height, and the layout stays sliver-compatible.
-    let measured = viewport.layout_with_measure(Size::new(100.0, 100.0), |_, _| {
-        incular_config::Constraints::new(0.0, 100.0, 20.0, 20.0).biggest()
-    });
+    let measured = viewport
+        .layout_with_measure(Size::new(100.0, 100.0), |_, _| {
+            incular_config::Constraints::new(0.0, 100.0, 20.0, 20.0).biggest()
+        })
+        .expect("free controller publishes");
     assert!(!measured.children.is_empty());
     for child in &measured.children {
         assert_eq!(child.untransformed_rect.size.height, 20.0);
@@ -326,7 +356,9 @@ fn wheel_scroll_view_wrapper_exposes_viewport_models() {
     );
     assert_eq!(scroll_view.viewport().selected_item(), Some(0));
     scroll_view.viewport_mut().set_magnifier(true, 1.25);
-    let layout = scroll_view.layout(Size::new(100.0, 80.0));
+    let layout = scroll_view
+        .layout(Size::new(100.0, 80.0))
+        .expect("free controller publishes");
     assert_eq!(layout.selected_index, Some(0));
     assert_eq!(layout.hit_test(Offset::new(50.0, 40.0)), Some(0));
     let retained: Widget = scroll_view.into();
@@ -341,7 +373,9 @@ fn wheel_physics_selection_survives_replacement() {
         WheelChildDelegate::children(numbered(8)),
     );
     viewport.set_physics(ScrollPhysics::clamping());
-    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let _ = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert!(viewport.jump_to_item(4));
     assert_eq!(viewport.selected_item(), Some(4));
 }
@@ -356,7 +390,9 @@ fn wheel_physics_swap_takes_effect_on_next_input() {
         20.0,
         WheelChildDelegate::children(numbered(8)),
     );
-    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let _ = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     let moved = viewport.apply_delta(30.0);
     assert!(moved.accepted);
 
@@ -467,10 +503,14 @@ fn wheel_layout_stamps_consumed_revision_not_live_revision() {
             }
         }),
     );
-    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let _ = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert!(controller.jump_to(60.0));
     let consumed = controller.revision();
-    let layout = viewport.layout(Size::new(100.0, 100.0));
+    let layout = viewport
+        .layout(Size::new(100.0, 100.0))
+        .expect("free controller publishes");
     assert_eq!(layout.selected_index, Some(3));
     assert_eq!(layout.controller_revision, consumed);
     assert_eq!(controller.revision(), consumed + 1);
