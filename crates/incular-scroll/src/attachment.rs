@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::controller::ScrollController;
+use crate::{controller::ScrollController, physics::ScrollPhysics};
 
 /// Process-wide sequence minting attachment identities. One live
 /// attachment exists per controller, but identities are never reused, so
@@ -32,6 +32,58 @@ impl MetricOwner {
         self.tree
     }
 }
+
+/// Rejection from a metric-publication attempt: either the publishing
+/// handle is not the live attachment, or — on the unattached path — a
+/// live attachment owns the controller. Rejections happen before any
+/// mutation, so extents, offset, revision, ownership, and notifications
+/// are all preserved. The owning tree travels for diagnostics only; it
+/// grants no power to mutate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetricWriteError {
+    /// The publishing handle is not the controller's live attachment:
+    /// stale, released, or never attached. Nothing was written.
+    StaleAttachment,
+    /// A live attachment owns the controller, so unattached publication
+    /// is refused. Nothing was written.
+    AttachedOwner {
+        /// The owning tree, for diagnostics only.
+        owner_tree: u64,
+    },
+}
+
+impl MetricWriteError {
+    pub(crate) fn attached(owner_tree: u64) -> Self {
+        Self::AttachedOwner { owner_tree }
+    }
+
+    /// The owning tree on the unattached path, if any. Diagnostic only.
+    #[must_use]
+    pub fn owner_tree(&self) -> Option<u64> {
+        match *self {
+            Self::StaleAttachment => None,
+            Self::AttachedOwner { owner_tree } => Some(owner_tree),
+        }
+    }
+}
+
+impl std::fmt::Display for MetricWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::StaleAttachment => write!(
+                f,
+                "metric attachment is not the live owner: refusing extent publication"
+            ),
+            Self::AttachedOwner { owner_tree } => write!(
+                f,
+                "scroll controller is owned by tree-{owner_tree}: \
+                 refusing unattached extent publication"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MetricWriteError {}
 
 /// Rejection from [`ScrollController::try_attach`]: the controller
 /// already has a live owner. Both fields are diagnostics for reporting
@@ -114,6 +166,33 @@ impl MetricAttachment {
     #[must_use]
     pub fn controller(&self) -> &ScrollController {
         &self.controller
+    }
+
+    /// Publishes content and viewport extents through this attachment.
+    /// Succeeds only while this handle is still the live owner; a stale
+    /// handle fails without mutating anything — no extent, offset,
+    /// revision, or notification changes. Success runs the single shared
+    /// extent algorithm, identical to every other publication path.
+    /// Framework-internal: attached viewports publish through the lease
+    /// their tree holds.
+    #[doc(hidden)]
+    pub fn update_extents(
+        &self,
+        content: f32,
+        viewport: f32,
+        physics: ScrollPhysics,
+    ) -> Result<(), MetricWriteError> {
+        let publication = {
+            let mut state = self.controller.state.borrow_mut();
+            match state.metric_attachment {
+                Some(live) if live.id == self.id => {
+                    ScrollController::commit_extent_state(&mut state, content, viewport, physics)
+                }
+                _ => return Err(MetricWriteError::StaleAttachment),
+            }
+        };
+        self.controller.finish_extent_publication(publication);
+        Ok(())
     }
 
     /// Releases ownership when this attachment is still the live owner.

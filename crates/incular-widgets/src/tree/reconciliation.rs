@@ -1359,6 +1359,29 @@ impl WidgetTree {
         }
     }
 
+    /// Publishes metric extents for a viewport layout. A live lease
+    /// publishes through its attachment; a render without an element has
+    /// no lease to publish through, so it uses the legacy unrestricted
+    /// write (documented last-writer-wins geometry that never transfers
+    /// ownership). The lease is live whenever the caller claimed above:
+    /// only this tree releases its handles, and no releasing code runs
+    /// between claim and publication.
+    pub(super) fn publish_scroll_extents(
+        &self,
+        element: Option<ElementId>,
+        controller: &ScrollController,
+        content: f32,
+        viewport: f32,
+        physics: ScrollPhysics,
+    ) {
+        match element.and_then(|element| self.scroll_attachments.get(&element)) {
+            Some(lease) => lease
+                .update_extents(content, viewport, physics)
+                .expect("viewport lease claimed above is live"),
+            None => controller.update_extents_with_physics(content, viewport, physics),
+        }
+    }
+
     /// Reports a failed attach with the owning viewport element when the
     /// owner lives in this tree. Failure path only: routine claims never
     /// scan the lease map.

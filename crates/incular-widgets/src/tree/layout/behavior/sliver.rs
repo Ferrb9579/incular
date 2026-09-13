@@ -39,6 +39,39 @@ struct PublishedViewportAttempt {
 }
 
 impl WidgetTree {
+    /// Publishes one sliver-viewport attempt through the viewport's lease
+    /// — or the legacy unrestricted write when the render has no element
+    /// — then records the attempt for the bounded fallback. Every sliver
+    /// publication below routes through the same lease-checked helper as
+    /// the other viewport families.
+    fn publish_sliver_attempt(
+        &self,
+        viewport_element: Option<ElementId>,
+        config: &crate::scrolling::SliverViewportConfig,
+        last_published: &mut Option<PublishedViewportAttempt>,
+        size: Size,
+        viewport: f32,
+        layout: crate::scrolling::SliverViewportLayout,
+    ) -> crate::scrolling::SliverViewportLayout {
+        let content = layout.geometry.scroll_extent.max(0.);
+        self.publish_scroll_extents(
+            viewport_element,
+            &config.controller,
+            content,
+            viewport,
+            config.physics,
+        );
+        if config.shrink_wrap {
+            *last_published = Some(PublishedViewportAttempt {
+                size,
+                viewport_extent: viewport,
+                content_extent: content,
+                layout: layout.clone(),
+            });
+        }
+        layout
+    }
+
     /// Reconciles materialized sliver children against `sliver_layout`,
     /// measures each under its constraints, applies offsets, and reports
     /// whether any retained measurement changed. When `record_measurements`
@@ -121,35 +154,19 @@ impl WidgetTree {
                 // never resize from content, so they have no cross-attempt
                 // size to reconcile.
                 //
-                // Attached metric write, claimed once per layout: the
-                // publish closure below inherits this claim for every
-                // publication it makes, including the bounded-fallback
+                // Attached metric write, claimed once per layout: every
+                // publication below inherits this claim through the
+                // viewport's lease, including the bounded-fallback
                 // republish, which restates identical values.
-                if let Some(viewport) = self.element_for_render(id) {
+                let viewport_element = self.element_for_render(id);
+                if let Some(viewport) = viewport_element {
                     self.claim_scroll_viewport(viewport, &config.controller)?;
                 }
                 let mut last_published: Option<PublishedViewportAttempt> = None;
-                let mut publish = |size: Size,
-                                   viewport: f32,
-                                   layout: crate::scrolling::SliverViewportLayout|
-                 -> crate::scrolling::SliverViewportLayout {
-                    let content = layout.geometry.scroll_extent.max(0.);
-                    config.controller.update_extents_with_physics(
-                        content,
-                        viewport,
-                        config.physics,
-                    );
-                    if config.shrink_wrap {
-                        last_published = Some(PublishedViewportAttempt {
-                            size,
-                            viewport_extent: viewport,
-                            content_extent: content,
-                            layout: layout.clone(),
-                        });
-                    }
-                    layout
-                };
-                let mut sliver_layout = publish(
+                let mut sliver_layout = self.publish_sliver_attempt(
+                    viewport_element,
+                    &config,
+                    &mut last_published,
                     size,
                     viewport_extent,
                     config.delegate.perform_layout(make_constraints(
@@ -175,7 +192,10 @@ impl WidgetTree {
                     );
                     // Provisional: only its metrics publication matters; the
                     // corrective layout below supersedes its geometry.
-                    let _ = publish(
+                    let _ = self.publish_sliver_attempt(
+                        viewport_element,
+                        &config,
+                        &mut last_published,
                         size,
                         viewport_extent,
                         config.delegate.perform_layout(make_constraints(
@@ -189,7 +209,10 @@ impl WidgetTree {
                 // establish the physical origin of a reversed viewport. One
                 // corrective layout keeps geometry and the retained range in
                 // the same coordinate space from the first frame.
-                sliver_layout = publish(
+                sliver_layout = self.publish_sliver_attempt(
+                    viewport_element,
+                    &config,
+                    &mut last_published,
                     size,
                     viewport_extent,
                     config.delegate.perform_layout(make_constraints(
@@ -231,7 +254,10 @@ impl WidgetTree {
                         converged = true;
                         break;
                     }
-                    let mut next_layout = publish(
+                    let mut next_layout = self.publish_sliver_attempt(
+                        viewport_element,
+                        &config,
+                        &mut last_published,
                         size,
                         viewport_extent,
                         config
@@ -246,7 +272,10 @@ impl WidgetTree {
                     let physical_after_extent =
                         physical_scroll_offset(&config.controller, config.reverse);
                     if physical_after_extent != physical_before {
-                        next_layout = publish(
+                        next_layout = self.publish_sliver_attempt(
+                            viewport_element,
+                            &config,
+                            &mut last_published,
                             size,
                             viewport_extent,
                             config.delegate.perform_layout(make_constraints(
@@ -274,7 +303,10 @@ impl WidgetTree {
                                 corrected_physical
                             };
                             if config.controller.jump_to(corrected_logical) {
-                                next_layout = publish(
+                                next_layout = self.publish_sliver_attempt(
+                                    viewport_element,
+                                    &config,
+                                    &mut last_published,
                                     size,
                                     viewport_extent,
                                     config.delegate.perform_layout(make_constraints(
@@ -321,7 +353,9 @@ impl WidgetTree {
                     && !converged
                     && let Some(snapshot) = last_published
                 {
-                    config.controller.update_extents_with_physics(
+                    self.publish_scroll_extents(
+                        viewport_element,
+                        &config.controller,
                         snapshot.content_extent,
                         snapshot.viewport_extent,
                         config.physics,

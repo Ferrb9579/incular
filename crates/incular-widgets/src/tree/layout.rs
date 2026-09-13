@@ -167,24 +167,37 @@ impl WidgetTree {
     ) -> Result<(), TreeError> {
         // Attached metric write under the same single-owner contract as
         // ordinary viewports: a retained wheel viewport claims its
-        // controller before measuring feeds geometry. Headless model
-        // layouts have no element to attribute, so they write without
-        // claiming and never disturb a live owner.
-        let controller = self
+        // controller, publishes through its lease, then lays out children
+        // from the published offset. Headless model layouts have no
+        // element to attribute, so they write without claiming and never
+        // disturb a live owner.
+        let viewport = self
             .wheel_state_live_mut(id)
             .viewport
             .as_ref()
-            .expect("wheel render must own retained viewport")
-            .controller();
+            .expect("wheel render must own retained viewport");
+        let controller = viewport.controller();
+        let max_scroll_extent = viewport.max_scroll_extent();
+        let physics = viewport.physics();
         self.claim_scroll_viewport(element_id, &controller)?;
+        self.publish_scroll_extents(
+            Some(element_id),
+            &controller,
+            max_scroll_extent + viewport_size.height,
+            viewport_size.height,
+            physics,
+        );
         let layout = self
             .wheel_state_live_mut(id)
             .viewport
             .as_mut()
             .expect("wheel render must own retained viewport")
-            .layout_with_measure(viewport_size, |_, child_constraints| {
-                child_constraints.biggest()
-            });
+            .layout_with_offset(
+                viewport_size,
+                |_, child_constraints| child_constraints.biggest(),
+                controller.offset(),
+                controller.revision(),
+            );
         let desired = layout
             .children
             .iter()

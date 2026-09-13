@@ -1663,6 +1663,52 @@ fn steady_layout_reuses_its_lease() {
 }
 
 #[test]
+fn unattached_publication_rejected_while_viewport_owns() {
+    // The checked headless path refuses an owned controller with full
+    // preservation, then succeeds once the viewport detaches: ownership
+    // gates publication, detachment restores headless access.
+    let controller = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(30.));
+    let attachment = controller.attachment_id().expect("viewport owns");
+    let revision = controller.revision();
+    events.borrow_mut().clear();
+    let error = controller
+        .try_update_unattached_extents(900., 50., ScrollPhysics::clamping())
+        .unwrap_err();
+    assert_eq!(error.owner_tree(), Some(tree.tree_id()));
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert_eq!(controller.offset(), 30.);
+    assert_eq!(controller.revision(), revision);
+    assert_eq!(controller.attachment_id(), Some(attachment));
+    assert!(events.borrow().is_empty(), "rejection emits nothing");
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    controller
+        .try_update_unattached_extents(900., 50., ScrollPhysics::clamping())
+        .expect("freed controller accepts headless publication");
+    assert_eq!(controller.max_offset(), 850.);
+}
+
+#[test]
 fn dropped_tree_releases_attachments() {
     // Window-teardown shape: dropping the whole tree releases every
     // claim, so the app-owned controller mounts cleanly in a fresh tree.

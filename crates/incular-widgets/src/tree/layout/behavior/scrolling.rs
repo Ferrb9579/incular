@@ -22,17 +22,17 @@ impl WidgetTree {
                         .size;
                     let size = scroll_size(axis, constraints, content);
                     // Attached metric write: the claim attributes this
-                    // publication to a live viewport. A render without an
-                    // element cannot be attributed, so it writes without
-                    // claiming — an unattributed write that neither names
-                    // an attachment nor disturbs a live owner (the owner's
-                    // next real layout restores its geometry). The open
-                    // `update_extents` API stays available for hosts and
-                    // headless model use by design.
-                    if let Some(viewport) = self.element_for_render(id) {
+                    // publication to the live lease, which publishes
+                    // through its attachment. A render without an element
+                    // has no lease; it keeps the legacy unrestricted
+                    // write (last-writer-wins geometry, never ownership).
+                    let viewport_element = self.element_for_render(id);
+                    if let Some(viewport) = viewport_element {
                         self.claim_scroll_viewport(viewport, &controller)?;
                     }
-                    controller.update_extents_with_physics(
+                    self.publish_scroll_extents(
+                        viewport_element,
+                        &controller,
                         axis.main_extent(content),
                         scroll_viewport_extent(axis, size),
                         physics,

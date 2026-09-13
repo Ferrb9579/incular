@@ -10,7 +10,7 @@ use std::{f32::consts::FRAC_PI_2, ops::Range, rc::Rc};
 
 use incular_config::{Axis, Clip, Constraints};
 use incular_core::{Offset, Rect, Size};
-use incular_scroll::{ScrollController, ScrollPhysics, SliverConstraints};
+use incular_scroll::{MetricWriteError, ScrollController, ScrollPhysics, SliverConstraints};
 
 /// How a fixed-extent wheel reports selection changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -594,6 +594,12 @@ impl<T> ListWheelViewport<T> {
         self.controller.clone()
     }
 
+    /// Returns the physics applied to extent publication.
+    #[must_use]
+    pub(crate) fn physics(&self) -> ScrollPhysics {
+        self.physics
+    }
+
     pub(crate) fn into_retained_config(self) -> WheelViewportConfig<T> {
         WheelViewportConfig {
             controller: self.controller,
@@ -694,6 +700,12 @@ impl<T> ListWheelViewport<T> {
     }
 
     /// Performs a layout pass with a child measurement callback.
+    ///
+    /// Headless legacy entry: publishes through the unrestricted extent
+    /// API. Retained viewports publish through their attachment instead
+    /// (see the tree's wheel preparation); ownership-respecting headless
+    /// callers use [`layout_unattached`](Self::layout_unattached), which
+    /// refuses to disturb a live owner.
     pub fn layout_with_measure(
         &mut self,
         size: Size,
@@ -714,6 +726,47 @@ impl<T> ListWheelViewport<T> {
         );
         let scroll_offset = self.controller.offset();
         let consumed_revision = self.controller.revision();
+        self.layout_with_offset(size, measure, scroll_offset, consumed_revision)
+    }
+
+    /// Headless layout that publishes through the unattached-checked
+    /// path: succeeds only while no viewport owns the controller, and
+    /// fails without mutating anything otherwise — extents, offset,
+    /// revision, ownership, and notifications are all preserved.
+    pub fn layout_unattached(&mut self, size: Size) -> Result<WheelLayout<T>, MetricWriteError>
+    where
+        T: Clone,
+    {
+        self.controller.set_metrics_context(Axis::Vertical, false);
+        let max_scroll_extent = self.max_scroll_extent();
+        self.controller.try_update_unattached_extents(
+            max_scroll_extent + size.height,
+            size.height,
+            self.physics,
+        )?;
+        Ok(self.layout_with_offset(
+            size,
+            |_, constraints| constraints.biggest(),
+            self.controller.offset(),
+            self.controller.revision(),
+        ))
+    }
+
+    /// Lays out children from an already-published offset. The single
+    /// tail behind every publication path — unrestricted headless,
+    /// unattached-checked, and lease-driven retained — so all three share
+    /// identical child measurement, selection, and reporting behavior.
+    pub(crate) fn layout_with_offset(
+        &mut self,
+        size: Size,
+        measure: impl Fn(&T, Constraints) -> Size,
+        scroll_offset: f32,
+        consumed_revision: u64,
+    ) -> WheelLayout<T>
+    where
+        T: Clone,
+    {
+        let max_scroll_extent = self.max_scroll_extent();
         let visible_height = size.height
             * self.projection.squeeze
             * if self.render_children_outside_viewport {
@@ -827,7 +880,7 @@ impl<T> ListWheelViewport<T> {
         }
     }
 
-    fn max_scroll_extent(&self) -> f32 {
+    pub(crate) fn max_scroll_extent(&self) -> f32 {
         match self.delegate.child_count() {
             Some(0) => 0.0,
             Some(count) => count.saturating_sub(1) as f32 * self.item_extent,

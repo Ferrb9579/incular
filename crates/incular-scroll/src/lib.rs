@@ -13,7 +13,7 @@ mod scrollbar;
 mod sliver;
 
 pub use activity::{DragStartBehavior, ScrollViewKeyboardDismissBehavior};
-pub use attachment::{AttachmentConflict, MetricAttachment, MetricOwner};
+pub use attachment::{AttachmentConflict, MetricAttachment, MetricOwner, MetricWriteError};
 pub use controller::ScrollController;
 pub use coordinator::NestedScrollCoordinator;
 pub use extent_index::{ExtentIndexMetrics, MeasuredExtentIndex};

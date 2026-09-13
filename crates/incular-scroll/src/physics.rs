@@ -1,7 +1,21 @@
 use crate::{
-    controller::ScrollController, notifications::ScrollNotificationType,
-    restoration::persist_scroll_offset,
+    attachment::MetricWriteError,
+    controller::{ScrollController, ScrollState},
+    notifications::ScrollNotificationType,
+    restoration::{ScrollRestoration, persist_scroll_offset},
 };
+
+/// Snapshot carried from the locked extent commit to the unlocked
+/// notification phase, so every publication path dispatches from the
+/// same committed values.
+pub(crate) struct ExtentPublication {
+    pub(crate) persistence: Option<(Option<ScrollRestoration>, f32)>,
+    pub(crate) content: f32,
+    pub(crate) viewport: f32,
+    pub(crate) old_content: f32,
+    pub(crate) old_viewport: f32,
+    pub(crate) old_offset: f32,
+}
 
 /// The default clamping policy used by native desktop/mobile views.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -428,10 +442,14 @@ impl ScrollController {
     ///
     /// The method is public so independent viewport implementations can share
     /// a controller; applications normally use `jump_to` or `scroll_by`.
-    /// Writes are last-writer-wins but never touch ownership: a headless
-    /// write to an owned controller changes geometry — which the owner's
-    /// next real layout restores — without transferring, clearing, or
-    /// disturbing the live attachment, its owner, or its activity.
+    ///
+    /// Migration: retained viewports publish through their
+    /// [`MetricAttachment`](crate::MetricAttachment); headless publishers
+    /// that must not disturb a live owner use
+    /// [`try_update_unattached_extents`](Self::try_update_unattached_extents).
+    /// This unrestricted method remains for hosts, tests, and models that
+    /// own their controller outright — it writes regardless of attachment,
+    /// with last-writer-wins geometry that never transfers ownership.
     pub fn update_extents(&self, content: f32, viewport: f32) {
         self.update_extents_with_physics(content, viewport, ScrollPhysics::default());
     }
@@ -446,92 +464,150 @@ impl ScrollController {
     /// content grows, shrinks, or whose viewport is resized while the user is
     /// at the end.  The ordinary `update_extents` API remains available for
     /// callers that want simple clamping.
+    ///
+    /// Migration: same as [`update_extents`](Self::update_extents) — this
+    /// unrestricted method writes regardless of attachment. Retained
+    /// viewports publish through their attachment; ownership-respecting
+    /// headless publishers use
+    /// [`try_update_unattached_extents`](Self::try_update_unattached_extents).
     pub fn update_extents_with_physics(&self, content: f32, viewport: f32, physics: ScrollPhysics) {
-        let (old_offset, old_content, old_viewport) = {
-            let state = self.state.borrow();
-            (state.offset, state.content_extent, state.viewport_extent)
-        };
-        let persistence = {
+        let publication = {
             let mut state = self.state.borrow_mut();
-            let old_max_offset = state.max_offset;
-            let old_offset = state.offset;
-            state.content_extent = content.max(0.);
-            state.viewport_extent = viewport.max(0.);
-            state.max_offset = (state.content_extent - state.viewport_extent).max(0.);
-            if let Some(requested) = state.pending_jump_offset {
-                let next = requested.min(state.max_offset);
-                if next != state.offset {
-                    state.offset = next;
-                    state.revision += 1;
-                }
-                if requested <= state.max_offset {
-                    state.pending_jump_offset = None;
-                }
-                None
-            } else if let Some(restored) = state.pending_restored_offset {
-                let next = restored.min(state.max_offset);
-                if next != state.offset {
-                    state.offset = next;
-                    state.revision += 1;
-                }
-                // Keep a larger requested position pending while asynchronous
-                // content grows, instead of overwriting the only snapshot
-                // with a temporary short-content clamp.
-                if restored <= state.max_offset {
-                    state.pending_restored_offset = None;
-                }
-                None
-            } else {
-                let next = if physics.is_range_maintaining()
-                    && (state.max_offset - old_max_offset).abs() > f32::EPSILON
-                    && old_max_offset > 0.
-                    && (old_offset - old_max_offset).abs() <= 0.001
-                {
-                    // Preserve the logical trailing-edge anchor when the
-                    // range changes.  This handles both content mutation and
-                    // viewport resize without rebuilding the scroll view.
-                    state.max_offset
-                } else if old_content == state.content_extent
-                    && old_viewport == state.viewport_extent
-                    && let BoundaryPhysics::Bouncing { max_overscroll, .. } = physics.boundary
-                {
-                    // Retained layout republishes unchanged metrics during a
-                    // drag. Preserve its visual overscroll until settlement,
-                    // bounded by the currently selected bouncing policy.
-                    let limit = if max_overscroll.is_finite() {
-                        max_overscroll.max(0.)
-                    } else {
-                        0.
-                    };
-                    old_offset.clamp(-limit, (state.max_offset + limit).min(f32::MAX))
+            Self::commit_extent_state(&mut state, content, viewport, physics)
+        };
+        self.finish_extent_publication(publication);
+    }
+
+    /// Checked headless publication: writes only while no attachment owns
+    /// the controller, failing without mutating anything otherwise. A
+    /// rejection preserves extents, offset, revision, ownership, and
+    /// emits no notifications — authority is validated before any
+    /// mutation, clamping, or dispatch. Framework-internal: headless
+    /// models and hosts that must not disturb a live owner.
+    #[doc(hidden)]
+    pub fn try_update_unattached_extents(
+        &self,
+        content: f32,
+        viewport: f32,
+        physics: ScrollPhysics,
+    ) -> Result<(), MetricWriteError> {
+        let publication = {
+            let mut state = self.state.borrow_mut();
+            if let Some(live) = state.metric_attachment {
+                return Err(MetricWriteError::attached(live.tree));
+            }
+            Self::commit_extent_state(&mut state, content, viewport, physics)
+        };
+        self.finish_extent_publication(publication);
+        Ok(())
+    }
+
+    /// The single extent-update algorithm behind every publication path:
+    /// attached, unattached-checked, and legacy unrestricted. Runs under
+    /// the caller's state lock with authority already validated, so all
+    /// three paths share identical clamping, pending-request, revision,
+    /// and restoration behavior.
+    pub(crate) fn commit_extent_state(
+        state: &mut ScrollState,
+        content: f32,
+        viewport: f32,
+        physics: ScrollPhysics,
+    ) -> ExtentPublication {
+        let old_offset = state.offset;
+        let old_content = state.content_extent;
+        let old_viewport = state.viewport_extent;
+        let old_max_offset = state.max_offset;
+        state.content_extent = content.max(0.);
+        state.viewport_extent = viewport.max(0.);
+        state.max_offset = (state.content_extent - state.viewport_extent).max(0.);
+        let persistence = if let Some(requested) = state.pending_jump_offset {
+            let next = requested.min(state.max_offset);
+            if next != state.offset {
+                state.offset = next;
+                state.revision += 1;
+            }
+            if requested <= state.max_offset {
+                state.pending_jump_offset = None;
+            }
+            None
+        } else if let Some(restored) = state.pending_restored_offset {
+            let next = restored.min(state.max_offset);
+            if next != state.offset {
+                state.offset = next;
+                state.revision += 1;
+            }
+            // Keep a larger requested position pending while asynchronous
+            // content grows, instead of overwriting the only snapshot
+            // with a temporary short-content clamp.
+            if restored <= state.max_offset {
+                state.pending_restored_offset = None;
+            }
+            None
+        } else {
+            let next = if physics.is_range_maintaining()
+                && (state.max_offset - old_max_offset).abs() > f32::EPSILON
+                && old_max_offset > 0.
+                && (old_offset - old_max_offset).abs() <= 0.001
+            {
+                // Preserve the logical trailing-edge anchor when the
+                // range changes.  This handles both content mutation and
+                // viewport resize without rebuilding the scroll view.
+                state.max_offset
+            } else if old_content == state.content_extent
+                && old_viewport == state.viewport_extent
+                && let BoundaryPhysics::Bouncing { max_overscroll, .. } = physics.boundary
+            {
+                // Retained layout republishes unchanged metrics during a
+                // drag. Preserve its visual overscroll until settlement,
+                // bounded by the currently selected bouncing policy.
+                let limit = if max_overscroll.is_finite() {
+                    max_overscroll.max(0.)
                 } else {
-                    old_offset.clamp(0., state.max_offset)
+                    0.
                 };
-                if next != state.offset {
-                    state.offset = next;
-                    state.revision += 1;
-                    // Bouncing offsets are transient presentation state.
-                    (0. ..=state.max_offset)
-                        .contains(&next)
-                        .then(|| (state.restoration.clone(), next))
-                } else {
-                    None
-                }
+                old_offset.clamp(-limit, (state.max_offset + limit).min(f32::MAX))
+            } else {
+                old_offset.clamp(0., state.max_offset)
+            };
+            if next != state.offset {
+                state.offset = next;
+                state.revision += 1;
+                // Bouncing offsets are transient presentation state.
+                (0. ..=state.max_offset)
+                    .contains(&next)
+                    .then(|| (state.restoration.clone(), next))
+            } else {
+                None
             }
         };
-        if let Some((restoration, offset)) = persistence {
+        ExtentPublication {
+            persistence,
+            content,
+            viewport,
+            old_content,
+            old_viewport,
+            old_offset,
+        }
+    }
+
+    /// Post-commit side effects shared by every publication path:
+    /// restoration persistence plus Metrics/Update notifications. Runs
+    /// after the state lock drops, so listeners never observe a
+    /// half-committed record.
+    pub(crate) fn finish_extent_publication(&self, publication: ExtentPublication) {
+        if let Some((restoration, offset)) = publication.persistence {
             persist_scroll_offset(restoration, offset);
         }
         let next_offset = self.offset();
-        if (content.max(0.) - old_content).abs() > f32::EPSILON
-            || (viewport.max(0.) - old_viewport).abs() > f32::EPSILON
+        if (publication.content.max(0.) - publication.old_content).abs() > f32::EPSILON
+            || (publication.viewport.max(0.) - publication.old_viewport).abs() > f32::EPSILON
         {
             self.dispatch_notification(ScrollNotificationType::Metrics, 0., 0.);
         }
-        if (next_offset - old_offset).abs() > f32::EPSILON {
+        if (next_offset - publication.old_offset).abs() > f32::EPSILON {
             self.dispatch_notification(
                 ScrollNotificationType::Update,
-                next_offset - old_offset,
+                next_offset - publication.old_offset,
                 0.,
             );
         }

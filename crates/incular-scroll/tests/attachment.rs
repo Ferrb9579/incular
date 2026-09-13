@@ -6,7 +6,24 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use incular_scroll::{MetricOwner, ScrollController, ScrollNotificationType};
+use incular_scroll::{
+    MetricOwner, MetricWriteError, ScrollController, ScrollNotificationType, ScrollPhysics,
+};
+
+fn notification_log(
+    controller: &ScrollController,
+) -> (
+    Rc<std::cell::RefCell<Vec<ScrollNotificationType>>>,
+    incular_scroll::ScrollNotificationSubscription,
+) {
+    let log = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let logged = log.clone();
+    let subscription = controller.add_listener(move |notification| {
+        logged.borrow_mut().push(notification.kind);
+        false
+    });
+    (log, subscription)
+}
 
 fn owner(tree: u64) -> MetricOwner {
     MetricOwner::of_tree(tree)
@@ -181,6 +198,76 @@ fn torn_down_controller_state_stays_usable() {
     assert_eq!(controller.max_offset(), 400.);
     let renewed = controller.try_attach(owner(2)).expect("reattaches cleanly");
     assert!(renewed.release());
+}
+
+#[test]
+fn attached_publication_writes_and_rejects_when_stale() {
+    // The lease authorizes publication: the live handle writes through
+    // the shared algorithm, while a stale handle fails preserving
+    // content extent, viewport extent, offset, revision, ownership, and
+    // notifications — every observable stays put.
+    let controller = ScrollController::new();
+    let (log, _guard) = notification_log(&controller);
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    attachment
+        .update_extents(300., 100., ScrollPhysics::default())
+        .expect("live attachment publishes");
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert_eq!(log.borrow().as_slice(), &[ScrollNotificationType::Metrics]);
+    assert!(attachment.release());
+    let revision = controller.revision();
+    let error = attachment
+        .update_extents(900., 50., ScrollPhysics::default())
+        .expect_err("stale handle cannot publish");
+    assert_eq!(error, MetricWriteError::StaleAttachment);
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(controller.revision(), revision);
+    assert_eq!(controller.metric_owner(), None);
+    assert_eq!(log.borrow().len(), 1, "rejection emits nothing");
+}
+
+#[test]
+fn unattached_publication_succeeds_only_while_free() {
+    // Headless publishers use the checked path: free controllers accept,
+    // owned controllers reject with full preservation — including the
+    // live attachment, which the rejection never disturbs.
+    let controller = ScrollController::new();
+    let (log, _guard) = notification_log(&controller);
+    controller
+        .try_update_unattached_extents(300., 100., ScrollPhysics::default())
+        .expect("free controller accepts headless publication");
+    assert_eq!(controller.max_offset(), 200.);
+    log.borrow_mut().clear();
+    let attachment = controller
+        .try_attach(owner(3))
+        .expect("free controller attaches");
+    assert!(controller.jump_to(40.));
+    let revision = controller.revision();
+    log.borrow_mut().clear();
+    let error = controller
+        .try_update_unattached_extents(900., 50., ScrollPhysics::default())
+        .expect_err("owned controller refuses headless publication");
+    assert_eq!(error.owner_tree(), Some(3));
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert_eq!(controller.offset(), 40.);
+    assert_eq!(controller.revision(), revision);
+    assert_eq!(controller.metric_owner(), Some(3));
+    assert_eq!(controller.attachment_id(), Some(attachment.id()));
+    assert!(log.borrow().is_empty(), "rejection emits nothing");
+    assert!(attachment.release());
+    controller
+        .try_update_unattached_extents(900., 50., ScrollPhysics::default())
+        .expect("released controller accepts again");
+    assert_eq!(controller.max_offset(), 850.);
 }
 
 #[test]

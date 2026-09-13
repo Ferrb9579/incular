@@ -532,6 +532,48 @@ fn contested_headless_write_never_disturbs_the_live_owner() {
 }
 
 #[test]
+fn headless_wheel_publication_rejected_while_attached() {
+    // A headless wheel model sharing an attached controller publishes
+    // through the checked path: rejection preserves content extent,
+    // viewport extent, offset, revision, ownership, and notifications,
+    // and the owner drives on undisturbed.
+    let controller = ScrollController::new();
+    let scrolled: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(controller.clone())
+            .into();
+    let ordinary: Widget = SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into();
+    let mut tree = WidgetTree::new();
+    tree.mount(Column::new(vec![ordinary]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert!(controller.jump_to(30.));
+    let attachment = controller.attachment_id().expect("ordinary owns");
+    let revision = controller.revision();
+    let mut model = ListWheelViewport::new(
+        controller.clone(),
+        20.0,
+        WheelChildDelegate::children(wheel_children(8)),
+    );
+    let error = match model.layout_unattached(Size::new(100.0, 100.0)) {
+        Ok(_) => panic!("owned controller refuses headless wheel publication"),
+        Err(error) => error,
+    };
+    assert_eq!(error.owner_tree(), Some(tree.tree_id()));
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert_eq!(controller.offset(), 30.);
+    assert_eq!(controller.revision(), revision);
+    assert_eq!(controller.attachment_id(), Some(attachment));
+    assert_eq!(controller.metric_owner(), Some(tree.tree_id()));
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("owner drives on");
+    assert_eq!(controller.max_offset(), 200.);
+}
+
+#[test]
 fn ordinary_to_wheel_lifecycle_through_teardown_and_remount() {
     // One controller across families and teardown: ordinary owns X; a
     // wheel claim on X is rejected without disturbing the owner; after
