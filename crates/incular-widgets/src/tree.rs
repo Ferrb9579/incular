@@ -980,15 +980,17 @@ pub struct WidgetTree {
     raw_gesture_streams: HashMap<GestureArenaKey, ActiveRawGesture>,
     raw_pointer_routes: HashMap<GestureArenaKey, Vec<ElementId>>,
     /// Scroll viewport attachments: viewport element to its live
-    /// attachment handle. One live viewport per controller; the handle
-    /// is the only key that releases, so entries here always name live
-    /// ownership. Entries leave on unmount and replacement; tree drop
-    /// drains the map, and each handle's `Drop` runs silent teardown —
-    /// so app-retained controllers remount cleanly elsewhere. Silence
-    /// from drop is this host's chosen policy (listeners belong to
-    /// torn-down context), not a universal Rust rule. Handles owned by
-    /// other trees can never sit in this map.
-    scroll_attachments: HashMap<ElementId, MetricAttachment>,
+    /// attachment handles — one per driven controller (a single entry
+    /// for ordinary, sliver, and wheel viewports; a horizontal/vertical
+    /// pair for two-dimensional viewports). One live viewport per
+    /// controller; the handle is the only key that releases, so entries
+    /// here always name live ownership. Entries leave on unmount and
+    /// replacement; tree drop drains the map, and each handle's `Drop`
+    /// runs silent teardown — so app-retained controllers remount
+    /// cleanly elsewhere. Silence from drop is this host's chosen policy
+    /// (listeners belong to torn-down context), not a universal Rust
+    /// rule. Handles owned by other trees can never sit in this map.
+    scroll_attachments: HashMap<ElementId, Vec<MetricAttachment>>,
     mouse_hover: HashMap<GestureArenaKey, Vec<ElementId>>,
     consumed_tap_pointers: HashSet<GestureArenaKey>,
     pointer_captures: HashMap<GestureArenaKey, ElementId>,

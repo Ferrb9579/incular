@@ -92,7 +92,9 @@ fn draggable_sheet_snap_filters_sorts_and_dedups() {
 fn draggable_sheet_boundary_handoff_accounts_every_delta() {
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
     state.set_parent_height(400.0);
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
 
     // Mid-sheet drag resizes; nothing reaches the list or the parents.
     let drag = state.apply_user_offset(-100.0);
@@ -155,7 +157,9 @@ fn draggable_sheet_inner_physics_swap_takes_effect_on_next_input() {
 
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
     state.set_parent_height(400.0);
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     // Pin the sheet so input routes to the inner list.
     assert!(state.set_size(1.0, false));
     assert!(state.inner_controller().jump_to(100.0));
@@ -211,7 +215,9 @@ fn draggable_sheet_reset_reports_genuine_change() {
     // scales fractions to pixels) is not a change signal.
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
     state.set_parent_height(400.0);
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     assert!(!state.reset());
 
     // A moved extent resets to initial and reports the change.
@@ -321,7 +327,9 @@ fn draggable_sheet_reset_inner_listeners_observe_committed_sheet() {
     // before the inner position restores. Inner-controller listeners
     // therefore observe the already-committed sheet extent.
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     assert!(state.set_size(0.8, true));
     assert!(state.inner_controller().jump_to(50.0));
     let observed = Rc::new(RefCell::new(Vec::new()));
@@ -354,7 +362,9 @@ fn draggable_sheet_reset_inner_listener_mutation_orders_events() {
     // delayed past newer state — and the reentrant change and flags
     // must survive.
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     assert!(state.set_size(0.8, true));
     assert!(state.inner_controller().jump_to(50.0));
 
@@ -464,7 +474,9 @@ fn draggable_sheet_reset_listener_inner_move_is_overwritten_by_pending_restore()
     // still pending when sheet listeners run, so a sheet listener that
     // moves the inner position is overwritten by it.
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     assert!(state.set_size(0.8, true));
     assert!(state.inner_controller().jump_to(50.0));
     let state_for_listener = state.clone();
@@ -487,7 +499,9 @@ fn draggable_sheet_inner_listener_inner_move_survives() {
     // listeners run, so an inner listener that repositions survives. To
     // reposition after a reset, listen on the inner channel.
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     assert!(state.set_size(0.8, true));
     assert!(state.inner_controller().jump_to(50.0));
     let state_for_listener = state.clone();
@@ -725,6 +739,39 @@ fn draggable_sheet_detached_controller_paths_stay_explicit() {
             .animate_to(0.7, Duration::from_millis(50))
             .is_none()
     );
+}
+
+#[test]
+fn sheet_inner_extents_refused_while_inner_list_attached() {
+    // One position, one attachment: while the shared inner controller is
+    // owned — the attached inner list publishes — the sheet's direct
+    // write fails preserving content extent, viewport extent, offset,
+    // revision, and ownership. Freed, it publishes again. The sheet
+    // itself never claims either way.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    let inner = state.inner_controller();
+    state
+        .set_inner_extents(1_000., 200.)
+        .expect("free inner publishes");
+    assert_eq!(inner.max_offset(), 800.);
+    assert_eq!(inner.metric_owner(), None);
+    let lease = inner
+        .try_attach(incular_scroll::MetricOwner::of_tree(11))
+        .expect("free inner attaches");
+    let revision = inner.revision();
+    let error = state.set_inner_extents(500., 100.).unwrap_err();
+    assert_eq!(error.owner_tree(), Some(11));
+    assert_eq!(inner.content_extent(), 1_000.);
+    assert_eq!(inner.viewport_extent(), 200.);
+    assert_eq!(inner.max_offset(), 800.);
+    assert_eq!(inner.revision(), revision);
+    assert_eq!(inner.metric_owner(), Some(11));
+    assert_eq!(inner.attachment_id(), Some(lease.id()));
+    assert!(lease.release());
+    state
+        .set_inner_extents(500., 100.)
+        .expect("freed inner publishes");
+    assert_eq!(inner.max_offset(), 400.);
 }
 
 fn mount_tree(tree: &mut WidgetTree, widget: Widget) -> ElementId {

@@ -14,9 +14,11 @@ use common::*;
 use incular_config::{Axis, AxisDirection, Constraints};
 use incular_core::{Color, Offset, PointerPhase, Size};
 use incular_rendering::PaintCommand;
+use incular_scroll::MetricOwner;
 use incular_widgets::{
-    DiagonalDragBehavior, RawScrollbar, RawScrollbarOrientation, RawScrollbarStyle,
+    Column, DiagonalDragBehavior, RawScrollbar, RawScrollbarOrientation, RawScrollbarStyle,
     TwoDimensionalChildDelegate, TwoDimensionalConstraints, TwoDimensionalScrollView,
+    TwoDimensionalScrollable, TwoDimensionalViewport, internal::TreeError,
 };
 use std::time::Instant;
 
@@ -341,7 +343,10 @@ fn raw_scrollbar_drag_track_and_replacement() {
 #[test]
 fn two_dimensional_layout_materializes_window() {
     let mut view = grid_view();
-    let layout = view.viewport_mut().layout(Size::new(90., 60.));
+    let layout = view
+        .viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     // Twelve 30px columns and ten 20px rows; 90x60 shows the leading
     // window plus the default cache.
     assert_eq!(layout.content_size, Size::new(360., 200.));
@@ -364,14 +369,19 @@ fn two_dimensional_diagonal_and_independent_bounds() {
     let mut view = grid_view();
     // Extents establish on first layout; deltas before that consume
     // nothing.
-    view.viewport_mut().layout(Size::new(90., 60.));
+    view.viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     view.scrollable_mut()
         .set_diagonal_drag_behavior(DiagonalDragBehavior::Free);
     // A diagonal delta applies to both axes at once.
     let delta = view.apply_delta(Offset::new(45., 35.));
     assert_eq!(delta.horizontal.consumed, 45.);
     assert_eq!(delta.vertical.consumed, 35.);
-    let scrolled = view.viewport_mut().layout(Size::new(90., 60.));
+    let scrolled = view
+        .viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     assert!(
         scrolled
             .children
@@ -437,7 +447,9 @@ fn two_dimensional_diagonal_behaviors() {
         let mut view = grid_view();
         view.scrollable_mut().set_diagonal_drag_behavior(behavior);
         view.scrollable_mut().set_main_axis(main);
-        view.viewport_mut().layout(Size::new(90., 60.));
+        view.viewport_mut()
+            .layout(Size::new(90., 60.))
+            .expect("free controller publishes");
         let delta = view.apply_delta(input);
         assert!((delta.horizontal.consumed - horizontal).abs() < 0.01);
         assert!((delta.vertical.consumed - vertical).abs() < 0.01);
@@ -448,7 +460,9 @@ fn two_dimensional_diagonal_behaviors() {
 fn two_dimensional_reversed_axes_anchor_end() {
     let mut view = grid_view();
     // Establish extents first: jumps before layout clamp to zero.
-    view.viewport_mut().layout(Size::new(90., 60.));
+    view.viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     view.scrollable_mut()
         .set_axis_directions(AxisDirection::Left, AxisDirection::Up);
     assert_eq!(
@@ -457,7 +471,10 @@ fn two_dimensional_reversed_axes_anchor_end() {
     );
     view.scrollable().horizontal_controller().jump_to(270.);
     view.scrollable().vertical_controller().jump_to(140.);
-    let layout = view.viewport_mut().layout(Size::new(90., 60.));
+    let layout = view
+        .viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     // Trailing anchors: the last column and row paint at the origin.
     let first = layout
         .children
@@ -473,32 +490,236 @@ fn two_dimensional_cache_resize_and_measure() {
     let mut view = grid_view();
     view.viewport_mut()
         .set_cache_extent(0., incular_widgets::CacheExtentStyle::Pixels);
-    let uncached = view.viewport_mut().layout(Size::new(90., 60.));
+    let uncached = view
+        .viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     view.viewport_mut()
         .set_cache_extent(0.5, incular_widgets::CacheExtentStyle::Viewport);
-    let cached = view.viewport_mut().layout(Size::new(90., 60.));
+    let cached = view
+        .viewport_mut()
+        .layout(Size::new(90., 60.))
+        .expect("free controller publishes");
     // Half a viewport of cache on each side materializes more rows.
     assert!(cached.row_range.len() > uncached.row_range.len());
 
     // Resizing the viewport widens both ranges and shrinks both maxima.
-    let resized = view.viewport_mut().layout(Size::new(180., 120.));
+    let resized = view
+        .viewport_mut()
+        .layout(Size::new(180., 120.))
+        .expect("free controller publishes");
     assert_eq!(view.scrollable().horizontal_controller().max_offset(), 180.);
     assert_eq!(view.scrollable().vertical_controller().max_offset(), 80.);
     assert!(resized.row_range.len() > cached.row_range.len());
 
     // Measured extents feed back through revisions and shrink content.
     let row_revision = view.viewport().row_revision();
-    let measured =
-        view.viewport_mut()
-            .layout_with_measure(Size::new(90., 60.), |vicinity, constraints| {
-                Size::new(
-                    (10.0 + vicinity.x_index as f32).min(constraints.max_width),
-                    (8.0 + vicinity.y_index as f32).min(constraints.max_height),
-                )
-            });
+    let measured = view
+        .viewport_mut()
+        .layout_with_measure(Size::new(90., 60.), |vicinity, constraints| {
+            Size::new(
+                (10.0 + vicinity.x_index as f32).min(constraints.max_width),
+                (8.0 + vicinity.y_index as f32).min(constraints.max_height),
+            )
+        })
+        .expect("free controller publishes");
     assert!(view.viewport().row_revision() > row_revision);
     assert!(measured.content_size.width < 360.);
     assert!(measured.content_size.height < 200.);
+}
+
+#[test]
+fn two_dimensional_axis_sharing_rejected_with_pair_intact() {
+    // Each independent axis has clearly defined ownership: two retained
+    // 2D viewports sharing the horizontal controller fail on the second
+    // viewport — naming the first viewport's element — while the first
+    // viewport's pair stays exactly intact on both axes. The never-laid-out
+    // second vertical controller stays free.
+    let horizontal = ScrollController::new();
+    let first_vertical = ScrollController::new();
+    let second_vertical = ScrollController::new();
+    let view = |vertical: ScrollController| -> Widget {
+        let viewport: Widget = TwoDimensionalViewport::new(
+            TwoDimensionalChildDelegate::new(10, 12, |_| {
+                Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+            }),
+            horizontal.clone(),
+            vertical,
+            20.,
+            30.,
+        )
+        .into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            Column::new(vec![
+                view(first_vertical.clone()),
+                view(second_vertical.clone()),
+            ])
+            .into(),
+        )
+        .expect("mount defers attachment");
+    let error = tree
+        .layout(Constraints::tight(Size::new(100., 250.)))
+        .unwrap_err();
+    let kids = tree.children(root).expect("viewports").to_vec();
+    assert_eq!(kids.len(), 2);
+    let viewport_of =
+        |sized: incular_widgets::internal::ElementId| tree.children(sized).expect("viewport")[0];
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, Some(viewport_of(kids[0])));
+            assert_eq!(attempted, viewport_of(kids[1]));
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    // First pair intact on both axes; the second vertical never published.
+    assert_eq!(horizontal.content_extent(), 360.);
+    assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.max_offset(), 260.);
+    assert_eq!(first_vertical.content_extent(), 200.);
+    assert_eq!(first_vertical.max_offset(), 100.);
+    assert_eq!(second_vertical.max_offset(), 0.);
+    assert_eq!(horizontal.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(first_vertical.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(second_vertical.metric_owner(), None);
+}
+
+#[test]
+fn two_dimensional_pair_publication_is_atomic() {
+    // The model helper validates both axes before writing either: with
+    // the horizontal axis owned elsewhere the call fails leaving both
+    // axes — extents, offsets, revisions — exactly as they were. The
+    // layout entry enforces the same rule before measuring anything.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let scrollable = TwoDimensionalScrollable::new(horizontal.clone(), vertical.clone());
+    scrollable
+        .update_extents(300., 100., 360., 200.)
+        .expect("free pair publishes");
+    assert!(horizontal.jump_to(20.));
+    let horizontal_revision = horizontal.revision();
+    let vertical_revision = vertical.revision();
+    // Own the SECOND axis: without pair validation the horizontal write
+    // would land before the vertical rejection — a partial publication.
+    let lease = vertical
+        .try_attach(MetricOwner::of_tree(7))
+        .expect("free axis attaches");
+    let error = scrollable.update_extents(50., 50., 60., 60.).unwrap_err();
+    assert_eq!(error.owner_tree(), Some(7));
+    assert_eq!(horizontal.content_extent(), 300.);
+    assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.offset(), 20.);
+    assert_eq!(horizontal.revision(), horizontal_revision);
+    assert_eq!(vertical.content_extent(), 360.);
+    assert_eq!(vertical.viewport_extent(), 200.);
+    assert_eq!(vertical.revision(), vertical_revision);
+    assert!(lease.release());
+    scrollable
+        .update_extents(50., 50., 60., 60.)
+        .expect("freed pair publishes");
+    assert_eq!(horizontal.content_extent(), 50.);
+    assert_eq!(vertical.content_extent(), 60.);
+    // Same rule through the layout entry: an owned axis fails before any
+    // measurement or child work.
+    let mut viewport = TwoDimensionalViewport::new(
+        TwoDimensionalChildDelegate::new(10, 12, Some),
+        horizontal.clone(),
+        vertical.clone(),
+        20.,
+        30.,
+    );
+    let owned = horizontal
+        .try_attach(MetricOwner::of_tree(9))
+        .expect("free axis attaches");
+    let error = match viewport.layout(Size::new(90., 60.)) {
+        Ok(_) => panic!("owned axis refuses 2D layout"),
+        Err(error) => error,
+    };
+    assert_eq!(error.owner_tree(), Some(9));
+    assert_eq!(horizontal.content_extent(), 50.);
+    assert_eq!(vertical.content_extent(), 60.);
+    assert!(owned.release());
+    viewport
+        .layout(Size::new(90., 60.))
+        .expect("freed axes lay out");
+    assert_eq!(horizontal.content_extent(), 360.);
+}
+
+#[test]
+fn two_dimensional_axis_replacement_reuses_the_unchanged_axis() {
+    // Swapping only the vertical controller acquires just the newcomer:
+    // the horizontal lease keeps its identity, geometry, and open
+    // activity; the replaced-away vertical tenure ends; the new pair
+    // drives with fresh geometry.
+    let horizontal = ScrollController::new();
+    let first_vertical = ScrollController::new();
+    let second_vertical = ScrollController::new();
+    let horizontal_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let vertical_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_horizontal = horizontal_ends.clone();
+    let counted_vertical = vertical_ends.clone();
+    let _horizontal_subscription = horizontal.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_horizontal.set(counted_horizontal.get() + 1);
+        }
+        false
+    });
+    let _vertical_subscription = first_vertical.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_vertical.set(counted_vertical.get() + 1);
+        }
+        false
+    });
+    let delegate = || {
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        })
+    };
+    let view = |vertical: ScrollController| -> Widget {
+        let viewport: Widget =
+            TwoDimensionalViewport::new(delegate(), horizontal.clone(), vertical, 20., 30.).into();
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(view(first_vertical.clone()))
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(horizontal.begin_activity());
+    assert!(first_vertical.begin_activity());
+    let horizontal_attachment = horizontal.attachment_id().expect("H owned");
+    assert_eq!(horizontal.max_offset(), 260.);
+    assert_eq!(first_vertical.max_offset(), 100.);
+    tree.update(root, view(second_vertical.clone()))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    // Unchanged axis untouched: same lease, same geometry, still open,
+    // no End delivered.
+    assert_eq!(horizontal.attachment_id(), Some(horizontal_attachment));
+    assert_eq!(horizontal.max_offset(), 260.);
+    assert!(!horizontal.begin_activity());
+    assert_eq!(horizontal_ends.get(), 0);
+    // Replaced-away vertical tenure ended; the newcomer drives fresh.
+    assert_eq!(first_vertical.metric_owner(), None);
+    assert_eq!(vertical_ends.get(), 1);
+    assert_eq!(first_vertical.max_offset(), 100.);
+    assert_eq!(second_vertical.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(second_vertical.max_offset(), 100.);
+    assert!(horizontal.end_activity());
+    assert!(
+        !first_vertical.end_activity(),
+        "transfer already closed the replaced-away tenure"
+    );
 }
 
 #[test]

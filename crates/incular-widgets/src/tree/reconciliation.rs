@@ -1319,7 +1319,8 @@ impl WidgetTree {
         // including same-controller reuse across updates. The stored
         // lease is the live attachment, so reuse claims nothing and
         // disturbs neither ownership nor activity.
-        if let Some(lease) = self.scroll_attachments.get(&element)
+        if let Some(leases) = self.scroll_attachments.get(&element)
+            && let [lease] = leases.as_slice()
             && lease.controller() == controller
         {
             return Ok(());
@@ -1347,20 +1348,111 @@ impl WidgetTree {
             // attach and begin fresh: nothing after the detach can cancel
             // what they start. The replaced-away handle stays free across
             // trees, with its metrics intact for whoever drives it next.
-            let previous = self.scroll_attachments.insert(element, replacement);
+            let previous = self.scroll_attachments.insert(element, vec![replacement]);
             if let Some(previous) = previous {
-                previous.detach();
+                for detached in previous {
+                    detached.detach();
+                }
             }
             return Ok(());
         }
         // Fresh attach: this element held no lease.
         match controller.try_attach(MetricOwner::of_tree(self.tree_id)) {
             Ok(attachment) => {
-                self.scroll_attachments.insert(element, attachment);
+                self.scroll_attachments.insert(element, vec![attachment]);
                 Ok(())
             }
             Err(conflict) => Err(self.attachment_conflict(conflict, element)),
         }
+    }
+
+    /// Claims both axis controllers for the two-dimensional viewport at
+    /// `element`: each independent axis gets clearly defined ownership
+    /// under one element entry. Reuse and replacement follow the same
+    /// rules as the single-controller claim — a same-pair layout reuses
+    /// both leases without re-acquiring, and a controller swap acquires
+    /// newcomers only for changed axes before detaching replaced
+    /// predecessors, so a failure leaves the live pair exactly as it was
+    /// and an unchanged axis keeps its lease, activity, and identity.
+    pub(super) fn claim_2d_viewport(
+        &mut self,
+        element: ElementId,
+        horizontal: &ScrollController,
+        vertical: &ScrollController,
+    ) -> Result<(), TreeError> {
+        // Fast path: this element already drives this exact pair.
+        if let Some(leases) = self.scroll_attachments.get(&element)
+            && let [first, second] = leases.as_slice()
+            && first.controller() == horizontal
+            && second.controller() == vertical
+        {
+            return Ok(());
+        }
+        // Per-axis reuse (borrow ends with the statement): an unchanged
+        // axis keeps its stored handle; only changed axes acquire.
+        let (reuse_horizontal, reuse_vertical) =
+            match self.scroll_attachments.get(&element).map(Vec::as_slice) {
+                Some([first, second]) => (
+                    first.controller() == horizontal,
+                    second.controller() == vertical,
+                ),
+                _ => (false, false),
+            };
+        let owner = MetricOwner::of_tree(self.tree_id);
+        let new_horizontal = if reuse_horizontal {
+            None
+        } else {
+            match horizontal.try_attach(owner) {
+                Ok(attachment) => Some(attachment),
+                Err(conflict) => return Err(self.attachment_conflict(conflict, element)),
+            }
+        };
+        let new_vertical = if reuse_vertical {
+            None
+        } else {
+            match vertical.try_attach(owner) {
+                Ok(attachment) => Some(attachment),
+                Err(conflict) => {
+                    // A horizontal newcomer never escapes unleashed: its
+                    // controller saw no traffic yet, so release it and
+                    // fail with the stored pair untouched.
+                    if let Some(acquired) = new_horizontal {
+                        let _ = acquired.release();
+                    }
+                    return Err(self.attachment_conflict(conflict, element));
+                }
+            }
+        };
+        // Commit the swap with no map borrow held, then detach replaced
+        // predecessors outside any borrow: reused handles move into the
+        // new pair, leftovers detach with tenure `End`.
+        let mut previous = self.scroll_attachments.remove(&element).unwrap_or_default();
+        let mut pair = Vec::with_capacity(2);
+        match new_horizontal {
+            Some(acquired) => pair.push(acquired),
+            None => {
+                let position = previous
+                    .iter()
+                    .position(|lease| lease.controller() == horizontal)
+                    .expect("reused axis handle is stored");
+                pair.push(previous.remove(position));
+            }
+        }
+        match new_vertical {
+            Some(acquired) => pair.push(acquired),
+            None => {
+                let position = previous
+                    .iter()
+                    .position(|lease| lease.controller() == vertical)
+                    .expect("reused axis handle is stored");
+                pair.push(previous.remove(position));
+            }
+        }
+        self.scroll_attachments.insert(element, pair);
+        for stale in previous {
+            stale.detach();
+        }
+        Ok(())
     }
 
     /// Publishes metric extents for a viewport layout. A live lease
@@ -1380,7 +1472,11 @@ impl WidgetTree {
         viewport: f32,
         physics: ScrollPhysics,
     ) {
-        match element.and_then(|element| self.scroll_attachments.get(&element)) {
+        match element.and_then(|element| {
+            self.scroll_attachments
+                .get(&element)
+                .and_then(|leases| leases.first())
+        }) {
             Some(lease) => lease
                 .update_extents(content, viewport, physics)
                 .expect("viewport lease claimed above is live"),
@@ -1401,9 +1497,12 @@ impl WidgetTree {
         let owner = (conflict.owner_tree() == self.tree_id).then(|| {
             self.scroll_attachments
                 .iter()
-                .find_map(|(candidate, lease)| {
-                    (lease.id() == conflict.attachment_id() && self.element_exists(*candidate))
-                        .then_some(*candidate)
+                .find_map(|(candidate, leases)| {
+                    (leases
+                        .iter()
+                        .any(|lease| lease.id() == conflict.attachment_id())
+                        && self.element_exists(*candidate))
+                    .then_some(*candidate)
                 })
         });
         TreeError::DuplicateScrollAttachment {
@@ -1485,8 +1584,8 @@ impl WidgetTree {
                 UnmountWork::Enter(id) => {
                     self.raw_input_unmounted(id);
                     self.external_drop_target_unmounted(id);
-                    if let Some(attachment) = self.scroll_attachments.remove(&id) {
-                        detached.push(attachment);
+                    if let Some(leases) = self.scroll_attachments.remove(&id) {
+                        detached.extend(leases);
                     }
                     let Some(element) = self.elements.remove(id.0) else {
                         continue;

@@ -55,7 +55,10 @@ pub enum MetricWriteError {
 }
 
 impl MetricWriteError {
-    pub(crate) fn attached(owner_tree: u64) -> Self {
+    /// Reports the owning tree on a refused unattached write.
+    /// Framework-internal: publishers report the live owner they found.
+    #[doc(hidden)]
+    pub fn attached(owner_tree: u64) -> Self {
         Self::AttachedOwner { owner_tree }
     }
 

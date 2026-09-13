@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use incular_scroll::{ScrollController, ScrollPhysics};
+use incular_scroll::{MetricWriteError, ScrollController, ScrollPhysics};
 
 /// A notification emitted whenever a sheet extent changes.
 ///
@@ -742,16 +742,16 @@ impl DraggableScrollableState {
 
     /// Configures content and viewport extents for the inner list.
     ///
-    /// Pre-attachment-integration: the sheet holds no lease, so the
-    /// shared inner controller must be free here — an attached inner
-    /// list owns publication. The draggable migration routes this
-    /// through the inner viewport's lease instead.
-    pub fn set_inner_extents(&self, content: f32, viewport: f32) {
+    /// One position, one attachment: the sheet never claims the shared
+    /// inner controller — the attached inner list owns publication, and
+    /// this call refuses to publish while it does. Succeeds for a free
+    /// (headless or sheet-driven) controller, failing without mutation
+    /// otherwise.
+    pub fn set_inner_extents(&self, content: f32, viewport: f32) -> Result<(), MetricWriteError> {
         self.state
             .borrow()
             .inner_controller
             .update_extents_with_physics(content, viewport, self.state.borrow().inner_physics)
-            .expect("inner controller must be free pre-attachment");
     }
 
     /// Replaces inner list physics.

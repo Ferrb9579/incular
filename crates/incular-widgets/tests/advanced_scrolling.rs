@@ -136,7 +136,9 @@ fn draggable_sheet_resizes_hands_off_and_actuator_resets() {
         false
     });
     state.set_parent_height(400.0);
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
 
     let resize = state.apply_user_offset(-40.0);
     assert!((state.extent().current_size - 0.6).abs() < 1.0e-5);
@@ -178,7 +180,9 @@ fn two_dimensional_viewport_keeps_axis_ranges_cache_and_hit_tests_independent() 
     view.viewport_mut()
         .set_cache_extent(0.0, CacheExtentStyle::Pixels);
     view.viewport_mut().set_clip_behavior(Clip::HardEdge);
-    let initial = view.layout(Size::new(90.0, 60.0));
+    let initial = view
+        .layout(Size::new(90.0, 60.0))
+        .expect("free controller publishes");
     assert_eq!(initial.content_size, Size::new(360.0, 200.0));
     assert_eq!(
         view.scrollable().horizontal_controller().max_offset(),
@@ -203,7 +207,9 @@ fn two_dimensional_viewport_keeps_axis_ranges_cache_and_hit_tests_independent() 
     let delta = view.apply_delta(Offset::new(45.0, 35.0));
     assert_eq!(delta.horizontal.consumed, 45.0);
     assert_eq!(delta.vertical.consumed, 35.0);
-    let scrolled = view.layout(Size::new(90.0, 60.0));
+    let scrolled = view
+        .layout(Size::new(90.0, 60.0))
+        .expect("free controller publishes");
     assert!(
         scrolled
             .children
@@ -219,7 +225,9 @@ fn two_dimensional_viewport_keeps_axis_ranges_cache_and_hit_tests_independent() 
 
     view.viewport_mut()
         .set_axis_directions(AxisDirection::Left, AxisDirection::Up);
-    let reversed = view.layout(Size::new(90.0, 60.0));
+    let reversed = view
+        .layout(Size::new(90.0, 60.0))
+        .expect("free controller publishes");
     let first_visible = reversed
         .children
         .iter()
@@ -234,14 +242,15 @@ fn two_dimensional_viewport_keeps_axis_ranges_cache_and_hit_tests_independent() 
     assert_eq!(reversed.vertical_sliver_constraints.axis, Axis::Vertical);
 
     let row_revision = view.viewport().row_revision();
-    let measured =
-        view.viewport_mut()
-            .layout_with_measure(Size::new(90.0, 60.0), |vicinity, constraints| {
-                Size::new(
-                    (10.0 + vicinity.x_index as f32).min(constraints.max_width),
-                    (8.0 + vicinity.y_index as f32).min(constraints.max_height),
-                )
-            });
+    let measured = view
+        .viewport_mut()
+        .layout_with_measure(Size::new(90.0, 60.0), |vicinity, constraints| {
+            Size::new(
+                (10.0 + vicinity.x_index as f32).min(constraints.max_width),
+                (8.0 + vicinity.y_index as f32).min(constraints.max_height),
+            )
+        })
+        .expect("free controller publishes");
     assert!(view.viewport().row_revision() > row_revision);
     assert!(measured.content_size.width < 360.0);
     assert!(measured.content_size.height < 200.0);

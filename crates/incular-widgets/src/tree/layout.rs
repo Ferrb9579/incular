@@ -221,14 +221,40 @@ impl WidgetTree {
         element_id: ElementId,
         viewport_size: Size,
     ) -> Result<(), TreeError> {
-        let layout = self
+        // Each independent axis gets clearly defined ownership under one
+        // element entry: claim the pair before measuring feeds either
+        // record, reusing a same-pair layout without re-acquiring.
+        let viewport = self
+            .two_dimensional_state_live_mut(id)
+            .viewport
+            .as_ref()
+            .expect("two-dimensional render must own retained viewport");
+        let horizontal = viewport.horizontal_controller();
+        let vertical = viewport.vertical_controller();
+        self.claim_2d_viewport(element_id, &horizontal, &vertical)?;
+        // Lend the owned pair to the model call: owned handles need no
+        // map borrow, and a panic drops them through silent teardown
+        // instead of stranding the owner slots. The pair is restored
+        // before any error propagates, so the next layout reuses it.
+        let leases = self
+            .scroll_attachments
+            .remove(&element_id)
+            .expect("axis pair claimed above is live");
+        let [first, second] = leases.as_slice() else {
+            unreachable!("2D claim stores exactly the axis pair");
+        };
+        let output = self
             .two_dimensional_state_live_mut(id)
             .viewport
             .as_mut()
             .expect("two-dimensional render must own retained viewport")
-            .layout_with_measure(viewport_size, |_, child_constraints| {
-                child_constraints.biggest()
-            });
+            .layout_with_attachments(
+                viewport_size,
+                |_, child_constraints| child_constraints.biggest(),
+                (first, second),
+            );
+        self.scroll_attachments.insert(element_id, leases);
+        let layout = output.expect("lent axis pair stays live for the call");
         let desired = layout
             .children
             .iter()

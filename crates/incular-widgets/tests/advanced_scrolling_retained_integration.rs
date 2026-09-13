@@ -172,7 +172,9 @@ fn draggable_sheet_state_handoff_reset_and_retained_conversions_are_public() {
         false
     });
     state.set_parent_height(400.0);
-    state.set_inner_extents(1_000.0, 200.0);
+    state
+        .set_inner_extents(1_000.0, 200.0)
+        .expect("free inner controller publishes");
     assert!(state.set_size(0.75, true));
     assert!((state.extent().current_size - 0.75).abs() < 1.0e-5);
     assert!(notifications.borrow().contains(&0.75));
@@ -216,7 +218,9 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
     view.scrollable_mut()
         .set_diagonal_drag_behavior(DiagonalDragBehavior::Free);
 
-    let initial = view.layout(Size::new(90.0, 60.0));
+    let initial = view
+        .layout(Size::new(90.0, 60.0))
+        .expect("free controller publishes");
     assert!(initial.has_visual_overflow);
     assert_eq!(
         initial.hit_test(Offset::new(10.0, 10.0)),
@@ -231,7 +235,9 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
     assert_eq!(view.scrollable().horizontal_controller().offset(), 25.0);
     assert_eq!(view.scrollable().vertical_controller().offset(), 15.0);
 
-    let scrolled = view.layout(Size::new(90.0, 60.0));
+    let scrolled = view
+        .layout(Size::new(90.0, 60.0))
+        .expect("free controller publishes");
     assert_eq!(
         scrolled.hit_test(Offset::new(10.0, 10.0)),
         Some(ChildVicinity::new(1, 1))
@@ -253,7 +259,9 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
         30.0,
     );
     viewport.set_cache_extent(0.0, CacheExtentStyle::Pixels);
-    let viewport_layout = viewport.layout(Size::new(90.0, 60.0));
+    let viewport_layout = viewport
+        .layout(Size::new(90.0, 60.0))
+        .expect("free controller publishes");
     assert_eq!(
         viewport_layout.hit_test(Offset::new(10.0, 10.0)),
         Some(ChildVicinity::new(0, 0))
