@@ -4308,6 +4308,119 @@ fn outlet_panicking_present_resets_schedule_suppression() {
 }
 
 #[test]
+fn outlet_scheduling_tracks_participation() {
+    // Participation through actual scheduler state (no focus anywhere,
+    // so only outlet scheduling can flag): a stale slotless revision
+    // flags once; the identical follow-up stays silent; detaching
+    // freezes scheduling while retaining the deferred revision;
+    // remounting consumes it and idles — all in one present each.
+    let outer = Navigator::new();
+    let inner = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner, &parent)));
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), RED),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    drop(outlet_inner_for_page);
+    inner.push_page(Page::new("b", Widget::box_(Size::new(40., 40.), BLUE)));
+    let root = runtime.tree().root().expect("root");
+    {
+        let outlet_outer = outlet_outer.clone();
+        runtime
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_outer.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    // Baseline idle: everything composed, nothing scheduled.
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(!outlet_outer.borrow().needs_frame());
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!runtime.frame_requested(), "converged tree idles");
+    // Slotless with inner work outstanding: first success flags...
+    outer
+        .set_pages([Page::new(
+            "solo",
+            Widget::box_(Size::new(200., 200.), GREEN),
+        )])
+        .unwrap();
+    inner.push_page(Page::new("c", Widget::box_(Size::new(40., 40.), YELLOW)));
+    let stale = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(stale.commands(), GREEN));
+    assert!(!paints(stale.commands(), YELLOW));
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        runtime.frame_requested(),
+        "runnable stale content retains frame demand"
+    );
+    let ic = inner.current().expect("inner route").id;
+    assert!(
+        outlet_inner.borrow().route_task_scope(ic).is_some(),
+        "unmounted-but-live routes still bind"
+    );
+    // ...the identical follow-up stays silent: no spin.
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        !runtime.frame_requested(),
+        "stable staleness does not re-flag"
+    );
+    // Detaching freezes scheduling while retaining deferred work.
+    RouteOutlet::detach_nested(&outlet_outer, &outlet_inner);
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    inner.push_page(Page::new("d", Widget::box_(Size::new(40., 40.), BLUE)));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert_eq!(
+        outlet_inner.borrow().frame_drive_count(),
+        inner_drives,
+        "detached outlets receive no frame work"
+    );
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        !runtime.frame_requested(),
+        "nonparticipating outlets schedule nothing"
+    );
+    // Reactivation consumes promptly in a single present, then idles.
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested reattaches");
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer
+        .set_pages([Page::new(
+            "a2",
+            Column::new(vec![
+                Widget::box_(Size::new(40., 40.), RED),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    let remounted = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(remounted.commands(), RED));
+    assert!(paints(remounted.commands(), BLUE));
+    assert!(!paints(remounted.commands(), GREEN));
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!outlet_outer.borrow().needs_frame());
+    assert!(!runtime.frame_requested(), "consumed revision idles");
+    let _ = outer;
+}
+
+#[test]
 fn outlet_retry_after_below_removal_commits_promptly() {
     // A→B captured, the frame fails, then a covered route is removed
     // below (same active route, smaller member set): the retry builds the

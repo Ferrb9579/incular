@@ -1243,7 +1243,9 @@ impl RouteOutlet {
     /// unconsumable staleness (and every quiet frame) from scheduling
     /// anything. Errors return before reconciliation, so rejected stacks
     /// schedule no retry loop. Nested staleness wakes the root driver
-    /// through the same cascade.
+    /// through the same cascade. The per-revision suppression loses no
+    /// outstanding demand: failures and panics reset it, and every new
+    /// navigation (including slot remounts) carries a new revision.
     fn flag_stale_frames(&self, runtime: &mut Runtime) {
         let live = self.navigator.revision();
         let stale = match &self.consumed {
