@@ -140,6 +140,46 @@ impl From<TreeError> for OutletError {
     }
 }
 
+/// Why a nested outlet attachment was rejected.
+///
+/// Rejection happens before any mutation, so a failed attach leaves both
+/// outlets exactly as they were. The topology is a forest by design —
+/// like back dispatch it must terminate, but unlike back dispatch (which
+/// follows a single active chain and can share children) cascade driving
+/// visits every registered child, so one child under two parents would
+/// drive twice per frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutletAttachError {
+    /// An outlet cannot nest inside itself.
+    SelfAttachment,
+    /// The child already reaches the parent through nested attachments,
+    /// so the edge would close a directed cycle and cascade driving
+    /// could recurse through it forever.
+    Cycle,
+    /// The child is already attached to a different live parent. Detach
+    /// it explicitly first: cascade driving follows registration, so a
+    /// second parent would drive the same outlet twice per frame.
+    AlreadyAttached,
+}
+
+impl std::fmt::Display for OutletAttachError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SelfAttachment => formatter.write_str("a route outlet cannot nest inside itself"),
+            Self::Cycle => formatter.write_str(
+                "attaching this outlet would cycle cascade driving: \
+                 it already reaches its parent",
+            ),
+            Self::AlreadyAttached => formatter.write_str(
+                "this outlet is already attached to a different parent: \
+                 detach it explicitly before reattaching",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for OutletAttachError {}
+
 /// Mounts one [`Navigator`] as presentation-aware stack content.
 ///
 /// The outlet owns the integration state the navigator cannot: per-route
@@ -161,8 +201,16 @@ pub struct RouteOutlet {
     /// transitivity follows containment, so only direct children register.
     /// Weak handles release automatically when a nested outlet drops, and
     /// dead entries prune on every present, so repeated replacement never
-    /// grows metadata.
+    /// grows metadata. Registration is what cascade driving follows: a
+    /// detached outlet receives no frame work even while retained.
     nested: Rc<RefCell<Vec<Weak<RefCell<RouteOutlet>>>>>,
+    /// This outlet's parent, if attached. Single-parent by design (see
+    /// [`OutletAttachError`]): set on attach, cleared on detach or when
+    /// the parent drops.
+    parent: Rc<RefCell<Option<Weak<RefCell<RouteOutlet>>>>>,
+    /// Frames driven through this outlet (cascade included). Test-visible
+    /// proof that one present drives each outlet exactly once.
+    drives: Cell<u64>,
     task_parent: TaskScope,
     /// Last successfully presented active route. Transitions capture
     /// against this and advance it only on commit — never on failure.
@@ -235,6 +283,8 @@ impl RouteOutlet {
             bindings: HashMap::new(),
             tags,
             nested,
+            parent: Rc::default(),
+            drives: Cell::new(0),
             task_parent: task_parent.clone(),
             presented: None,
             pending: None,
@@ -252,10 +302,40 @@ impl RouteOutlet {
     /// restored over by it. Sibling outlets sharing only an ancestor need
     /// nothing: disjoint subtrees never attribute across. Transitivity
     /// follows containment — register each outlet with its direct parent.
+    ///
+    /// Topology is enforced before any mutation, borrowing the
+    /// back-dispatch lesson without coupling to it: self-attachment and
+    /// cycles are rejected (cascade driving must terminate), and each
+    /// outlet has at most one live parent (cascade driving visits every
+    /// registered child, so a shared child would drive twice per frame).
+    /// Re-registering with the same parent is an idempotent no-op;
+    /// moving parents requires [`Self::detach_nested`] first.
     /// Registration holds weakly: dropping the nested outlet releases it,
     /// and dead entries prune on every present, so repeated replacement
-    /// never grows metadata. Re-registering the same outlet is a no-op.
-    pub fn attach_nested(outlet: &Rc<RefCell<Self>>, nested: &Rc<RefCell<Self>>) {
+    /// never grows metadata.
+    pub fn attach_nested(
+        outlet: &Rc<RefCell<Self>>,
+        nested: &Rc<RefCell<Self>>,
+    ) -> Result<(), OutletAttachError> {
+        if Rc::ptr_eq(outlet, nested) {
+            return Err(OutletAttachError::SelfAttachment);
+        }
+        if nested.borrow().reaches(outlet) {
+            return Err(OutletAttachError::Cycle);
+        }
+        {
+            let child = nested.borrow();
+            let mut parent = child.parent.borrow_mut();
+            if let Some(current) = parent.as_ref().and_then(Weak::upgrade) {
+                if Rc::ptr_eq(&current, outlet) {
+                    return Ok(());
+                }
+                return Err(OutletAttachError::AlreadyAttached);
+            }
+            // A dead parent link is just a leftover: detach cleared the
+            // registration but the child outlived this assignment.
+            *parent = Some(Rc::downgrade(outlet));
+        }
         let outlet = outlet.borrow_mut();
         let mut attached = outlet.nested.borrow_mut();
         attached.retain(|existing| {
@@ -264,6 +344,63 @@ impl RouteOutlet {
                 .is_some_and(|live| !Rc::ptr_eq(&live, nested))
         });
         attached.push(Rc::downgrade(nested));
+        Ok(())
+    }
+
+    /// Detaches a nested outlet. The child keeps its own records, bindings,
+    /// and tags, but the parent's cascade no longer drives it: a detached
+    /// outlet receives no frame work even while application code retains
+    /// its handle. Reattaching elsewhere (or back) is allowed afterwards.
+    /// Detaching a non-child is a no-op.
+    pub fn detach_nested(outlet: &Rc<RefCell<Self>>, nested: &Rc<RefCell<Self>>) {
+        {
+            let child = nested.borrow_mut();
+            let mut parent = child.parent.borrow_mut();
+            let mine = parent
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some_and(|current| Rc::ptr_eq(&current, outlet));
+            if mine {
+                parent.take();
+            }
+        }
+        {
+            let outlet = outlet.borrow_mut();
+            outlet.nested.borrow_mut().retain(|existing| {
+                existing
+                    .upgrade()
+                    .is_some_and(|live| !Rc::ptr_eq(&live, nested))
+            });
+        }
+    }
+
+    /// Whether `target` is reachable from this outlet by following nested
+    /// attachments. Dead entries are skipped, never traversed.
+    fn reaches(&self, target: &Rc<RefCell<Self>>) -> bool {
+        let mut visited: Vec<*const RefCell<Self>> = Vec::new();
+        let mut stack: Vec<Rc<RefCell<Self>>> = self.live_nested();
+        // The outlet itself counts: self-attachment is checked separately
+        // for its error, but a zero-length path must not read as a cycle.
+        while let Some(node) = stack.pop() {
+            if Rc::ptr_eq(&node, target) {
+                return true;
+            }
+            let address = Rc::as_ptr(&node);
+            if visited.contains(&address) {
+                continue;
+            }
+            visited.push(address);
+            stack.extend(node.borrow().live_nested());
+        }
+        false
+    }
+
+    /// Frames driven through this outlet, cascade included. Each
+    /// [`Self::present_frame`] on the driving root advances every
+    /// participating outlet by exactly one.
+    #[must_use]
+    pub fn frame_drive_count(&self) -> u64 {
+        self.drives.get()
     }
 
     /// Mounts a nested outlet's widget with the required builder identity:
@@ -685,8 +822,10 @@ impl RouteOutlet {
     /// Bumps this outlet and every nested outlet, then captures pending
     /// transitions top-down. One call drives the whole outlet tree, so a
     /// single frame presents nested navigation without rendering the
-    /// runtime once per outlet.
+    /// runtime once per outlet. The topology guarantees (acyclic,
+    /// single-parent) make every participant reachable exactly once.
     fn begin_frame(&mut self, runtime: &Runtime) {
+        self.drives.set(self.drives.get().wrapping_add(1));
         self.revision.set(self.revision.get().wrapping_add(1));
         self.capture_transition(runtime);
         for nested in self.live_nested() {

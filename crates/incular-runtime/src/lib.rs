@@ -120,7 +120,7 @@ pub use restoration::{
     RestorationStore, RestorationStoreError,
 };
 pub use route_focus::{RouteFocusOwner, RouteFocusState};
-pub use route_outlet::{OutletError, OutletPlacement, RouteOutlet};
+pub use route_outlet::{OutletAttachError, OutletError, OutletPlacement, RouteOutlet};
 pub use route_tasks::RouteTaskBinding;
 pub use simulation::{Screenshot, Simulation, SimulationError};
 pub use tasks::{

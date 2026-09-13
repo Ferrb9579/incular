@@ -875,7 +875,7 @@ fn nested_inside_setup() -> NestedSetup {
     }
     frame(&mut runtime);
     RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
-    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
     (
         outer,
         inner,
@@ -1055,7 +1055,7 @@ fn nested_repeated_replacement_stays_bounded() {
             )
             .key(key.clone())])
             .unwrap();
-        RouteOutlet::attach_nested(&outlet_outer, &outlet_inner);
+        RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
         // Drop the previous generation *before* asserting: replacement only
         // releases once the host lets go, and the count pins exactly that.
         live_inner = Some(outlet_inner);
@@ -1105,7 +1105,7 @@ fn nested_detach_releases_on_unmount() {
         )
         .key(key.clone())])
         .unwrap();
-    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
     present_nested(&mut runtime, &outlet_outer, &revision);
     assert_eq!(outlet_outer.borrow().attached_nested_count(), 1);
     outer
@@ -1715,4 +1715,186 @@ fn outlet_teardown_releases_focus_and_tasks() {
     assert!(!scope.is_cancelled());
     assert_eq!(runtime.focused_element(), None);
     drop(observer);
+}
+
+/// Topology-only outlets: no mounting, no frames — attachment policy is
+/// pure registration. The runtime stays alive so task scopes stay valid.
+fn topology_outlets(count: usize) -> (Runtime, Vec<Rc<RefCell<RouteOutlet>>>) {
+    let runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let navigators: Vec<Navigator> = (0..count).map(|_| Navigator::new()).collect();
+    let outlets = navigators
+        .iter()
+        .map(|navigator| Rc::new(RefCell::new(RouteOutlet::new(navigator, &parent))))
+        .collect();
+    (runtime, outlets)
+}
+
+#[test]
+fn nested_self_attachment_rejected_before_mutation() {
+    let (_runtime, outlets) = topology_outlets(1);
+    assert_eq!(
+        RouteOutlet::attach_nested(&outlets[0], &outlets[0]),
+        Err(OutletAttachError::SelfAttachment)
+    );
+    assert_eq!(outlets[0].borrow().attached_nested_count(), 0);
+}
+
+#[test]
+fn nested_two_node_cycle_rejected_before_mutation() {
+    let (_runtime, outlets) = topology_outlets(2);
+    RouteOutlet::attach_nested(&outlets[0], &outlets[1]).expect("first edge attaches");
+    assert_eq!(
+        RouteOutlet::attach_nested(&outlets[1], &outlets[0]),
+        Err(OutletAttachError::Cycle)
+    );
+    // The failed edge changed nothing: A still parents B, B parents none.
+    assert_eq!(outlets[0].borrow().attached_nested_count(), 1);
+    assert_eq!(outlets[1].borrow().attached_nested_count(), 0);
+}
+
+#[test]
+fn nested_longer_cycle_rejected_before_mutation() {
+    let (_runtime, outlets) = topology_outlets(4);
+    RouteOutlet::attach_nested(&outlets[0], &outlets[1]).expect("a attaches");
+    RouteOutlet::attach_nested(&outlets[1], &outlets[2]).expect("b attaches");
+    RouteOutlet::attach_nested(&outlets[2], &outlets[3]).expect("c attaches");
+    // Closing A→B→C→D→A: D's child A already reaches D.
+    assert_eq!(
+        RouteOutlet::attach_nested(&outlets[3], &outlets[0]),
+        Err(OutletAttachError::Cycle)
+    );
+    // A non-cyclic edge elsewhere still works after the rejection.
+    assert_eq!(outlets[3].borrow().attached_nested_count(), 0);
+}
+
+#[test]
+fn nested_duplicate_attachment_is_idempotent() {
+    let (_runtime, outlets) = topology_outlets(2);
+    RouteOutlet::attach_nested(&outlets[0], &outlets[1]).expect("first attaches");
+    RouteOutlet::attach_nested(&outlets[0], &outlets[1]).expect("duplicate is a no-op");
+    assert_eq!(outlets[0].borrow().attached_nested_count(), 1);
+}
+
+#[test]
+fn nested_second_parent_rejected_until_explicit_detach() {
+    // Single-parent policy: cascade driving visits every registered child,
+    // so a shared child would drive twice per frame. Moving parents takes
+    // an explicit detach first.
+    let (_runtime, outlets) = topology_outlets(3);
+    RouteOutlet::attach_nested(&outlets[0], &outlets[2]).expect("first parent attaches");
+    assert_eq!(
+        RouteOutlet::attach_nested(&outlets[1], &outlets[2]),
+        Err(OutletAttachError::AlreadyAttached)
+    );
+    assert_eq!(outlets[1].borrow().attached_nested_count(), 0);
+    assert_eq!(outlets[0].borrow().attached_nested_count(), 1);
+    RouteOutlet::detach_nested(&outlets[0], &outlets[2]);
+    assert_eq!(outlets[0].borrow().attached_nested_count(), 0);
+    RouteOutlet::attach_nested(&outlets[1], &outlets[2]).expect("reattach after detach");
+    assert_eq!(outlets[1].borrow().attached_nested_count(), 1);
+}
+
+#[test]
+fn nested_detached_child_gets_no_work_while_retained() {
+    // Detach (not drop) the inner outlet but keep its handle: the outer
+    // cascade must skip it — no drive count, no focus interference — while
+    // the outer outlet keeps working.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, node_b) =
+        nested_inside_setup();
+    inner.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_b);
+    let outer_drives = outlet_outer.borrow().frame_drive_count();
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    assert!(inner_drives > 0);
+    RouteOutlet::detach_nested(&outlet_outer, &outlet_inner);
+    assert_eq!(outlet_outer.borrow().attached_nested_count(), 0);
+    // Retained handle, live inner navigator — yet the cascade skips it.
+    let node_c = FocusNode::new();
+    outer.push_page(focus_page("ob", &node_c));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert_eq!(outlet_outer.borrow().frame_drive_count(), outer_drives + 1);
+    assert_eq!(
+        outlet_inner.borrow().frame_drive_count(),
+        inner_drives,
+        "detached outlet receives no frame work while retained"
+    );
+    tab_until(&mut runtime, &node_c);
+    outer.pop();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert_eq!(outlet_inner.borrow().frame_drive_count(), inner_drives);
+    // Reattachment resumes the cascade exactly where it left off.
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("reattaches");
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert_eq!(outlet_inner.borrow().frame_drive_count(), inner_drives + 1);
+    let _ = (outer, inner, node_a);
+}
+
+#[test]
+fn nested_tree_drives_each_outlet_exactly_once() {
+    // Three levels through the cascade: one outer present advances every
+    // participant by exactly one drive — the acyclic single-parent
+    // topology makes double-driving structurally impossible.
+    let outer = Navigator::new();
+    let middle_nav = Navigator::new();
+    let inner_nav = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let outlet_middle = Rc::new(RefCell::new(RouteOutlet::new(&middle_nav, &parent)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner_nav, &parent)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let middle_for_page = outlet_middle.clone();
+    let inner_for_page = outlet_inner.clone();
+    middle_nav.push_page(Page::new(
+        "m",
+        Column::new(vec![
+            focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE)),
+            RouteOutlet::nested_widget(&inner_for_page),
+        ]),
+    ));
+    outer.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&middle_for_page),
+        ]),
+    ));
+    let root = runtime.tree().root().expect("root");
+    {
+        let outlet_outer = outlet_outer.clone();
+        runtime
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_outer.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_middle).expect("middle attaches");
+    RouteOutlet::attach_nested(&outlet_middle, &outlet_inner).expect("inner attaches");
+    for _ in 0..3 {
+        let before = [
+            outlet_outer.borrow().frame_drive_count(),
+            outlet_middle.borrow().frame_drive_count(),
+            outlet_inner.borrow().frame_drive_count(),
+        ];
+        present_outer_tree(&mut runtime, &outlet_outer);
+        assert_eq!(outlet_outer.borrow().frame_drive_count(), before[0] + 1);
+        assert_eq!(outlet_middle.borrow().frame_drive_count(), before[1] + 1);
+        assert_eq!(outlet_inner.borrow().frame_drive_count(), before[2] + 1);
+    }
+    // The whole tree still works end to end: inner content is live.
+    tab_until(&mut runtime, &node_b);
 }
