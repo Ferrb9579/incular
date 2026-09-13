@@ -26,7 +26,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -110,10 +110,13 @@ pub struct RouteOutlet {
     focus: RouteFocusState,
     bindings: HashMap<RouteId, RouteTaskBinding>,
     tags: Rc<RefCell<HashMap<RouteId, Key>>>,
-    /// Mount tags of directly nested outlets, newest last. Elements inside
-    /// a nested outlet belong to it even when an outer tag sits above them;
+    /// Directly nested outlets, weakest first. Elements inside a nested
+    /// outlet belong to it even when an outer tag sits above them;
     /// transitivity follows containment, so only direct children register.
-    nested_roots: Rc<RefCell<Vec<Key>>>,
+    /// Weak handles release automatically when a nested outlet drops, and
+    /// dead entries prune on every present, so repeated replacement never
+    /// grows metadata.
+    nested: Rc<RefCell<Vec<Weak<RefCell<RouteOutlet>>>>>,
     task_parent: TaskScope,
     /// Last successfully presented active route. Transitions capture
     /// against this and advance it only on commit — never on failure.
@@ -145,8 +148,8 @@ impl RouteOutlet {
     pub fn new(navigator: &Navigator, task_parent: &TaskScope) -> Self {
         let tags: Rc<RefCell<HashMap<RouteId, Key>>> = Rc::default();
         let tags_for_oracle = tags.clone();
-        let nested_roots: Rc<RefCell<Vec<Key>>> = Rc::default();
-        let nested_for_oracle = nested_roots.clone();
+        let nested: Rc<RefCell<Vec<Weak<RefCell<RouteOutlet>>>>> = Rc::default();
+        let nested_for_oracle = nested.clone();
         let focus = RouteFocusState::new(move |tree: &WidgetTree, id: ElementId| {
             // Ancestor chain of the element, self included. Nested outlets
             // win first: anything at or below a nested outlet root belongs
@@ -155,7 +158,7 @@ impl RouteOutlet {
             // contain each other, so any matched own tag is the nearest.
             // Scans stay bounded: one ancestor walk plus one reverse lookup
             // per tag, on transitions and vacant retries only — never a
-            // per-route sweep.
+            // per-route sweep. Dead handles simply miss.
             let mut chain = Vec::new();
             let mut cursor = Some(id);
             while let Some(current) = cursor {
@@ -163,7 +166,11 @@ impl RouteOutlet {
                 cursor = tree.parent(current);
             }
             for nested in nested_for_oracle.borrow().iter() {
-                if let Some(root) = tree.element_with_key(nested)
+                let Some(nested) = nested.upgrade() else {
+                    continue;
+                };
+                let nested = nested.borrow();
+                if let Some(root) = tree.element_with_key(&nested.root_key)
                     && (root == id || chain.contains(&root))
                 {
                     return None;
@@ -181,7 +188,7 @@ impl RouteOutlet {
             focus,
             bindings: HashMap::new(),
             tags,
-            nested_roots,
+            nested,
             task_parent: task_parent.clone(),
             presented: None,
             pending: None,
@@ -199,38 +206,61 @@ impl RouteOutlet {
     /// restored over by it. Sibling outlets sharing only an ancestor need
     /// nothing: disjoint subtrees never attribute across. Transitivity
     /// follows containment — register each outlet with its direct parent.
-    ///
-    /// Nested mounting pattern: host the nested widget in a stable keyed
-    /// slot built by a stateful builder reading the nested [`Self::revision`]
-    /// handle. Builder-owned children survive ancestor rebuilds by
-    /// framework contract, so the slot keeps its content (and the nested
-    /// outlet keeps its state and focus) across outer frames, while the
-    /// revision handle refreshes it on nested navigation. A plain
-    /// replacing builder instead remounts the slot every outer rebuild.
-    /// No nested `attach` is needed on top: present frames already drive
-    /// reconciliation, and the slot builder drives mounting.
-    pub fn attach_nested(&mut self, nested: &RouteOutlet) {
-        let key = nested.root_key.clone();
-        let mut roots = self.nested_roots.borrow_mut();
-        if !roots.contains(&key) {
-            roots.push(key);
-        }
+    /// Registration holds weakly: dropping the nested outlet releases it,
+    /// and dead entries prune on every present, so repeated replacement
+    /// never grows metadata. Re-registering the same outlet is a no-op.
+    pub fn attach_nested(outlet: &Rc<RefCell<Self>>, nested: &Rc<RefCell<Self>>) {
+        let outlet = outlet.borrow_mut();
+        let mut attached = outlet.nested.borrow_mut();
+        attached.retain(|existing| {
+            existing
+                .upgrade()
+                .is_some_and(|live| !Rc::ptr_eq(&live, nested))
+        });
+        attached.push(Rc::downgrade(nested));
+    }
+
+    /// Mounts a nested outlet's widget with the required builder identity:
+    /// a stable keyed boundary driven by the nested revision, so ancestor
+    /// rebuilds retain the slot instead of remounting it. Hosts compose
+    /// this inside outer route content instead of assembling stateful
+    /// builders by hand; no nested `attach` is needed on top. Presenting
+    /// the outer outlet drives the whole tree in one frame — nested
+    /// outlets never need their own `present_frame` calls.
+    pub fn nested_widget(nested: &Rc<RefCell<Self>>) -> Widget {
+        let (revision, namespace) = {
+            let nested = nested.borrow();
+            (nested.revision.clone(), nested.namespace)
+        };
+        let nested_for_build = Rc::clone(nested);
+        Widget::stateful_layout_builder(revision, move |_, _| nested_for_build.borrow().widget())
+            .with_key(Key::String(format!("route-outlet-slot-{namespace}")))
+    }
+
+    /// Number of live nested attachments. Dead handles prune on every
+    /// present; useful for hosts composing nested outlets dynamically.
+    #[must_use]
+    pub fn attached_nested_count(&self) -> usize {
+        self.nested
+            .borrow()
+            .iter()
+            .filter(|weak| weak.upgrade().is_some())
+            .count()
+    }
+
+    /// Live nested outlets for cascade driving.
+    fn live_nested(&self) -> Vec<Rc<RefCell<Self>>> {
+        self.nested
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect()
     }
 
     /// Returns the navigator this outlet hosts.
     #[must_use]
     pub fn navigator(&self) -> &Navigator {
         &self.navigator
-    }
-
-    /// Invalidation revision bumped by every [`Self::present_frame`].
-    /// Builders hosting outlet content observe it: the attached builder
-    /// through explicit rebuilds, and nested stateful slots by reading
-    /// this handle (distinct from [`Navigator::revision`], which counts
-    /// stack mutations).
-    #[must_use]
-    pub fn revision(&self) -> Rc<Cell<u64>> {
-        self.revision.clone()
     }
 
     /// Attaches the outlet to its mounted widget so [`Self::present_frame`]
@@ -429,8 +459,7 @@ impl RouteOutlet {
     ) -> Result<(DisplayList, FrameStats), TreeError> {
         {
             let mut outlet = outlet.borrow_mut();
-            outlet.revision.set(outlet.revision.get().wrapping_add(1));
-            outlet.capture_transition(runtime);
+            outlet.begin_frame(runtime);
         }
         // Rebuild outlet content explicitly before framing: reactive
         // dependencies alone cannot cover content the host descriptors
@@ -448,7 +477,7 @@ impl RouteOutlet {
             }
         }
         let output = runtime.run_frame(constraints)?;
-        outlet.borrow_mut().reconcile_presented(runtime);
+        outlet.borrow_mut().reconcile_tree(runtime);
         Ok(output)
     }
 
@@ -460,10 +489,10 @@ impl RouteOutlet {
     /// hosts; prefer [`Self::present_frame`], whose pre-frame capture also
     /// survives disposal-unmounts. Use one driver per outlet.
     pub fn after_frame(&mut self, runtime: &mut Runtime) {
-        self.capture_transition(runtime);
+        self.capture_tree(runtime);
         // Manual driving has no fallible step between capture and commit,
         // so reconciliation commits immediately.
-        self.reconcile_presented(runtime);
+        self.reconcile_tree(runtime);
     }
 
     /// Restores the active route's saved focus now, for content that
@@ -581,6 +610,40 @@ impl RouteOutlet {
         self.prune_unmounted();
         self.ensure_bindings();
         self.restore_or_retry(runtime, transitioned);
+    }
+
+    /// Bumps this outlet and every nested outlet, then captures pending
+    /// transitions top-down. One call drives the whole outlet tree, so a
+    /// single frame presents nested navigation without rendering the
+    /// runtime once per outlet.
+    fn begin_frame(&mut self, runtime: &Runtime) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+        self.capture_transition(runtime);
+        for nested in self.live_nested() {
+            nested.borrow_mut().begin_frame(runtime);
+        }
+    }
+
+    /// Reconciles this outlet and every nested outlet after a frame,
+    /// children first so the outer context wins focus ties
+    /// deterministically. Dead nested handles prune here, keeping
+    /// registrations bounded no matter how often hosts replace outlets.
+    fn reconcile_tree(&mut self, runtime: &mut Runtime) {
+        for nested in self.live_nested() {
+            nested.borrow_mut().reconcile_tree(runtime);
+        }
+        self.reconcile_presented(runtime);
+        self.nested
+            .borrow_mut()
+            .retain(|weak| weak.upgrade().is_some());
+    }
+
+    /// Captures pending transitions top-down without bumping revisions.
+    fn capture_tree(&mut self, runtime: &Runtime) {
+        self.capture_transition(runtime);
+        for nested in self.live_nested() {
+            nested.borrow_mut().capture_tree(runtime);
+        }
     }
 
     /// Stable mount tag for a route, assigned once while the outlet lives.
