@@ -18,6 +18,10 @@ use super::{PageKey, RouteId, RouteSettings};
 /// page's stable reconciliation identity: keyed pages retain their mounted
 /// route across [`set_pages`](super::Navigator::set_pages) builds, while
 /// unkeyed pages carry no identity and mount anew on every reconciliation.
+/// Presentation and transition ride along declaratively: pushing or
+/// reconciling a keyed page with a popup or modal presentation mounts it
+/// that way, and same-key updates apply the latest configuration to the
+/// retained route (see `set_pages` for the lifetime rule).
 #[derive(Clone, TypedBuilder)]
 #[builder(builder_type(name = PageDescriptorBuilder))]
 pub struct Page {
@@ -27,6 +31,14 @@ pub struct Page {
     pub child: Widget,
     #[builder(default, setter(strip_option))]
     pub key: Option<PageKey>,
+    /// How the route presents: pages, popups, and modals are all
+    /// expressible here, so transparent and veiled routes need no
+    /// imperative construction.
+    #[builder(default)]
+    pub presentation: RoutePresentation,
+    /// Transition wrapping the presented child.
+    #[builder(default = RouteTransition::None)]
+    pub transition: RouteTransition,
 }
 
 /// Rust-native route presentation composition.
@@ -192,6 +204,8 @@ impl Page {
             name: name.into(),
             child: child.into(),
             key: None,
+            presentation: RoutePresentation::default(),
+            transition: RouteTransition::None,
         }
     }
 
@@ -199,6 +213,23 @@ impl Page {
     #[must_use]
     pub fn key(mut self, key: PageKey) -> Self {
         self.key = Some(key);
+        self
+    }
+
+    /// Describes how the route presents. Same-key updates apply the latest
+    /// presentation to the retained route; only key removal (or no key)
+    /// ends the lifetime.
+    #[must_use]
+    pub fn presentation(mut self, presentation: RoutePresentation) -> Self {
+        self.presentation = presentation;
+        self
+    }
+
+    /// Wraps the presented child in this transition. Same-key updates
+    /// replace the transition on the retained route.
+    #[must_use]
+    pub fn transition(mut self, transition: RouteTransition) -> Self {
+        self.transition = transition;
         self
     }
 }
@@ -340,6 +371,8 @@ impl PageRouteBuilder {
 impl From<Page> for Route {
     fn from(page: Page) -> Self {
         Self::new(page.name, page.child)
+            .presentation(page.presentation)
+            .transition(page.transition)
     }
 }
 

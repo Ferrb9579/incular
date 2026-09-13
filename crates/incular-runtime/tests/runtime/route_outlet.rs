@@ -3090,17 +3090,16 @@ fn outlet_same_id_replacement_paints_old_then_new() {
 
 #[test]
 fn outlet_transparent_top_reorder_paints_and_hits_in_order() {
-    // Two opaque lowers under a small transparent popup top: reordering
-    // the lowers commits, and the returned frame must prove the new order
-    // in paint commands and hit-testing — not just in focus bookkeeping.
-    // (A mid-build reorder under a keyed transparent top is inexpressible:
-    // pushed pages are opaque and `set_pages` preserves entry
-    // presentation, so keyed popups cannot be built; mid-build coverage
-    // lives in the replacement and retry tests.)
+    // Two opaque lowers under a small transparent popup top: a mid-build
+    // reorder of the keyed lowers commits, and the returned frames must
+    // prove the new order in paint commands and hit-testing — not just in
+    // focus bookkeeping. The popup stays transparent across the
+    // declarative update because its pages keep declaring it.
     let navigator = Navigator::new();
     let mut harness = harness(&navigator);
     let ka = PageKey::new("a").unwrap();
     let kb = PageKey::new("b").unwrap();
+    let kt = PageKey::new("t").unwrap();
     let node_a = FocusNode::new();
     let node_b = FocusNode::new();
     let taps_a = Rc::new(Cell::new(0_u32));
@@ -3122,33 +3121,148 @@ fn outlet_transparent_top_reorder_paints_and_hits_in_order() {
         .unwrap();
     present(&mut harness);
     tab_until(&mut harness.runtime, &node_b);
-    // Reorder below the (forthcoming) transparent top: A occludes B now.
-    navigator
-        .set_pages([
-            Page::new("b", lower(&node_b, BLUE, &taps_b)).key(kb.clone()),
-            Page::new("a", lower(&node_a, RED, &taps_a)).key(ka.clone()),
-        ])
-        .unwrap();
-    let reordered = present(&mut harness);
-    assert!(paints(reordered.commands(), RED));
-    assert!(!paints(reordered.commands(), BLUE), "A now occludes B");
-    assert!(!harness.outlet.borrow().needs_frame());
-    // Transparent popup top: lowers keep painting and receiving hits.
-    navigator.push(
-        Route::new("t", Widget::box_(Size::new(40., 40.), GREEN))
-            .presentation(RoutePresentation::popup(None)),
+    // Keyed transparent top whose builder reorders the lowers mid-build.
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(
+        Page::new(
+            "t",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                let ka = ka.clone();
+                let kb = kb.clone();
+                let kt = kt.clone();
+                let node_a = node_a.clone();
+                let node_b = node_b.clone();
+                // Cloned handles share identity (nodes) and counters, so
+                // the reordered pages match the originals exactly.
+                let node_a = node_a.clone();
+                let node_b = node_b.clone();
+                let taps_a = taps_a.clone();
+                let taps_b = taps_b.clone();
+                move |_, _| {
+                    if trip.take() {
+                        let lower_b: Widget = Stack::new(vec![
+                            tappable_rect(BLUE, 200., 200., &taps_b),
+                            focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE)),
+                        ])
+                        .into();
+                        let lower_a: Widget = Stack::new(vec![
+                            tappable_rect(RED, 200., 200., &taps_a),
+                            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                        ])
+                        .into();
+                        navigator
+                            .set_pages([
+                                Page::new("b", lower_b).key(kb.clone()),
+                                Page::new("a", lower_a).key(ka.clone()),
+                                Page::new("t", Widget::box_(Size::new(40., 40.), GREEN))
+                                    .key(kt.clone())
+                                    .presentation(RoutePresentation::popup(None)),
+                            ])
+                            .unwrap();
+                    }
+                    Widget::box_(Size::new(40., 40.), GREEN)
+                }
+            }))]),
+        )
+        .key(kt.clone())
+        .presentation(RoutePresentation::popup(None)),
     );
-    let covered = present(&mut harness);
-    assert!(paints(covered.commands(), RED));
-    assert!(paints(covered.commands(), GREEN));
+    // First present paints the OLD order (B occludes A under the
+    // transparent top) and still owes a frame for the reorder.
+    let first = present(&mut harness);
+    assert!(paints(first.commands(), BLUE));
+    assert!(paints(first.commands(), GREEN));
+    assert!(
+        !paints(first.commands(), RED),
+        "paint follows the composed order, not the committed one"
+    );
+    assert!(harness.outlet.borrow().needs_frame());
+    // Second present paints the NEW order with the top still
+    // transparent; taps hit the new top lower.
+    let second = present(&mut harness);
+    assert!(paints(second.commands(), RED));
+    assert!(paints(second.commands(), GREEN));
+    assert!(!paints(second.commands(), BLUE), "A now occludes B");
+    assert!(!harness.outlet.borrow().needs_frame());
     tap(&mut harness, 100., 100.);
     assert_eq!(taps_a.get(), 1);
     assert_eq!(taps_b.get(), 0);
-    // Bookkeeping agrees too: the popup cycle restores focus.
-    tab_until(&mut harness.runtime, &node_a);
+    // Popping the popup returns to A: B's subtree remounted under fresh
+    // instances, so its record cannot restore — focus falls back cleanly
+    // instead of landing on a recycled element — while bindings follow
+    // lifetimes exactly and the live top tabs normally.
     navigator.pop();
     present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), None);
+    let routes = navigator.routes();
+    assert_eq!(routes.len(), 2);
+    let (rb, ra) = (routes[0].id, routes[1].id);
+    assert_eq!(navigator.current().expect("A on top").id, ra);
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_some());
+    assert!(harness.outlet.borrow().route_task_scope(ra).is_some());
+    tab_until(&mut harness.runtime, &node_a);
     assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_modal_barrier_same_key_update_repaints() {
+    // A keyed modal's barrier follows the latest page: swapping GREEN for
+    // RED repaints the veil on the next present with the lifetime — and
+    // its task scope — preserved, so in-flight route work survives the
+    // configuration change.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let wake = Arc::new(TestWake::default());
+    harness.runtime.set_wake_handler(wake.clone());
+    let km = PageKey::new("m").unwrap();
+    navigator.push_page(
+        Page::new("m", Widget::box_(Size::new(40., 40.), BLUE))
+            .key(km.clone())
+            .presentation(RoutePresentation::modal(ModalBarrier {
+                color: GREEN,
+                ..Default::default()
+            })),
+    );
+    present(&mut harness);
+    let id = navigator.current().expect("modal").id;
+    let scope = harness
+        .outlet
+        .borrow()
+        .route_task_scope(id)
+        .expect("modal bound");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_completion = completed.clone();
+    harness
+        .runtime
+        .spawner()
+        .spawn_into_in(&scope, async { 7_u8 }, move |result, _| {
+            assert_eq!(result.expect("update never cancels"), 7_u8);
+            completed_for_completion.store(true, Ordering::Release);
+        });
+    assert!(paints(repaint(&mut harness).commands(), GREEN));
+    // Same key, new barrier: the veil repaints, the route ID holds, and
+    // the task completes through the preserved lifetime.
+    navigator
+        .set_pages([Page::new("m", Widget::box_(Size::new(40., 40.), BLUE))
+            .key(km)
+            .presentation(RoutePresentation::modal(ModalBarrier {
+                color: RED,
+                ..Default::default()
+            }))])
+        .unwrap();
+    assert_eq!(navigator.current().expect("retained").id, id);
+    present(&mut harness);
+    assert!(paints(repaint(&mut harness).commands(), RED));
+    assert!(
+        !paints(repaint(&mut harness).commands(), GREEN),
+        "the old veil is gone"
+    );
+    pump_until(&mut harness.runtime, &completed);
+    assert!(!scope.is_cancelled());
+    navigator.pop();
+    present(&mut harness);
+    assert!(scope.is_cancelled());
 }
 
 #[test]

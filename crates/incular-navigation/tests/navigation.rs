@@ -407,6 +407,261 @@ fn keyed_reorder_preserves_route_lifetimes() {
 }
 
 #[test]
+fn keyed_popup_page_carries_presentation() {
+    // Transparent routes are declarative: a keyed page with a popup
+    // presentation pushes and reconciles as a popup, no imperative
+    // construction needed.
+    let key = PageKey::new("sheet").unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(
+        Page::new("sheet", page())
+            .key(key.clone())
+            .presentation(RoutePresentation::popup(None)),
+    );
+    let route = navigator.current().expect("pushed");
+    assert!(!route.presentation.is_overlay());
+    assert!(!route.presentation.is_opaque());
+    assert!(route.presentation.maintains_state());
+    assert!(route.presentation.barrier().is_none());
+    // Reconciliation keeps the keyed popup a popup.
+    navigator
+        .set_pages([Page::new("sheet", page())
+            .key(key)
+            .presentation(RoutePresentation::popup(None))])
+        .unwrap();
+    let route = navigator.current().expect("retained");
+    assert!(!route.presentation.is_opaque());
+}
+
+#[test]
+fn keyed_modal_page_barrier_round_trips() {
+    let key = PageKey::new("dialog").unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("dialog", page()).key(key.clone()).presentation(
+        RoutePresentation::modal(ModalBarrier {
+            color: Color::rgba(1, 2, 3, 255),
+            dismissible: false,
+            label: Some("confirm".to_owned()),
+        }),
+    ));
+    let barrier = navigator
+        .current()
+        .expect("pushed")
+        .presentation
+        .barrier()
+        .expect("modal declares a barrier")
+        .clone();
+    assert_eq!(barrier.color, Color::rgba(1, 2, 3, 255));
+    assert!(!barrier.dismissible);
+    assert_eq!(barrier.label.as_deref(), Some("confirm"));
+    // Same-key rebuilds keep the barrier with the retained route.
+    navigator
+        .set_pages([Page::new("dialog", page())
+            .key(key)
+            .presentation(RoutePresentation::modal(ModalBarrier {
+                color: Color::rgba(1, 2, 3, 255),
+                dismissible: false,
+                label: Some("confirm".to_owned()),
+            }))])
+        .unwrap();
+    assert!(
+        navigator
+            .current()
+            .expect("retained")
+            .presentation
+            .blocks_background_input()
+    );
+}
+
+#[test]
+fn same_key_presentation_update_preserves_lifetime() {
+    // Configuration follows the latest page; only key removal ends the
+    // lifetime. Flipping page to popup keeps the route ID and the live
+    // lifetime while the presentation takes effect.
+    let key = PageKey::new("morph").unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("morph", page()).key(key.clone()));
+    let id = navigator.current().expect("pushed").id;
+    assert!(navigator.lifetime_of(id).expect("live").is_live());
+    navigator
+        .set_pages([Page::new("morph", page())
+            .key(key)
+            .presentation(RoutePresentation::popup(None))])
+        .unwrap();
+    assert_eq!(navigator.current().expect("retained").id, id);
+    assert!(navigator.lifetime_of(id).expect("still live").is_live());
+    assert!(
+        !navigator
+            .current()
+            .expect("retained")
+            .presentation
+            .is_opaque()
+    );
+}
+
+#[test]
+fn same_key_retention_change_applies_without_replacement() {
+    let key = PageKey::new("cache").unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("cache", page()).key(key.clone()).presentation(
+        RoutePresentation::Page {
+            opaque: true,
+            maintain_state: false,
+            fullscreen_dialog: false,
+        },
+    ));
+    let id = navigator.current().expect("pushed").id;
+    assert!(
+        !navigator
+            .current()
+            .expect("pushed")
+            .presentation
+            .maintains_state()
+    );
+    navigator
+        .set_pages([Page::new("cache", page())
+            .key(key)
+            .presentation(RoutePresentation::Page {
+                opaque: true,
+                maintain_state: true,
+                fullscreen_dialog: false,
+            })])
+        .unwrap();
+    assert_eq!(navigator.current().expect("retained").id, id);
+    assert!(
+        navigator
+            .current()
+            .expect("retained")
+            .presentation
+            .maintains_state()
+    );
+}
+
+#[test]
+fn same_key_transition_update_replaces_effect() {
+    let key = PageKey::new("fade").unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("fade", page()).key(key.clone()));
+    assert!(matches!(
+        navigator.current().expect("pushed").transition,
+        RouteTransition::None
+    ));
+    let id = navigator.current().expect("pushed").id;
+    navigator
+        .set_pages([Page::new("fade", page())
+            .key(key)
+            .transition(RouteTransition::Fade(OpacityController::new()))])
+        .unwrap();
+    assert_eq!(navigator.current().expect("retained").id, id);
+    assert!(matches!(
+        navigator.current().expect("retained").transition,
+        RouteTransition::Fade(_)
+    ));
+}
+
+#[test]
+fn reorder_preserves_presentations_per_key() {
+    // Presentations travel with their keys through a reorder: the popup
+    // stays a popup and the page stays a page, with stable identities.
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("base", page()).key(key("base")),
+            Page::new("sheet", page())
+                .key(key("sheet"))
+                .presentation(RoutePresentation::popup(None)),
+        ])
+        .unwrap();
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    navigator
+        .set_pages([
+            Page::new("sheet", page())
+                .key(key("sheet"))
+                .presentation(RoutePresentation::popup(None)),
+            Page::new("base", page()).key(key("base")),
+        ])
+        .unwrap();
+    let routes = navigator.routes();
+    assert_eq!(routes[0].id, ids[1]);
+    assert_eq!(routes[1].id, ids[0]);
+    assert!(!routes[0].presentation.is_opaque());
+    assert!(routes[1].presentation.is_opaque());
+}
+
+#[test]
+fn duplicate_keys_reject_presentations_untouched() {
+    // Identity validation still runs before any mutation when pages carry
+    // presentations: the duplicate rejects the whole update.
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([Page::new("a", page()).key(key("a"))])
+        .unwrap();
+    let revision = navigator.revision();
+    let result = navigator.set_pages([
+        Page::new("b", page())
+            .key(key("b"))
+            .presentation(RoutePresentation::popup(None)),
+        Page::new("c", page())
+            .key(key("b"))
+            .presentation(RoutePresentation::modal(ModalBarrier::default())),
+    ]);
+    assert_eq!(result.unwrap_err().key(), &PageKey::new("b").unwrap());
+    assert_eq!(navigator.revision(), revision);
+    assert_eq!(navigator.routes().len(), 1);
+}
+
+#[test]
+fn restorable_metadata_survives_presentation_update() {
+    // A keyed restorable route keeps its restoration payload across a
+    // same-key presentation change: the entry (and its metadata) is
+    // retained, only the configuration follows the latest page.
+    let key = PageKey::new("detail").unwrap();
+    let registry = RouteRegistry::new();
+    let detail = registry
+        .register_restorable("/detail", move |arguments| {
+            let name = arguments
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RestorableRouteBuildError::invalid_arguments("missing name"))?;
+            Ok(Page::new(name, page())
+                .key(key.clone())
+                .presentation(RoutePresentation::popup(None)))
+        })
+        .unwrap();
+    let navigator = Navigator::new();
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(detail, json!({ "name": "detail" }))
+                .state(json!({ "document": 7 })),
+        )
+        .unwrap();
+    let id = navigator.current().expect("restorable pushed").id;
+    navigator
+        .set_pages([Page::new("detail", page())
+            .key(PageKey::new("detail").unwrap())
+            .presentation(RoutePresentation::modal(ModalBarrier::default()))])
+        .unwrap();
+    assert_eq!(navigator.current().expect("retained").id, id);
+    assert!(
+        navigator
+            .current()
+            .expect("retained")
+            .presentation
+            .blocks_background_input()
+    );
+    assert_eq!(
+        navigator
+            .current_restorable_route()
+            .expect("metadata kept")
+            .state,
+        json!({ "document": 7 })
+    );
+}
+
+#[test]
 fn repeated_names_with_different_keys_coexist_stably() {
     let navigator = Navigator::new();
     navigator
@@ -1250,6 +1505,8 @@ fn keyed_reorder_retires_only_the_replaced_child_outside_borrows() {
                 name: "probed".to_owned(),
                 child: probed_child(&navigator, &log),
                 key: Some(key.clone()),
+                presentation: RoutePresentation::page(),
+                transition: RouteTransition::None,
             },
         ])
         .unwrap();
@@ -1266,6 +1523,8 @@ fn keyed_reorder_retires_only_the_replaced_child_outside_borrows() {
                 name: "probed".to_owned(),
                 child: page(),
                 key: Some(key),
+                presentation: RoutePresentation::page(),
+                transition: RouteTransition::None,
             },
             Page::new("placeholder", page()).key(PageKey::new("other").unwrap()),
         ])
@@ -1505,6 +1764,8 @@ fn non_top_child_replacement_retires_outside_borrows() {
                 name: "lower".to_owned(),
                 child: page(),
                 key: Some(low),
+                presentation: RoutePresentation::page(),
+                transition: RouteTransition::None,
             },
             Page::new("top", page()).key(top),
         ])

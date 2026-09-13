@@ -470,8 +470,8 @@ impl Navigator {
             settings: RouteSettings::new(page.name.clone()),
             name: page.name,
             child: page.child,
-            transition: RouteTransition::None,
-            presentation: RoutePresentation::default(),
+            transition: page.transition,
+            presentation: page.presentation,
         };
         self.push_entry(pushed, Some(route), key)
     }
@@ -492,8 +492,8 @@ impl Navigator {
                         settings: RouteSettings::new(page.name.clone()),
                         name: page.name,
                         child: page.child,
-                        transition: RouteTransition::None,
-                        presentation: RoutePresentation::default(),
+                        transition: page.transition,
+                        presentation: page.presentation,
                     },
                     restorable: Some(route),
                     key: None,
@@ -637,11 +637,12 @@ impl Navigator {
     /// Reconciles the stack to declarative pages.
     ///
     /// Only page keys identify retained routes: a keyed page reuses the
-    /// live entry carrying that key (preserving its route ID, restoration
-    /// metadata, and presentation while replacing the child widget).
-    /// Names are routing metadata, never identity, so repeated names with
-    /// different keys coexist. Pages without a key carry no identity and
-    /// always mount anew.
+    /// live entry carrying that key, preserving its route ID, restoration
+    /// metadata, and scope data while child, transition, and presentation
+    /// follow the latest page. Configuration never ends a lifetime — only
+    /// key removal (or no key at all) does. Names are routing metadata,
+    /// never identity, so repeated names with different keys coexist.
+    /// Pages without a key carry no identity and always mount anew.
     ///
     /// The caller's iterator drains fully before any state is borrowed,
     /// so an iterator may inspect or mutate the navigator; those changes
@@ -666,7 +667,7 @@ impl Navigator {
                 return Err(DuplicatePageKey { key: key.clone() });
             }
         }
-        let (previous_top, current_top, retired, retired_children) = {
+        let (previous_top, current_top, retired, retired_children, retired_owned) = {
             let mut state = self.state.borrow_mut();
             let previous_top = state.routes.last().map(|entry| entry.route.clone());
             let mut previous: Vec<Option<RouteEntry>> = std::mem::take(&mut state.routes)
@@ -683,8 +684,10 @@ impl Navigator {
             // Replaced children retire outside the borrow below: assignment
             // would drop the old child here, where its destructor could
             // reenter the navigator. Top-route snapshots do not protect
-            // non-top children.
+            // non-top children. Transitions and presentations retire the
+            // same way: overlay entries own widgets with the same hazard.
             let mut retired_children: Vec<Widget> = Vec::new();
+            let mut retired_owned: Vec<(RouteTransition, RoutePresentation)> = Vec::new();
             for page in pages {
                 // Pop takes the topmost claimant: slots ascend, so the
                 // last slot is the most recently pushed entry.
@@ -696,12 +699,20 @@ impl Navigator {
                     let mut entry = previous[index]
                         .take()
                         .expect("a claimed slot holds its entry exactly once");
-                    // A renamed page updates the name and its settings
-                    // mirror; arguments, scope, restoration metadata,
-                    // presentation, and the route ID are preserved.
+                    // Lifetime rule: the key owns the lifetime (route ID,
+                    // restoration metadata, scope data), while child,
+                    // transition, and presentation follow the latest page.
+                    // Only key removal — or no key at all — ends the
+                    // lifetime; configuration never does. A renamed page
+                    // updates the name and its settings mirror.
                     entry.route.name = page.name.clone();
                     entry.route.settings.rename(page.name.clone());
                     retired_children.push(std::mem::replace(&mut entry.route.child, page.child));
+                    let old_transition =
+                        std::mem::replace(&mut entry.route.transition, page.transition);
+                    let old_presentation =
+                        std::mem::replace(&mut entry.route.presentation, page.presentation);
+                    retired_owned.push((old_transition, old_presentation));
                     next.push(entry);
                 } else {
                     state.next_id = state.next_id.wrapping_add(1).max(1);
@@ -711,8 +722,8 @@ impl Navigator {
                             settings: RouteSettings::new(page.name.clone()),
                             name: page.name,
                             child: page.child,
-                            transition: RouteTransition::None,
-                            presentation: RoutePresentation::default(),
+                            transition: page.transition,
+                            presentation: page.presentation,
                         },
                         restorable: None,
                         key: page.key,
@@ -727,7 +738,13 @@ impl Navigator {
             state.routes = next;
             state.revision = state.revision.wrapping_add(1);
             let current_top = state.routes.last().map(|entry| entry.route.clone());
-            (previous_top, current_top, retired, retired_children)
+            (
+                previous_top,
+                current_top,
+                retired,
+                retired_children,
+                retired_owned,
+            )
         };
         let mut effects = CommitEffects::default();
         // Declarative removal ends lifetimes through the same retirement
@@ -738,6 +755,7 @@ impl Navigator {
             .extend(retired.iter().map(|entry| entry.lifetime.clone()));
         drop(retired);
         drop(retired_children);
+        drop(retired_owned);
         effects
             .events
             .extend(Self::active_transition(previous_top, current_top));
