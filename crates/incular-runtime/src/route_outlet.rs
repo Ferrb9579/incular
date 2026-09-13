@@ -321,9 +321,10 @@ impl std::error::Error for OutletAttachError {}
 /// acyclic); `driver` (driving runtime — claimed on drive, released on
 /// detach or runtime drop); `task_parent` (host scope — never mutated);
 /// `presented`/`pending` (transition bookkeeping — advance only on
-/// commit); `composing`/`consumed` (composition record — written by
-/// builders, promoted on success only); `signaled` (schedule memo —
-/// edge-triggered per revision); `namespace`/`root_key` (immutable
+/// commit); `epoch` (attempt counter — one per driven frame);
+/// `composing`/`consumed` (composition record — receipted by attempt,
+/// written by builders, promoted on success only); `signaled` (schedule
+/// memo — edge-triggered per revision); `namespace`/`root_key` (immutable
 /// construction identity); `tag_sequence` (monotonic, never reused);
 /// `revision` (invalidation generation — doubles as the drive counter);
 /// `mount` (attached element — cleared when it vanishes).
@@ -356,12 +357,21 @@ pub struct RouteOutlet {
     presented: Option<RouteId>,
     /// Uncommitted capture: `Some` while a frame transition is in flight.
     pending: Option<PendingTransition>,
+    /// Frame attempt counter: bumped by every [`Self::begin_frame`], so
+    /// each present (and each cascade participant) owns a distinct
+    /// attempt. [`Self::widget`] stamps compositions with the attempt
+    /// they ran under; reconciliation only honors the current attempt's
+    /// receipt — a speculative or leftover composition can never
+    /// authorize a later frame.
+    epoch: Cell<u64>,
     /// Publication slot for in-flight composition: [`Self::widget`] writes
-    /// here on every execution, from the same route list it builds
-    /// children from. Never read directly for decisions — reconciliation
-    /// promotes it (see `consumed`) only on the success path, so failed
-    /// composition publishes nothing.
-    composing: RefCell<Option<FrameAttempt>>,
+    /// a receipt (attempt epoch plus snapshot) here on every execution,
+    /// from the same route list it builds children from. Never read
+    /// directly for decisions — reconciliation promotes it (see
+    /// `consumed`) only on the success path and only for the current
+    /// attempt, so failed composition publishes nothing and discarded
+    /// compositions authorize nothing.
+    composing: RefCell<Option<(u64, FrameAttempt)>>,
     /// Last composition a frame carried through reconciliation for this
     /// outlet. Comparing it against live state answers whether newer
     /// navigation still requires a frame (see [`Self::needs_frame`])
@@ -446,6 +456,7 @@ impl RouteOutlet {
             task_parent: task_parent.clone(),
             presented: None,
             pending: None,
+            epoch: Cell::new(0),
             composing: RefCell::default(),
             consumed: None,
             signaled: Cell::new(0),
@@ -832,7 +843,10 @@ impl RouteOutlet {
         // comes from the same route list the children build from, so later
         // callbacks cannot relabel already-built content. Builders that
         // never execute (skipped slots, failed frames) publish nothing.
-        *self.composing.borrow_mut() = Some(FrameAttempt::of(self.navigator.revision(), &routes));
+        *self.composing.borrow_mut() = Some((
+            self.epoch.get(),
+            FrameAttempt::of(self.navigator.revision(), &routes),
+        ));
         // Top-down visibility: everything paints until (and including) the
         // first opaque page.
         let mut visible = vec![false; routes.len()];
@@ -983,7 +997,18 @@ impl RouteOutlet {
         // never mention, and an explicit rebuild keeps mounting ordered
         // with the capture above. A vanished mount detaches gracefully
         // instead of erroring forever.
-        let attached = outlet.borrow().mount.get();
+        // A vanished mount (unmounted content prunes its builder) detaches
+        // gracefully instead of erroring — or panicking — every frame.
+        // The existence check precedes the rebuild because pruned builders
+        // no longer fail with `MissingElement`.
+        let attached = outlet
+            .borrow()
+            .mount
+            .get()
+            .filter(|mount| runtime.tree().element_exists(*mount));
+        if attached.is_none() {
+            outlet.borrow_mut().mount.set(None);
+        }
         if let Some(mount) = attached {
             match runtime.rebuild_from_builder(mount) {
                 Ok(()) => {}
@@ -1128,15 +1153,19 @@ impl RouteOutlet {
     /// save — so the commit judges built content, and retries describe
     /// their own build. Runs only on the success path (reconciliation),
     /// so failed composition publishes nothing; skipped builders simply
-    /// re-promote their previous publication. Only newer-or-equal
-    /// snapshots adopt into the attempt: a composition predating the
-    /// capture must not relabel it. Both values are immutable copies, so
-    /// application callbacks running later in reconciliation cannot
-    /// relabel built content.
+    /// re-promote their previous publication. Only the current attempt's
+    /// receipt adopts: a composition from any other attempt (speculative
+    /// builds, leftover slots, predated captures) authorizes nothing, and
+    /// within the attempt only newer-or-equal snapshots relabel. All
+    /// values are immutable copies, so application callbacks running
+    /// later in reconciliation cannot relabel built content.
     fn adopt_consumed(&mut self) {
-        let Some(composing) = self.composing.borrow().clone() else {
+        let Some((epoch, composing)) = self.composing.borrow().clone() else {
             return;
         };
+        if epoch != self.epoch.get() {
+            return;
+        }
         if let Some(pending) = self.pending.as_mut()
             && composing.revision >= pending.attempt.revision
         {
@@ -1187,6 +1216,7 @@ impl RouteOutlet {
     /// runtime once per outlet. The topology guarantees (acyclic,
     /// single-parent) make every participant reachable exactly once.
     fn begin_frame(&mut self, runtime: &Runtime) {
+        self.epoch.set(self.epoch.get().wrapping_add(1));
         self.revision.set(self.revision.get().wrapping_add(1));
         self.capture_transition(runtime);
         for nested in self.live_nested() {

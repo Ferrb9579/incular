@@ -3474,6 +3474,132 @@ fn outlet_rebuild_phase_navigation_consumes_pre_trip_snapshot() {
 }
 
 #[test]
+fn outlet_discarded_composition_authorizes_no_frame() {
+    // The receipt rule, step by step: present revision A; navigate to B;
+    // compose B outside any frame and discard it; run a frame whose
+    // builder never consumes B. The outlet must still report A as
+    // consumed with B outstanding — the discarded composition authorizes
+    // nothing — while bookkeeping (which follows live state) advances.
+    // Remounting converges normally.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    assert!(!harness.outlet.borrow().needs_frame());
+    // Revision B arrives but never composes: the speculative widget is
+    // discarded, then the outlet content unmounts before the frame.
+    navigator.push_page(Page::new("b", Widget::box_(Size::new(40., 40.), BLUE)));
+    let _ = harness.outlet.borrow().widget();
+    let root = harness.runtime.tree().root().expect("root");
+    harness
+        .runtime
+        .register_builder(root, move || {
+            Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into()
+        })
+        .expect("root builder replaces");
+    frame(&mut harness.runtime);
+    assert_eq!(harness.runtime.focused_element(), None);
+    // The frame presents without the outlet builder: bookkeeping follows
+    // live navigation (B binds), but consumption stays at A.
+    let unmounted = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("unmounted present still reconciles")
+    .0;
+    assert!(!paints(unmounted.commands(), BLUE));
+    let rb = navigator.current().expect("route B").id;
+    assert!(
+        harness.outlet.borrow().route_task_scope(rb).is_some(),
+        "bindings follow live state, not consumption"
+    );
+    assert!(
+        harness.outlet.borrow().needs_frame(),
+        "A stays consumed with B outstanding"
+    );
+    // Remounting converges: the next composed frame presents B and idles.
+    let outlet_for_build = harness.outlet.clone();
+    harness
+        .runtime
+        .register_builder(root, move || {
+            Column::new(vec![SizedBox::from_dimensions(
+                Some(200.),
+                Some(200.),
+                Some(outlet_for_build.borrow().widget()),
+            )])
+            .into()
+        })
+        .expect("outlet builder restores");
+    frame(&mut harness.runtime);
+    RouteOutlet::attach(&harness.outlet, &mut harness.runtime).expect("outlet reattaches");
+    let remounted = present(&mut harness);
+    assert!(paints(remounted.commands(), BLUE));
+    assert!(!harness.outlet.borrow().needs_frame());
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_some());
+}
+
+#[test]
+fn outlet_failed_attempt_then_skipped_builder_stays_stale() {
+    // A failed attempt publishes nothing; the following successful frame
+    // skips the nested builder (slotless), so the inner outlet keeps its
+    // previous publication with newer navigation outstanding — until a
+    // remount consumes it.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, _node_b) =
+        nested_inside_setup();
+    inner.push(Route::new(
+        "bad",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE).with_key(7_u64),
+            Widget::box_(Size::new(40., 40.), GREEN).with_key(7_u64),
+        ]),
+    ));
+    RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("duplicate keys fail the rebuild");
+    // Slotless success: the outer outlet promotes current state while the
+    // inner builder never executes.
+    outer
+        .set_pages([Page::new("solo", focus_child(&node_a))])
+        .unwrap();
+    inner.pop();
+    let node_c = FocusNode::new();
+    inner.push_page(focus_page("c", &node_c));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(
+        outlet_inner.borrow().needs_frame(),
+        "the skipped builder published nothing new"
+    );
+    assert!(
+        outlet_outer.borrow().needs_frame(),
+        "inner staleness wakes the root driver"
+    );
+    // Remounting consumes the pending inner revision through the cascade.
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer
+        .set_pages([Page::new(
+            "a",
+            Column::new(vec![
+                focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!outlet_outer.borrow().needs_frame());
+    tab_until(&mut runtime, &node_c);
+    let _ = outer;
+}
+
+#[test]
 fn outlet_skipped_nested_builder_keeps_stale_consumed() {
     // Unmount the nested slot: the inner builder never executes, so the
     // inner consumed snapshot freezes while inner navigation advances —
