@@ -3200,6 +3200,178 @@ fn outlet_modal_pushed_mid_build_abandons_before_veil_paint() {
 }
 
 #[test]
+fn outlet_rebuild_phase_navigation_consumes_pre_trip_snapshot() {
+    // A first-build stateful closure navigates while its own mounting
+    // rebuild is still in flight — after widget() already read the
+    // routes. (Explicitly registered builders run before the mount
+    // builder, so they cannot interleave this way; first-build closures
+    // run as their elements mount.) The composition publishes the
+    // pre-trip snapshot: paint shows only pre-trip content while
+    // needs_frame reports the newer work, and the next present converges.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b_for_build = FocusNode::new();
+    navigator.push_page(Page::new(
+        "a",
+        focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+    ));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let builder_revision = Rc::new(Cell::new(0_u64));
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::stateful_layout_builder(
+            builder_revision.clone(),
+            {
+                let navigator = navigator.clone();
+                move |_, _| {
+                    if trip.take() {
+                        navigator
+                            .push_page(Page::new("c", Widget::box_(Size::new(40., 40.), YELLOW)));
+                    }
+                    focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+                }
+            },
+        )]),
+    ));
+    let first = present(&mut harness);
+    assert!(
+        !paints(first.commands(), YELLOW),
+        "C pushed mid-rebuild never composed"
+    );
+    assert!(paints(first.commands(), BLUE), "pre-trip content painted");
+    assert!(node_a.has_focus());
+    let rc = navigator.current().expect("C pushed").id;
+    assert!(
+        harness.outlet.borrow().route_task_scope(rc).is_some(),
+        "the live route binds although never mounted"
+    );
+    assert!(
+        harness.outlet.borrow().needs_frame(),
+        "the mid-rebuild push still requires a frame"
+    );
+    // The next present converges: mounts C, commits, clears the flag.
+    let second = present(&mut harness);
+    assert!(paints(second.commands(), YELLOW));
+    assert!(!harness.outlet.borrow().needs_frame());
+    navigator.pop();
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_skipped_nested_builder_keeps_stale_consumed() {
+    // Unmount the nested slot: the inner builder never executes, so the
+    // inner consumed snapshot freezes while inner navigation advances —
+    // the inner outlet reports pending work even right after an outer
+    // present that is current itself. Remounting resumes recording.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, node_b) =
+        nested_inside_setup();
+    inner.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_b);
+    assert!(!outlet_inner.borrow().needs_frame());
+    // Replace outer content without the slot, then advance inner
+    // navigation while slotless.
+    outer
+        .set_pages([Page::new("solo", focus_child(&node_a))])
+        .unwrap();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    inner.push_page(plain_page("c"));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    // needs_frame aggregates the tree: the skipped inner builder's
+    // staleness surfaces at the root (it wakes the driver) even though
+    // the outer outlet composed current state.
+    assert!(
+        outlet_inner.borrow().needs_frame(),
+        "the skipped inner builder published nothing"
+    );
+    assert!(
+        outlet_outer.borrow().needs_frame(),
+        "inner staleness wakes the root driver"
+    );
+    // Remount the slot: recording resumes and the cascade still drives.
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer
+        .set_pages([Page::new(
+            "a",
+            Column::new(vec![
+                focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(!outlet_inner.borrow().needs_frame());
+    inner.pop();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_b);
+    let _ = outer;
+}
+
+#[test]
+fn outlet_nested_layout_navigation_keeps_build_consumption() {
+    // A layout builder inside NESTED content navigates during the frame:
+    // the inner outlet keeps the snapshot its slot builder consumed (not
+    // a post-frame sample) — paint omits the pushed route while
+    // needs_frame reports it — and the outer outlet stays current.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, _node_b) =
+        nested_inside_setup();
+    let node_b = FocusNode::new();
+    let node_b_for_build = node_b.clone();
+    let trip = Rc::new(Cell::new(true));
+    inner.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let inner = inner.clone();
+            move |_, _| {
+                if trip.take() {
+                    inner.push_page(Page::new("c", Widget::box_(Size::new(40., 40.), YELLOW)));
+                }
+                focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    // The pushed route never composed this frame, the inner outlet still
+    // owes a frame for it, and the outer outlet is current.
+    assert!(
+        !paints(
+            runtime
+                .run_frame(Constraints::tight(Size::new(200., 200.)))
+                .expect("repaint")
+                .0
+                .commands(),
+            YELLOW
+        ),
+        "C pushed mid-frame never composed"
+    );
+    assert!(
+        outlet_inner.borrow().needs_frame(),
+        "inner owes a frame for the layout-phase push"
+    );
+    assert!(
+        outlet_outer.borrow().needs_frame(),
+        "inner staleness wakes the root driver"
+    );
+    let ic = inner.current().expect("pushed route").id;
+    assert!(
+        outlet_inner.borrow().route_task_scope(ic).is_some(),
+        "the live route binds although never mounted"
+    );
+    // Recovery converges through the cascade alone.
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!outlet_outer.borrow().needs_frame());
+    let _ = (outer, node_a);
+}
+
+#[test]
 fn outlet_retry_after_below_removal_commits_promptly() {
     // A→B captured, the frame fails, then a covered route is removed
     // below (same active route, smaller member set): the retry builds the
@@ -3244,6 +3416,12 @@ fn outlet_retry_after_below_removal_commits_promptly() {
         )
     }));
     result.expect_err("builder panic unwinds the frame");
+    // The failed composition publishes nothing: newer work is still owed
+    // even though builders ran before the panic.
+    assert!(
+        harness.outlet.borrow().needs_frame(),
+        "a failed frame leaves the previous publication intact"
+    );
     // Same active route, smaller stack: X goes away below the transition.
     navigator
         .set_pages([
@@ -3252,6 +3430,7 @@ fn outlet_retry_after_below_removal_commits_promptly() {
         ])
         .unwrap();
     present(&mut harness);
+    assert!(!harness.outlet.borrow().needs_frame());
     // Move focus away: only a promptly committed P2 leaves the record the
     // way back restores (an abandon leaves nothing behind).
     tab_until(&mut harness.runtime, &node_b);

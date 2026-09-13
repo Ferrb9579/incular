@@ -99,9 +99,15 @@ struct FrameAttempt {
 
 impl FrameAttempt {
     fn capture(navigator: &Navigator) -> Self {
-        let routes = navigator.routes();
+        Self::of(navigator.revision(), &navigator.routes())
+    }
+
+    /// Snapshots exactly these routes at this revision: [`RouteOutlet::widget`]
+    /// builds the attempt from the same route list it composes children
+    /// from, so acquisition and composition stay together.
+    fn of(revision: u64, routes: &[Route]) -> Self {
         Self {
-            revision: navigator.revision(),
+            revision,
             active: routes.last().map(|route| route.id),
             members: routes.iter().map(|route| route.id).collect(),
         }
@@ -129,11 +135,11 @@ impl FrameAttempt {
 
 /// One uncommitted frame transition, tracking four independent concerns:
 /// - the outgoing focus save (`previous`/`saved`), which survives retries
-///   untouched — a retry refreshes the snapshot below without re-reading;
-/// - the navigation snapshot for this attempt (`attempt`), refreshed at
-///   every build boundary the frame crosses;
-/// - newer-work detection, via the snapshot revision versus live state
-///   (see `built` and [`RouteOutlet::needs_frame`]);
+///   untouched — rebuilding re-records consumption without re-reading;
+/// - the navigation snapshot for this attempt (`attempt`), adopted from
+///   what composition actually consumed (see `consumed`);
+/// - newer-work detection, via the consumed revision versus live state
+///   (see [`RouteOutlet::needs_frame`]);
 /// - lifetime eligibility, checked at commit (incoming) and at restore
 ///   (records never restore for removed routes).
 ///
@@ -335,12 +341,19 @@ pub struct RouteOutlet {
     presented: Option<RouteId>,
     /// Uncommitted capture: `Some` while a frame transition is in flight.
     pending: Option<PendingTransition>,
-    /// Newest navigation snapshot any frame composed for this outlet:
-    /// refreshed after every successful rebuild, never by capture or by a
-    /// failed attempt. Comparing it against live state answers whether
-    /// newer navigation still requires a frame (see
-    /// [`Self::needs_frame`]) independently of the pending save above.
-    built: Option<FrameAttempt>,
+    /// Publication slot for in-flight composition: [`Self::widget`] writes
+    /// here on every execution, from the same route list it builds
+    /// children from. Never read directly for decisions — reconciliation
+    /// promotes it (see `consumed`) only on the success path, so failed
+    /// composition publishes nothing.
+    composing: RefCell<Option<FrameAttempt>>,
+    /// Newest navigation snapshot a frame carried through reconciliation
+    /// for this outlet. Comparing it against live state answers whether
+    /// newer navigation still requires a frame (see [`Self::needs_frame`])
+    /// independently of the pending save above. Each outlet promotes its
+    /// own: nested slot builders promote when they execute and reconcile,
+    /// skipped builders keep the previous publication.
+    consumed: Option<FrameAttempt>,
     namespace: u64,
     /// Monotonic tag counter. Freed tags are never reassigned (unlike the
     /// map length, which shrinks on removal), so element identity can never
@@ -413,7 +426,8 @@ impl RouteOutlet {
             task_parent: task_parent.clone(),
             presented: None,
             pending: None,
-            built: None,
+            composing: RefCell::default(),
+            consumed: None,
             namespace,
             tag_sequence: Cell::new(0),
             root_key: Key::String(format!("route-outlet-root-{namespace}")),
@@ -636,18 +650,18 @@ impl RouteOutlet {
         OutletId(self.namespace)
     }
 
-    /// Whether navigation arrived that no frame composed yet — for this
-    /// outlet or any nested outlet. True before the first present with a
-    /// non-empty stack, and after navigation newer than the last composed
-    /// snapshot (including navigation during a build, whose paint lags one
-    /// frame behind the bookkeeping). False once a frame composes current
-    /// state. Advisory scheduling help for hosts; it does not report
-    /// failed frames (their error return does that).
+    /// Whether navigation arrived that no composition consumed yet — for
+    /// this outlet or any nested outlet. True before the first composition
+    /// with a non-empty stack, and after navigation newer than the last
+    /// consumed snapshot (including navigation during a build, whose paint
+    /// lags one frame behind the bookkeeping). False once composition
+    /// consumes current state. Advisory scheduling help for hosts; it does
+    /// not report failed frames (their error return does that).
     #[must_use]
     pub fn needs_frame(&self) -> bool {
-        let stale = match &self.built {
+        let stale = match &self.consumed {
             None => !self.navigator.routes().is_empty(),
-            Some(built) => built.revision != self.navigator.revision(),
+            Some(consumed) => consumed.revision != self.navigator.revision(),
         };
         stale
             || self
@@ -789,6 +803,11 @@ impl RouteOutlet {
     #[must_use]
     pub fn widget(&self) -> Widget {
         let routes = self.navigator.routes();
+        // Publish exactly what this composition consumes: the snapshot
+        // comes from the same route list the children build from, so later
+        // callbacks cannot relabel already-built content. Builders that
+        // never execute (skipped slots, failed frames) publish nothing.
+        *self.composing.borrow_mut() = Some(FrameAttempt::of(self.navigator.revision(), &routes));
         // Top-down visibility: everything paints until (and including) the
         // first opaque page.
         let mut visible = vec![false; routes.len()];
@@ -940,25 +959,19 @@ impl RouteOutlet {
         // with the capture above. A vanished mount detaches gracefully
         // instead of erroring forever.
         let attached = outlet.borrow().mount.get();
-        let mut rebuilt = false;
         if let Some(mount) = attached {
             match runtime.rebuild_from_builder(mount) {
-                Ok(()) => {
-                    rebuilt = true;
-                }
+                Ok(()) => {}
                 Err(TreeError::MissingElement(_)) => {
                     outlet.borrow_mut().mount.set(None);
                 }
                 Err(error) => return Err(OutletError::Frame(error)),
             }
         }
-        if rebuilt {
-            // The build boundary: the rebuild just composed current
-            // navigator state, so the attempt snapshot refreshes to what
-            // the frame will present. The outgoing save is untouched —
-            // retries describe new content without re-reading old focus.
-            outlet.borrow_mut().refresh_attempt();
-        }
+        // No post-rebuild sampling here: each outlet's builders publish
+        // what they actually consume (see `consumed`), and reconciliation
+        // adopts it. Sampling afterward would credit the rebuild with
+        // navigation it never saw.
         let output = runtime.run_frame(constraints)?;
         // A preflight snapshot cannot authorize later content: builders
         // may have navigated mid-frame, so the tree re-validates before
@@ -969,22 +982,6 @@ impl RouteOutlet {
         outlet.borrow().preflight_tree()?;
         outlet.borrow_mut().reconcile_tree(runtime);
         Ok(output)
-    }
-
-    /// Refreshes the attempt snapshot (and the composed-snapshot record)
-    /// to current navigator state without touching the outgoing save.
-    /// Runs after every successful rebuild — including retries, whose
-    /// pending capture otherwise describes a superseded stack — so the
-    /// commit always judges the content the frame actually presents.
-    fn refresh_attempt(&mut self) {
-        let attempt = FrameAttempt::capture(&self.navigator);
-        if let Some(pending) = self.pending.as_mut() {
-            pending.attempt = attempt.clone();
-        }
-        self.built = Some(attempt);
-        for nested in self.live_nested() {
-            nested.borrow_mut().refresh_attempt();
-        }
     }
 
     /// Captures a pending transition when none is outstanding and the
@@ -1096,11 +1093,34 @@ impl RouteOutlet {
         }
     }
 
-    /// Post-frame reconciliation: commit the pending transition against
-    /// the attempt snapshot, then prune, bind, and restore or retry. The
-    /// commit runs before pruning so a just-committed record for a route
-    /// removed mid-frame is dropped rather than resurrected.
+    /// Promotes the in-flight composition into the published snapshot and
+    /// adopts it into the pending attempt — without touching the outgoing
+    /// save — so the commit judges built content, and retries describe
+    /// their own build. Runs only on the success path (reconciliation),
+    /// so failed composition publishes nothing; skipped builders simply
+    /// re-promote their previous publication. Only newer-or-equal
+    /// snapshots adopt into the attempt: a composition predating the
+    /// capture must not relabel it. Both values are immutable copies, so
+    /// application callbacks running later in reconciliation cannot
+    /// relabel built content.
+    fn adopt_consumed(&mut self) {
+        let Some(composing) = self.composing.borrow().clone() else {
+            return;
+        };
+        if let Some(pending) = self.pending.as_mut()
+            && composing.revision >= pending.attempt.revision
+        {
+            pending.attempt = composing.clone();
+        }
+        self.consumed = Some(composing);
+    }
+
+    /// Post-frame reconciliation: adopt the consumed snapshot, commit the
+    /// pending transition against it, then prune, bind, and restore or
+    /// retry. The commit runs before pruning so a just-committed record
+    /// for a route removed mid-frame is dropped rather than resurrected.
     fn reconcile_presented(&mut self, runtime: &mut Runtime) {
+        self.adopt_consumed();
         let transitioned = self.commit_transition(runtime);
         self.prune_removed();
         self.ensure_bindings();
