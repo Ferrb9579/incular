@@ -37,7 +37,7 @@ use incular_rendering::{
     PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma, resolve_follower_target,
 };
 use incular_scroll::{
-    MetricAttachment, MetricOwner, ScrollController, ScrollNotification,
+    AttachmentConflict, MetricAttachment, MetricOwner, ScrollController, ScrollNotification,
     ScrollNotificationSubscription, ScrollPhysics, ScrollbarGeometry, SliverConstraints,
     scrollbar_geometry,
 };

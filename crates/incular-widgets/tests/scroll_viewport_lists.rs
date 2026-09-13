@@ -1147,30 +1147,36 @@ fn replacement_during_activity_preserves_both() {
 }
 
 #[test]
-fn replacement_with_owned_controller_keeps_old() {
-    // The new claim is validated before the old one releases: same-tree
-    // owned and foreign-owned replacements both fail with the old
-    // attachment (and its activity) fully preserved, then recover.
-    let first = ScrollController::new();
-    let other = ScrollController::new();
+fn failed_replacement_preserves_owner_against_local_conflict() {
+    // Acquire-before-release, local shape:
+    // 1. Viewport A owns X with an active activity; viewport B owns Y.
+    // 2. Replace A's controller with Y. 3. The layout fails. 4. A still
+    // owns X: attachment identity, owner, activity, and metrics all
+    // unchanged — offsets alone would not prove ownership. 5. A third
+    // tree attempting X is rejected by the live owner. 6. Repair resumes
+    // normal operation, and same-controller updates disturb nothing.
+    let owned = ScrollController::new();
+    let rival = ScrollController::new();
     let mut tree = WidgetTree::new();
     let root = mount_tight(
         &mut tree,
         Column::new(vec![
-            sized_viewport(first.clone(), 200., 100., 300.),
-            sized_viewport(other.clone(), 200., 100., 500.),
+            sized_viewport(owned.clone(), 200., 100., 300.),
+            sized_viewport(rival.clone(), 200., 100., 500.),
         ])
         .into(),
         200.,
         300.,
     );
-    assert!(first.begin_activity());
-    // Same-tree owned: V1 attempts V2's controller.
+    assert!(owned.jump_to(30.));
+    assert!(owned.begin_activity());
+    let attachment = owned.attachment_id().expect("A owns X");
+    assert_eq!(owned.metric_owner(), Some(tree.tree_id()));
     tree.update(
         root,
         Column::new(vec![
-            sized_viewport(other.clone(), 200., 100., 300.),
-            sized_viewport(other.clone(), 200., 100., 500.),
+            sized_viewport(rival.clone(), 200., 100., 300.),
+            sized_viewport(rival.clone(), 200., 100., 500.),
         ])
         .into(),
     )
@@ -1193,26 +1199,71 @@ fn replacement_with_owned_controller_keeps_old() {
         }
         other => panic!("unexpected failure: {other:?}"),
     }
-    // Old attachment and activity fully preserved; recovery works.
-    assert_eq!(first.content_extent(), 300.);
-    assert_eq!(first.max_offset(), 200.);
-    assert!(!first.begin_activity());
-    assert!(first.end_activity());
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    assert_eq!(owned.metric_owner(), Some(tree.tree_id()));
+    assert!(!owned.begin_activity());
+    assert_eq!(owned.offset(), 30.);
+    assert_eq!(owned.content_extent(), 300.);
+    assert_eq!(owned.max_offset(), 200.);
+    let mut probe = WidgetTree::new();
+    probe
+        .mount(sized_viewport(owned.clone(), 200., 100., 300.))
+        .expect("mount defers attachment");
+    match probe
+        .layout(Constraints::tight(Size::new(200., 100.)))
+        .unwrap_err()
+    {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: _,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, None);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
     tree.update(
         root,
         Column::new(vec![
-            sized_viewport(first.clone(), 200., 100., 300.),
-            sized_viewport(other.clone(), 200., 100., 500.),
+            sized_viewport(owned.clone(), 200., 100., 300.),
+            sized_viewport(rival.clone(), 200., 100., 500.),
         ])
         .into(),
     )
     .expect("update");
     tree.layout(Constraints::tight(Size::new(200., 300.)))
         .expect("layout");
-    assert_eq!(first.max_offset(), 200.);
-    // Foreign-owned: a third controller owned by another tree cannot be
-    // taken either, and the failure persists until the widget changes
-    // back.
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    assert_eq!(owned.max_offset(), 200.);
+    assert!(owned.end_activity());
+    assert!(owned.begin_activity());
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(owned.clone(), 200., 100., 300.),
+            sized_viewport(rival.clone(), 200., 100., 500.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout");
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    assert!(!owned.begin_activity());
+    assert!(owned.jump_to(60.));
+    assert_eq!(owned.offset(), 60.);
+    assert!(owned.end_activity());
+}
+
+#[test]
+fn failed_replacement_preserves_owner_against_foreign_conflict() {
+    // Acquire-before-release, foreign shape: Y is owned abroad, so the
+    // failure names the foreign tree with no element. X stays fully
+    // owned here, a third tree is still rejected, and the failure
+    // persists on relayout until the widget changes back — then normal
+    // operation resumes.
+    let owned = ScrollController::new();
     let abroad = ScrollController::new();
     let mut foreign = WidgetTree::new();
     mount_tight(
@@ -1221,18 +1272,21 @@ fn replacement_with_owned_controller_keeps_old() {
         200.,
         100.,
     );
+    let mut tree = WidgetTree::new();
     assert_ne!(foreign.tree_id(), tree.tree_id());
-    tree.update(
-        root,
-        Column::new(vec![
-            sized_viewport(abroad.clone(), 200., 100., 300.),
-            sized_viewport(first.clone(), 200., 100., 500.),
-        ])
-        .into(),
-    )
-    .expect("update");
+    let root = mount_tight(
+        &mut tree,
+        sized_viewport(owned.clone(), 200., 100., 300.),
+        200.,
+        100.,
+    );
+    assert!(owned.jump_to(30.));
+    assert!(owned.begin_activity());
+    let attachment = owned.attachment_id().expect("owns X");
+    tree.update(root, sized_viewport(abroad.clone(), 200., 100., 300.))
+        .expect("update");
     let error = tree
-        .layout(Constraints::tight(Size::new(200., 300.)))
+        .layout(Constraints::tight(Size::new(200., 100.)))
         .unwrap_err();
     match error {
         TreeError::DuplicateScrollAttachment {
@@ -1245,21 +1299,42 @@ fn replacement_with_owned_controller_keeps_old() {
         }
         other => panic!("unexpected failure: {other:?}"),
     }
-    assert_eq!(first.max_offset(), 200.);
-    // The failure persists on relayout until the widget changes back.
-    tree.layout(Constraints::tight(Size::new(200., 300.)))
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    assert_eq!(owned.metric_owner(), Some(tree.tree_id()));
+    assert!(!owned.begin_activity());
+    assert_eq!(owned.offset(), 30.);
+    assert_eq!(owned.max_offset(), 200.);
+    let mut probe = WidgetTree::new();
+    probe
+        .mount(sized_viewport(owned.clone(), 200., 100., 300.))
+        .expect("mount defers attachment");
+    match probe
+        .layout(Constraints::tight(Size::new(200., 100.)))
+        .unwrap_err()
+    {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: _,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, None);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
         .expect_err("still owned abroad");
-    tree.update(
-        root,
-        Column::new(vec![
-            sized_viewport(first.clone(), 200., 100., 300.),
-            sized_viewport(other.clone(), 200., 100., 500.),
-        ])
-        .into(),
-    )
-    .expect("update");
-    tree.layout(Constraints::tight(Size::new(200., 300.)))
+    tree.update(root, sized_viewport(owned.clone(), 200., 100., 300.))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
         .expect("layout");
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    assert_eq!(owned.max_offset(), 200.);
+    assert!(owned.end_activity());
+    assert!(owned.begin_activity());
+    assert!(owned.jump_to(60.));
+    assert_eq!(owned.offset(), 60.);
+    assert!(owned.end_activity());
 }
 
 #[test]

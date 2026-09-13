@@ -1315,41 +1315,66 @@ impl WidgetTree {
         element: ElementId,
         controller: &ScrollController,
     ) -> Result<(), TreeError> {
-        // Fast path: this element already drives this controller. The
-        // stored lease is the live attachment, so reuse claims nothing.
+        // Fast path: this element already drives this controller,
+        // including same-controller reuse across updates. The stored
+        // lease is the live attachment, so reuse claims nothing and
+        // disturbs neither ownership nor activity.
         if let Some(lease) = self.scroll_attachments.get(&element)
             && lease.controller() == controller
         {
             return Ok(());
         }
-        // Replacement turnover: this element previously drove a different
-        // controller. Release that attachment so the replaced-away handle
-        // stays free across trees. (Acquire-before-release ordering lands
-        // with the replacement package.)
-        if let Some(previous) = self.scroll_attachments.remove(&element) {
-            let _ = previous.release();
+        // Replacement: this element previously drove a different
+        // controller. Acquire the new attachment BEFORE touching the old
+        // one — no callbacks or destruction run while the map is
+        // borrowed, and a failure leaves the existing lease, ownership,
+        // activity, and metrics exactly as they were.
+        if self.scroll_attachments.contains_key(&element) {
+            let replacement = match controller.try_attach(MetricOwner::of_tree(self.tree_id)) {
+                Ok(attachment) => attachment,
+                Err(conflict) => {
+                    return Err(self.attachment_conflict(conflict, element));
+                }
+            };
+            // The new ownership commits before the old attachment
+            // releases: swap the lease, then release the previous handle
+            // with no map borrow held. The release is silent — unlike
+            // unmount-detach, a transfer leaves the old controller's
+            // activity and metrics exactly as they were, since the
+            // app-retained handle may drive another viewport next. The
+            // replaced-away handle stays free across trees.
+            let previous = self.scroll_attachments.insert(element, replacement);
+            if let Some(previous) = previous {
+                let _ = previous.release();
+            }
+            return Ok(());
         }
+        // Fresh attach: this element held no lease.
         match controller.try_attach(MetricOwner::of_tree(self.tree_id)) {
             Ok(attachment) => {
                 self.scroll_attachments.insert(element, attachment);
                 Ok(())
             }
-            Err(conflict) => {
-                let owner = (conflict.owner_tree() == self.tree_id).then(|| {
-                    self.scroll_attachments
-                        .iter()
-                        .find_map(|(candidate, lease)| {
-                            (lease.id() == conflict.attachment_id()
-                                && self.element_exists(*candidate))
-                            .then_some(*candidate)
-                        })
-                });
-                Err(TreeError::DuplicateScrollAttachment {
-                    owner_tree: conflict.owner_tree(),
-                    owner: owner.flatten(),
-                    attempted: element,
+            Err(conflict) => Err(self.attachment_conflict(conflict, element)),
+        }
+    }
+
+    /// Reports a failed attach with the owning viewport element when the
+    /// owner lives in this tree. Failure path only: routine claims never
+    /// scan the lease map.
+    fn attachment_conflict(&self, conflict: AttachmentConflict, attempted: ElementId) -> TreeError {
+        let owner = (conflict.owner_tree() == self.tree_id).then(|| {
+            self.scroll_attachments
+                .iter()
+                .find_map(|(candidate, lease)| {
+                    (lease.id() == conflict.attachment_id() && self.element_exists(*candidate))
+                        .then_some(*candidate)
                 })
-            }
+        });
+        TreeError::DuplicateScrollAttachment {
+            owner_tree: conflict.owner_tree(),
+            owner: owner.flatten(),
+            attempted,
         }
     }
 
