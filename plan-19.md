@@ -1,12 +1,14 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: complete — reopened for hardening packages A–D, then re-closed:
-frame transitions are transactional, restoration runs inside an explicit
-frame contract, nested attachment has an owned lifecycle, and unsupported
-configurations plus teardown fail or release explicitly. Modal focus
-containment stays explicitly separate future work (removing `focus_trap`
-implemented nothing). Audit Q04/Q05; specializes plan 15 W4. Depends on
-plan 18.
+Status: reopened for the topology/snapshot/closeout pass (A–D below) —
+not re-closed: the topology and snapshot assumptions are now pinned by
+tests, but W4 stays open until the evidence table's remaining rows
+(manual-host validation, contention review) are worked. Earlier passes
+established transactional frames, the restoration frame contract, owned
+nested lifecycles, and explicit unsupported/teardown behavior. Modal
+focus containment stays explicitly separate future work (removing
+`focus_trap` implemented nothing). Audit Q04/Q05; specializes plan 15
+W4. Depends on plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
 `RouteEntry` collection replaces the parallel routes/restorable_routes vectors,
@@ -194,6 +196,49 @@ the outlet composes (no second presentation engine); event `Route`
 snapshots carry no lifetime handle; supported usage runs through the
 outlet drive contract, so cleanup needs no undocumented maintenance
 sequence — manual helpers stay as documented lower-level coverage.
+
+Topology/snapshot/closeout pass (reopened — not re-closed):
+- A — nested-outlet topology and attachment lifetime
+  (`OutletAttachError`, `detach_nested`, `frame_drive_count`): self,
+  two-node, and longer cycles rejected before mutation; duplicate attach
+  idempotent; single-parent policy (a shared child would drive twice per
+  frame — second parent rejected until explicit detach); detached outlets
+  receive no frame work while retained; reattachment resumes; three-level
+  trees drive each outlet exactly once per present. Borrows the
+  back-dispatch reachability lesson with no cross-domain coupling.
+- B — whole-tree validation (`OutletId`, pre/post-frame preflight):
+  nested rejections name the responsible outlet plus routes with all
+  integration state (drives, captures, bindings, focus) unchanged; valid
+  siblings present together and recover independently; mid-build overlay
+  introduction fails typed with the pending capture kept for retry
+  (recovery commits the original save). The `widget()` overlay skip is
+  unreachable through the supported path and documented as such; manual
+  `after_frame` hosts own their validation.
+- C — frame-attempt snapshot (`FrameAttempt`, `RouteConfig`,
+  `covers()`): same-identity child replacement, push-then-pop excursions,
+  and lower-route reorder beneath an unchanged top all commit and
+  restore; removal abandons; retries never re-read the outgoing save
+  (pinned with intervening focus movement under a transparent cover);
+  foreign remounts leave the transition's own bookkeeping exact.
+  Bindings are documented as lifetime-owned (including
+  unmounted-but-alive routes), distinct from the mounted-content focus
+  records — the transient test comment claiming mounted ownership is
+  corrected.
+- D — closeout through the supported host only (`present_frame`,
+  `Application::close_window`): retained-but-detached generations stay
+  bounded with frozen drives across mount/unmount cycles; nested close
+  cancels outer and inner bindings by lifetime (attachment plays no
+  role) and releases both outlets once application route content lets go
+  (a live `nested_widget` closure is an application retainer, pinned by
+  strong-count diagnosis during development); failed-attempt output
+  paints the committed content on recovery with follow-up scheduled
+  exactly on restoring frames.
+- Not re-closed while: the manual `after_frame` path has no preflight
+  (one pinning test, hosts own validation); subtree identity across
+  positional reorder is a framework reconciliation property the outlet
+  relies on but does not own; contention between two drivers for one
+  outlet stays a documented host error (`frame_drive_count` exposes it)
+  rather than a runtime guard.
 
 Hardening pass (reopen → re-close):
 - Frame transitions are transactional: pending capture (outgoing route,

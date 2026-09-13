@@ -1665,6 +1665,161 @@ fn outlet_close_window_cancels_bindings_and_releases() {
 }
 
 #[test]
+fn outlet_close_window_with_nested_tree_cancels_by_lifetime() {
+    // Nested outlets under the real window scope: close cancels the outer
+    // and inner bindings through task ownership — attachment plays no
+    // role, so even a detached-but-retained inner binding cancels — and
+    // teardown releases both outlets per policy.
+    let outer = Navigator::new();
+    let inner = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    // Bind under the real window scope so close reaches every binding.
+    let parent = runtime.window_task_scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner, &parent)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    // The composition helper cloned the handle into page content; the local
+    // is surplus from here on and would read as a leak below.
+    drop(outlet_inner_for_page);
+    let outlet_for_build = outlet_outer.clone();
+    let root = runtime.tree().root().expect("root");
+    runtime
+        .register_builder(root, move || {
+            Column::new(vec![SizedBox::from_dimensions(
+                Some(200.),
+                Some(200.),
+                Some(outlet_for_build.borrow().widget()),
+            )])
+            .into()
+        })
+        .expect("builder registers");
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    inner.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_a);
+    let oa = outer.current().expect("outer route").id;
+    let ib = inner.current().expect("inner route").id;
+    let outer_scope = outlet_outer
+        .borrow()
+        .route_task_scope(oa)
+        .expect("outer bound");
+    let inner_scope = outlet_inner
+        .borrow()
+        .route_task_scope(ib)
+        .expect("inner bound");
+    // Detach the inner outlet but retain it: the binding (lifetime-owned,
+    // not attachment-owned) must still cancel on close.
+    RouteOutlet::detach_nested(&outlet_outer, &outlet_inner);
+    // The inner handle is additionally retained by outer route content
+    // (the nested_widget closure), which is application state — not outlet
+    // metadata — so replacing the outer page releases that retainer.
+    // (Single-route stacks do not pop; replacement is the removal path.)
+    outer
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    inner
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    let weak_outer = Rc::downgrade(&outlet_outer);
+    let weak_inner = Rc::downgrade(&outlet_inner);
+    let mut app = Application::from_runtime(runtime, |_| {});
+    app.close_window(app.primary_window());
+    assert!(
+        outer_scope.is_cancelled(),
+        "window close cascades to the outer binding"
+    );
+    assert!(
+        inner_scope.is_cancelled(),
+        "window close cascades to the nested binding despite detachment"
+    );
+    drop(outer);
+    drop(inner);
+    drop(outlet_outer);
+    drop(outlet_inner);
+    drop(app);
+    assert!(weak_outer.upgrade().is_none());
+    assert!(weak_inner.upgrade().is_none());
+}
+
+#[test]
+fn outlet_failed_attempt_output_and_followup_agree() {
+    // A failed attempt returns the typed error with focus unmoved and no
+    // restore behind it; the recovery present then returns output painting
+    // the committed content, and the restoring return schedules exactly
+    // the follow-up its restore needs — output and scheduling agree at
+    // every step through the supported operation alone.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ea = harness.runtime.focused_element().expect("A focused");
+    let trip = Rc::new(Cell::new(true));
+    let node_b_for_build = node_b.clone();
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.push(
+                        Route::new("overlay", Widget::box_(Size::new(40., 40.), GREEN)).overlay(
+                            vec![OverlayEntry::new(Widget::box_(Size::new(40., 40.), GREEN))],
+                        ),
+                    );
+                }
+                focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    // Failure: typed error, focus exactly where it was, offender unbound.
+    let error = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("mid-build overlay fails explicitly");
+    assert!(matches!(error, OutletError::UnsupportedPresentation { .. }));
+    assert_eq!(harness.runtime.focused_element(), Some(ea));
+    // Recovery commits the kept capture: the returned output paints the
+    // incoming content it committed — output matches committed state.
+    navigator.pop();
+    let recovered = present(&mut harness);
+    assert!(
+        paints(recovered.commands(), BLUE),
+        "recovery output presents the committed incoming route"
+    );
+    // The way back restores the original save and schedules its follow-up
+    // explicitly; the follow-up frame holds steady with no new work.
+    tab_until(&mut harness.runtime, &node_b);
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea));
+    assert!(
+        harness.runtime.frame_requested(),
+        "the restoring frame schedules its follow-up"
+    );
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea));
+}
+
+#[test]
 fn outlet_teardown_releases_focus_and_tasks() {
     // The builder holds the outlet weakly so dropping it models window
     // teardown: content unmounts on the next frame, bindings detach per
@@ -2207,6 +2362,149 @@ fn outlet_lower_reorder_beneath_top_mid_build_commits() {
     present(&mut harness);
     assert_eq!(navigator.current().expect("top").name, "c");
     round_trip_restores(&node_b, &node_c, &navigator, &mut harness);
+}
+
+#[test]
+fn nested_detached_retained_stays_bounded_across_cycles() {
+    // Callers retain every detached generation (nothing drops): explicit
+    // detaches still keep registrations bounded, detached drives frozen,
+    // and only the current generation answers the cascade — repeated
+    // mount/unmount never leaks metadata into retained handles.
+    let outer = Navigator::new();
+    let parent_scope_holder =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = parent_scope_holder.spawner().scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let key = PageKey::new("a").unwrap();
+    let node_a = FocusNode::new();
+    let (mut runtime, revision) = nested_host(outlet_outer.clone());
+    // Retained (navigator, outlet, drives-at-detach) per generation.
+    let mut retired: Vec<(Navigator, Rc<RefCell<RouteOutlet>>, u64)> = Vec::new();
+    let mut current: Option<(Navigator, Rc<RefCell<RouteOutlet>>)> = None;
+    for generation in 0..3_u32 {
+        if let Some((nav, outlet)) = current.take() {
+            let drives = outlet.borrow().frame_drive_count();
+            RouteOutlet::detach_nested(&outlet_outer, &outlet);
+            retired.push((nav, outlet, drives));
+        }
+        let inner = Navigator::new();
+        let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner, &parent)));
+        outer
+            .set_pages([Page::new(
+                "a",
+                Column::new(vec![
+                    focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                    RouteOutlet::nested_widget(&outlet_inner),
+                ]),
+            )
+            .key(key.clone())])
+            .unwrap();
+        RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+        current = Some((inner, outlet_inner));
+        present_nested(&mut runtime, &outlet_outer, &revision);
+        assert_eq!(
+            outlet_outer.borrow().attached_nested_count(),
+            1,
+            "explicit detach keeps registrations bounded while handles are retained (generation {generation})"
+        );
+    }
+    // Retired generations are frozen: navigating a detached navigator and
+    // presenting moves nothing inside the retained outlets.
+    for (nav, _outlet, _drives) in &retired {
+        nav.push_page(plain_page("z"));
+    }
+    present_nested(&mut runtime, &outlet_outer, &revision);
+    for (_, outlet, drives) in &retired {
+        assert_eq!(
+            outlet.borrow().frame_drive_count(),
+            *drives,
+            "detached outlets receive no frame work while retained"
+        );
+    }
+    assert_eq!(outlet_outer.borrow().attached_nested_count(), 1);
+    // The live tree is fully functional end to end.
+    tab_until(&mut runtime, &node_a);
+    let (inner, _) = current.as_ref().expect("current generation");
+    let node_b = FocusNode::new();
+    inner.push_page(focus_page("b", &node_b));
+    present_nested(&mut runtime, &outlet_outer, &revision);
+    tab_until(&mut runtime, &node_b);
+    assert_eq!(retired.len(), 2);
+}
+
+#[test]
+fn outlet_reorder_elsewhere_with_new_content_restores() {
+    // The reorder commits (same member set covers) and the transition's
+    // own subtree is untouched — B never moves, so its element stays
+    // stable while X/Y swap with fresh instances around it. The return
+    // restores exactly: foreign remounts never disturb the transition's
+    // own bookkeeping. (Stale targets from genuinely dead elements stay
+    // fail-closed per the disposal and deferred coverage.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let kx = PageKey::new("x").unwrap();
+    let ky = PageKey::new("y").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let kc = PageKey::new("c").unwrap();
+    let node_b = FocusNode::new();
+    let node_c = FocusNode::new();
+    let node_b_for_build = node_b.clone();
+    navigator
+        .set_pages([
+            Page::new("x", Widget::box_(Size::new(40., 40.), RED)).key(kx.clone()),
+            Page::new("y", Widget::box_(Size::new(40., 40.), BLUE)).key(ky.clone()),
+            Page::new("b", focus_child(&node_b)).key(kb.clone()),
+        ])
+        .unwrap();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    let trip = Rc::new(Cell::new(true));
+    let node_c_for_build = node_c.clone();
+    navigator.push_page(
+        Page::new(
+            "c",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                let kx = kx.clone();
+                let ky = ky.clone();
+                let kb = kb.clone();
+                let kc = kc.clone();
+                move |_, _| {
+                    if trip.take() {
+                        // Same identities, fresh content: order-only churn
+                        // plus remounts.
+                        navigator
+                            .set_pages([
+                                Page::new("y", Widget::box_(Size::new(40., 40.), BLUE))
+                                    .key(ky.clone()),
+                                Page::new("x", Widget::box_(Size::new(40., 40.), RED))
+                                    .key(kx.clone()),
+                                Page::new("b", focus_child(&node_b_for_build)).key(kb.clone()),
+                                Page::new(
+                                    "c",
+                                    focus_widget(
+                                        &node_c_for_build,
+                                        Widget::box_(Size::new(40., 40.), GREEN),
+                                    ),
+                                )
+                                .key(kc.clone()),
+                            ])
+                            .unwrap();
+                    }
+                    focus_widget(&node_c_for_build, Widget::box_(Size::new(40., 40.), GREEN))
+                }
+            }))]),
+        )
+        .key(kc.clone()),
+    );
+    present(&mut harness);
+    assert_eq!(navigator.current().expect("top").name, "c");
+    tab_until(&mut harness.runtime, &node_c);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_b.has_focus());
+    assert!(harness.runtime.focused_element().is_some());
 }
 
 #[test]

@@ -2708,15 +2708,18 @@ a single ordered `present_frame` operation with pre-reconcile saves and
 frame-scheduled deferred convergence, nearest-outlet ownership with a
 documented nested-mounting pattern, and lifecycle verification across
 reorder, modals, disposal, shutdown, transient navigation, and teardown.
-W4 was reopened for each production-integration pass and re-closes on
-supported production behavior satisfying the original exit criteria —
-not on manual helper calls alone. The hardening pass makes frame
-transitions transactional (pending capture versus committed records),
-pins restoration inside an explicit frame contract with scheduled
-follow-ups, gives nested attachment an owned lifecycle with cascade
-driving, and makes unsupported stacks and teardown explicit (typed
-overlay error, covered veils deactivate, real close_window coverage).
-See plan-19 for the itemized evidence.
+W4 is currently reopened for the topology/snapshot/closeout pass and
+stays open: the topology (acyclic single-parent, drive-once) and snapshot
+(revision plus identities plus configuration, order-tolerant commit)
+assumptions are now pinned by tests, alongside nested closeout and
+output/follow-up agreement — but re-close waits on the remaining rows in
+plan-19 (manual-host validation, contention review). Earlier passes made
+frame transitions transactional (pending capture versus committed
+records), pinned restoration inside an explicit frame contract with
+scheduled follow-ups, gave nested attachment an owned lifecycle with
+cascade driving, and made unsupported stacks and teardown explicit
+(typed overlay error, covered veils deactivate, real close_window
+coverage). See plan-19 for the itemized evidence.
 
 ## W5 — Scroll and animation state transitions
 
