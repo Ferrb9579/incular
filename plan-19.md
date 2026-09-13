@@ -1,13 +1,13 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: reopened for the topology/snapshot/closeout pass (A–D below) —
-not re-closed: the topology and snapshot assumptions are now pinned by
-tests, but W4 stays open until the evidence table's remaining rows
-(manual-host validation, contention review) are worked. Earlier passes
-established transactional frames, the restoration frame contract, owned
-nested lifecycles, and explicit unsupported/teardown behavior. Modal
-focus containment stays explicitly separate future work (removing
-`focus_trap` implemented nothing). Audit Q04/Q05; specializes plan 15
+Status: reopened for the lifecycle-ownership pass (A–D below) — not
+re-closed: the outlet contracts are implemented and verified per the
+five evidence areas, but W4 stays open on the two framework-level
+residuals named at the end. Earlier passes established transactional
+frames, the restoration frame contract, owned nested lifecycles, and
+explicit unsupported/teardown behavior. Modal focus containment stays
+explicitly separate future work (removing `focus_trap` implemented
+nothing). Audit Q04/Q05; specializes plan 15
 W4. Depends on plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
@@ -239,6 +239,57 @@ Topology/snapshot/closeout pass (reopened — not re-closed):
   relies on but does not own; contention between two drivers for one
   outlet stays a documented host error (`frame_drive_count` exposes it)
   rather than a runtime guard.
+
+Lifecycle-ownership pass (reopened — not re-closed), evidence by area:
+- A — lifetime continuity separated from frame identity: the
+  `RouteConfig` four-boolean approximation is gone; `FrameAttempt` is
+  the authoritative revision plus ordered identities, refreshed at every
+  build boundary without re-reading the outgoing save (`refresh_attempt`,
+  composed-snapshot `built`, advisory `needs_frame`). Same-ID
+  replacement paints old-then-new with the commit landing first;
+  transparent-top reorder proves paint and hit order; mid-build modal
+  abandons before any veil paints; retry after below-removal commits
+  promptly (fails without the refresh — demonstrated). Keyed popups are
+  inexpressible through the public navigation API (pushed pages are
+  opaque; `set_pages` preserves entry presentation), so that variant is
+  documented, not tested — a navigation-design residual below.
+- B — one supported lifecycle: `after_frame`, `restore_active`, and
+  `capture_tree` removed with a migration entry (no production users;
+  the unvalidated path could commit against unpreflighted stacks). The
+  manual test is deleted; teardown coverage is migrated to
+  `present_frame` (dropped bindings ignore later removal). Rejections
+  through the public API leave records and bindings unchanged per the
+  existing nested/overlay rejection tests.
+- C — enforced driver ownership (`Runtime::id`, driver-domain token,
+  `OutletError::{DriverConflict, SeparateDrive}`, `attach` returning
+  `OutletError`): separate child driving, second-runtime attach and
+  present, and cross-runtime nesting are rejected before mutation with
+  both identities; detach transfers ownership; teardown (runtime drop)
+  releases the claim with no registry — all pinned, with frozen drive
+  counts on every rejection path.
+- D — supported-lifecycle verification: one combined production test
+  (nested baseline, conflicting-driver rejection, mid-build navigation,
+  failure plus retry, window closure with full release); `OutletError`
+  timing corrected (post-frame validation can follow tree mutation —
+  integration state still untouched); API consolidation reviewed
+  (`attached_nested_count` stays for dynamic hosts, `frame_drive_count`
+  verifies enforcement, `needs_frame` advises scheduling,
+  `RouteFocusState` primitives keep their policy tests — the removals in
+  B were the duplicates).
+- Evidence areas: route lifetime correctness (lifetime-owned bindings,
+  transient/reorder/removal/close pins); focus restoration (ownership
+  saves, eligibility restores, retry/reorder/recovery returns);
+  rendered-frame consistency (stale-then-new paint, order paint plus
+  hits, veil timing, output/follow-up agreement); driver ownership (the
+  C rejections plus transfer plus release); error recovery (failure
+  keeps capture, retry commits, abandon recaptures, typed overlay
+  errors pre- and post-frame).
+- Not re-closed while: failed tree updates apply partially
+  (`update_existing` is not transactional — recovery heals, pinned, but
+  the framework property stands); declarative non-page presentations
+  have no keyed identity (keyed popups/modals cannot be declared, so
+  reconciliation re-ids them — navigation design, outside outlet
+  scope).
 
 Hardening pass (reopen → re-close):
 - Frame transitions are transactional: pending capture (outgoing route,

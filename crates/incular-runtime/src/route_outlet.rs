@@ -162,9 +162,14 @@ impl std::fmt::Display for OutletId {
 
 /// A route outlet refusing to present.
 ///
-/// Returned before changing any mounted or committed state, so hosts can
-/// fix the stack (portal-mount the listed routes, or keep them out of
-/// outlet-driven navigators) instead of debugging silently omitted content.
+/// Timing differs per variant, and the docs say which: pre-frame
+/// rejections change nothing mounted or committed, while the post-frame
+/// validation can fire after the tree mounted the frame's content — in
+/// that case integration state (records, bindings, tags, saves) is still
+/// untouched, but the tree holds the last frame's stack output. Hosts fix
+/// the stack (portal-mount the listed routes, or keep them out of
+/// outlet-driven navigators) instead of debugging silently omitted
+/// content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutletError {
     /// One or more routes use portal-managed overlay presentations, which

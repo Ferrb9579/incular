@@ -1774,6 +1774,166 @@ fn outlet_failed_attempt_output_and_followup_agree() {
 }
 
 #[test]
+fn outlet_production_lifecycle_combined() {
+    // One production story through the single supported lifecycle:
+    // nested baseline, conflicting-driver rejection, mid-build
+    // navigation, failure plus retry, then window closure — each phase
+    // asserting exact integration state through public API only.
+    // Bindings parent under the closing runtime's window scope, so the
+    // closure phase cancels through existing ownership.
+    let mut runtime1 =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent_scope = runtime1.window_task_scope();
+    let outer_nav = Navigator::new();
+    let inner_nav = Navigator::new();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer_nav, &parent_scope)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner_nav, &parent_scope)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    drop(outlet_inner_for_page);
+    {
+        let outlet_for_build = outlet_outer.clone();
+        let root = runtime1.tree().root().expect("root");
+        runtime1
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_for_build.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime1);
+    RouteOutlet::attach(&outlet_outer, &mut runtime1).expect("outer attaches");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    // Phase 1: nested baseline — both routes bound, outer focused.
+    inner_nav.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_a);
+    let oa = outer_nav.current().expect("outer route").id;
+    let ib = inner_nav.current().expect("inner route").id;
+    let outer_scope = outlet_outer
+        .borrow()
+        .route_task_scope(oa)
+        .expect("outer bound");
+    let inner_scope = outlet_inner
+        .borrow()
+        .route_task_scope(ib)
+        .expect("inner bound");
+    // Phase 2: conflicting driver rejected with identities, state frozen.
+    let outer_drives = outlet_outer.borrow().frame_drive_count();
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    let error = RouteOutlet::present_frame(
+        &outlet_inner,
+        &mut runtime1,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("separate child driving is rejected");
+    assert_eq!(
+        error,
+        OutletError::SeparateDrive {
+            outlet: outlet_inner.borrow().id(),
+            parent: outlet_outer.borrow().id(),
+        }
+    );
+    assert_eq!(outlet_outer.borrow().frame_drive_count(), outer_drives);
+    assert_eq!(outlet_inner.borrow().frame_drive_count(), inner_drives);
+    assert!(node_a.has_focus());
+    // Phase 3: mid-build navigation abandons cleanly — no restore, focus
+    // unmoved, yet the live newcomer binds by lifetime.
+    let trip_push = Rc::new(Cell::new(true));
+    let node_bx = FocusNode::new();
+    outer_nav.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let outer_nav = outer_nav.clone();
+            move |_, _| {
+                if trip_push.take() {
+                    outer_nav.push_page(plain_page("c"));
+                }
+                focus_widget(&node_bx, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(node_a.has_focus());
+    let ic = outer_nav.current().expect("pushed route").id;
+    assert!(
+        outlet_outer.borrow().route_task_scope(ic).is_some(),
+        "abandon still binds the live newcomer"
+    );
+    assert!(
+        outlet_outer.borrow().needs_frame(),
+        "the mid-build push still requires a frame"
+    );
+    outer_nav.pop();
+    outer_nav.pop();
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(node_a.has_focus());
+    assert!(!outlet_outer.borrow().needs_frame());
+    // Phase 4: failure plus retry commits and restores end to end.
+    let trip_panic = Rc::new(Cell::new(true));
+    let node_d = FocusNode::new();
+    let node_d_for_build = node_d.clone();
+    outer_nav.push_page(Page::new(
+        "d",
+        Column::new(vec![Widget::from(LayoutBuilder::new(move |_, _| {
+            if trip_panic.take() {
+                panic!("combined boom");
+            }
+            focus_widget(&node_d_for_build, Widget::box_(Size::new(40., 40.), GREEN))
+        }))]),
+    ));
+    let outlet = outlet_outer.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        RouteOutlet::present_frame(
+            &outlet,
+            &mut runtime1,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+    }));
+    result.expect_err("builder panic unwinds the frame");
+    drop(outlet);
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_d);
+    outer_nav.pop();
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(node_a.has_focus());
+    // Phase 5: window closure cancels by lifetime; teardown releases.
+    let weak_outer = Rc::downgrade(&outlet_outer);
+    let weak_inner = Rc::downgrade(&outlet_inner);
+    let mut app = Application::from_runtime(runtime1, |_| {});
+    app.close_window(app.primary_window());
+    assert!(outer_scope.is_cancelled());
+    assert!(inner_scope.is_cancelled());
+    outer_nav
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    inner_nav
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    drop(outer_nav);
+    drop(inner_nav);
+    drop(outlet_outer);
+    drop(outlet_inner);
+    drop(app);
+    assert!(weak_outer.upgrade().is_none());
+    assert!(weak_inner.upgrade().is_none());
+    let _ = node_b;
+}
+
+#[test]
 fn outlet_dropped_bindings_ignore_later_removal() {
     // Bindings detach with the outlet, independent of mounting: bind
     // through bookkeeping-only presents (no attach, no mounted content),
