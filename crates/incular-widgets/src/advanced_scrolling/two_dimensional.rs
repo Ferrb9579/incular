@@ -12,8 +12,8 @@ use std::{collections::BTreeMap, ops::Range, rc::Rc};
 use incular_config::{Axis, AxisDirection, Clip, Constraints};
 use incular_core::{Offset, Rect, Size};
 use incular_scroll::{
-    MeasuredExtentIndex, MetricAttachment, MetricWriteError, ScrollController, ScrollDelta,
-    ScrollPhysics, SliverConstraints,
+    AxisExtents, MeasuredExtentIndex, MetricAttachment, MetricWriteError, ScrollController,
+    ScrollDelta, ScrollPhysics, SliverConstraints,
 };
 
 /// The child identity used by a two-dimensional viewport.
@@ -223,10 +223,12 @@ impl TwoDimensionalScrollable {
 
     /// Updates both controller ranges after a viewport layout pass.
     ///
-    /// Checked pair publication: both axes must be free, validated
-    /// before either writes, so a rejection leaves the pair exactly as
-    /// it was. Attached viewports publish through their leases instead
-    /// (see the tree's two-dimensional preparation).
+    /// Paired publication through the Scroll owner: both authorities
+    /// validate and both states commit before either axis dispatches, so
+    /// a rejection leaves the pair exactly as it was — including the
+    /// same-controller aliasing the pair operation refuses. Attached
+    /// viewports publish through their leases instead (see the tree's
+    /// two-dimensional preparation).
     pub fn update_extents(
         &self,
         horizontal_content: f32,
@@ -234,27 +236,16 @@ impl TwoDimensionalScrollable {
         vertical_content: f32,
         vertical_viewport: f32,
     ) -> Result<(), MetricWriteError> {
-        // Atomic pair rule (see `layout_with_measure_inner`): validate
-        // both axes before writing either, or the horizontal write lands
-        // before a vertical rejection — a partial publication.
-        if let Some(owner) = self
-            .horizontal_controller
-            .metric_owner()
-            .or_else(|| self.vertical_controller.metric_owner())
-        {
-            return Err(MetricWriteError::attached(owner));
-        }
-        self.horizontal_controller.update_extents_with_physics(
-            horizontal_content,
-            horizontal_viewport,
-            self.horizontal_physics,
-        )?;
-        self.vertical_controller.update_extents_with_physics(
-            vertical_content,
-            vertical_viewport,
-            self.vertical_physics,
-        )?;
-        Ok(())
+        ScrollController::update_extent_pair(
+            &self.horizontal_controller,
+            AxisExtents::new(
+                horizontal_content,
+                horizontal_viewport,
+                self.horizontal_physics,
+            ),
+            &self.vertical_controller,
+            AxisExtents::new(vertical_content, vertical_viewport, self.vertical_physics),
+        )
     }
 
     /// Applies a diagonal logical delta according to the configured behavior.
@@ -688,8 +679,10 @@ impl<T> TwoDimensionalViewport<T> {
 
     /// The single implementation behind every 2D publication path, so
     /// headless, checked, and lease-driven layouts share identical
-    /// measurement and caching behavior. Authority resolves per write:
-    /// through the lent leases when present, through the checked
+    /// measurement and caching behavior. Both convergence publications
+    /// commit through the Scroll owner's paired operation: both
+    /// authorities validate and both states commit before either axis
+    /// dispatches, with the lent leases when present and the checked
     /// unattached path otherwise.
     fn layout_with_measure_inner(
         &mut self,
@@ -702,7 +695,10 @@ impl<T> TwoDimensionalViewport<T> {
     {
         // Authority first: without leases both axes must be free, or
         // nothing mutates — no partial pair publication, no measured
-        // children, no callbacks.
+        // children, no callbacks, and no axis-context updates either:
+        // geometry authority includes the context consumers use to
+        // interpret metrics, so a rejected layout leaves the context
+        // exactly as it found it.
         if leases.is_none()
             && let Some(owner) = self
                 .horizontal_controller
@@ -717,31 +713,39 @@ impl<T> TwoDimensionalViewport<T> {
         );
         self.vertical_controller
             .set_metrics_context(Axis::Vertical, self.vertical_axis_direction.is_reversed());
-        let (horizontal_lease, vertical_lease) = leases.unzip();
-        let publish = |controller: &ScrollController,
-                       lease: Option<&MetricAttachment>,
-                       content: f32,
-                       viewport: f32,
-                       physics: ScrollPhysics|
+        let publish_pair = |horizontal_controller: &ScrollController,
+                            horizontal: AxisExtents,
+                            vertical_controller: &ScrollController,
+                            vertical: AxisExtents|
          -> Result<(), MetricWriteError> {
-            match lease {
-                Some(lease) => lease.update_extents(content, viewport, physics),
-                None => controller.update_extents_with_physics(content, viewport, physics),
+            match leases {
+                Some((horizontal_lease, vertical_lease)) => {
+                    ScrollController::publish_attached_pair(
+                        horizontal_controller,
+                        horizontal_lease,
+                        horizontal,
+                        vertical_controller,
+                        vertical_lease,
+                        vertical,
+                    )
+                }
+                None => ScrollController::update_extent_pair(
+                    horizontal_controller,
+                    horizontal,
+                    vertical_controller,
+                    vertical,
+                ),
             }
         };
-        publish(
+        publish_pair(
             &self.horizontal_controller,
-            horizontal_lease,
-            self.columns.total_extent(),
-            size.width,
-            self.horizontal_physics,
-        )?;
-        publish(
+            AxisExtents::new(
+                self.columns.total_extent(),
+                size.width,
+                self.horizontal_physics,
+            ),
             &self.vertical_controller,
-            vertical_lease,
-            self.rows.total_extent(),
-            size.height,
-            self.vertical_physics,
+            AxisExtents::new(self.rows.total_extent(), size.height, self.vertical_physics),
         )?;
 
         let (cache_x, cache_y) = self.cache_padding(size);
@@ -793,19 +797,15 @@ impl<T> TwoDimensionalViewport<T> {
                 .columns
                 .set_measured_extent(index, extent.max(f32::EPSILON));
         }
-        publish(
+        publish_pair(
             &self.horizontal_controller,
-            horizontal_lease,
-            self.columns.total_extent(),
-            size.width,
-            self.horizontal_physics,
-        )?;
-        publish(
+            AxisExtents::new(
+                self.columns.total_extent(),
+                size.width,
+                self.horizontal_physics,
+            ),
             &self.vertical_controller,
-            vertical_lease,
-            self.rows.total_extent(),
-            size.height,
-            self.vertical_physics,
+            AxisExtents::new(self.rows.total_extent(), size.height, self.vertical_physics),
         )?;
 
         let cache_rect = Rect::from_origin_size(

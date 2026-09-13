@@ -723,6 +723,94 @@ fn two_dimensional_axis_replacement_reuses_the_unchanged_axis() {
 }
 
 #[test]
+fn two_dimensional_measure_callback_cannot_disturb_ownership() {
+    // Application measurement callbacks run between the convergence
+    // pair's publications — yet hold clones only, so an ownership grab
+    // mid-layout fails and the layout still completes with exact
+    // geometry on the live pair.
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let conflicts = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let conflicts_for_builder = conflicts.clone();
+    let horizontal_for_builder = horizontal.clone();
+    let delegate = TwoDimensionalChildDelegate::new(10, 12, move |vicinity| {
+        if vicinity.x_index == 0 && vicinity.y_index == 0 {
+            match horizontal_for_builder.try_attach(MetricOwner::of_tree(77)) {
+                Ok(_) => panic!("owned axis refuses mid-layout claims"),
+                Err(conflict) => {
+                    assert_eq!(
+                        Some(conflict.owner_tree()),
+                        horizontal_for_builder.metric_owner()
+                    );
+                    conflicts_for_builder.set(conflicts_for_builder.get() + 1);
+                }
+            }
+        }
+        Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+    });
+    let mut tree = WidgetTree::new();
+    let viewport: Widget =
+        TwoDimensionalViewport::new(delegate, horizontal.clone(), vertical.clone(), 20., 30.)
+            .into();
+    let boxed: Widget =
+        incular_widgets::SizedBox::from_dimensions(Some(100.), Some(100.), Some(viewport)).into();
+    tree.mount(Column::new(vec![boxed]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout succeeds despite the grab attempt");
+    assert!(conflicts.get() > 0, "builder ran during layout");
+    assert_eq!(horizontal.content_extent(), 360.);
+    assert_eq!(vertical.content_extent(), 200.);
+    assert_eq!(horizontal.metric_owner(), Some(tree.tree_id()));
+}
+
+#[test]
+fn two_dimensional_rejected_layout_preserves_axis_context() {
+    // Geometry authority includes the axis context consumers use to
+    // interpret metrics: a rejected layout returns before touching it,
+    // so later snapshots still describe the default context — while a
+    // successful layout updates it as before (proving the channel; no
+    // configuration setter runs in between, so the layout owns the
+    // change).
+    use incular_config::{Axis, AxisDirection};
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    assert_eq!(horizontal.metrics().axis, Axis::Vertical);
+    let lease = horizontal
+        .try_attach(MetricOwner::of_tree(3))
+        .expect("free axis attaches");
+    let mut viewport = TwoDimensionalViewport::new(
+        TwoDimensionalChildDelegate::new(10, 12, Some),
+        horizontal.clone(),
+        vertical.clone(),
+        20.,
+        30.,
+    );
+    let error = match viewport.layout(Size::new(90., 60.)) {
+        Ok(_) => panic!("owned axis refuses 2D layout"),
+        Err(error) => error,
+    };
+    assert_eq!(error.owner_tree(), Some(3));
+    assert_eq!(horizontal.metrics().axis, Axis::Vertical);
+    assert_eq!(
+        horizontal.metrics().axis_direction,
+        AxisDirection::Down,
+        "rejected layout leaves axis context untouched"
+    );
+    assert_eq!(vertical.metrics().axis, Axis::Vertical);
+    assert!(lease.release());
+    viewport
+        .layout(Size::new(90., 60.))
+        .expect("freed axes lay out");
+    assert_eq!(horizontal.metrics().axis, Axis::Horizontal);
+    assert_eq!(
+        horizontal.metrics().axis_direction,
+        AxisDirection::Right,
+        "successful layout updates axis context"
+    );
+}
+
+#[test]
 fn two_dimensional_delegate_and_constraints() {
     // from_rows derives counts from the grid shape.
     let delegate =
