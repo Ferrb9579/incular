@@ -274,6 +274,43 @@ impl From<TreeError> for OutletError {
     }
 }
 
+/// Owns cleanup for one driven attempt. Armed before the fallible
+/// section; success disarms after flagging, while every early return —
+/// and panic unwind — drops it armed and resets the schedule memos.
+/// What survives a failed attempt, by design: the outgoing save and the
+/// pending capture (untouched — retry needs them), the published
+/// snapshot (no promotion ran), the driver claim (predates the attempt),
+/// and live navigation itself. Only the schedule memo resets, so the
+/// next success re-evaluates outstanding work. Panics resume unwinding
+/// immediately after the reset: integration invariants are restored,
+/// never repaired, and application panics never become successful
+/// frames.
+struct AttemptGuard<'a> {
+    outlet: &'a Rc<RefCell<RouteOutlet>>,
+    armed: bool,
+}
+
+impl<'a> AttemptGuard<'a> {
+    fn arm(outlet: &'a Rc<RefCell<RouteOutlet>>) -> Self {
+        Self {
+            outlet,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AttemptGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.outlet.borrow().reset_signaled_tree();
+        }
+    }
+}
+
 /// Why a nested outlet attachment was rejected.
 ///
 /// Rejection happens before any mutation, so a failed attach leaves both
@@ -1034,63 +1071,52 @@ impl RouteOutlet {
             outlet.begin_frame(runtime);
         }
         // The fallible section runs builders, layout, and reconciliation —
-        // all application-reachable code. Failures reset the schedule
-        // memos (a failed present consumes nothing, so the next success
-        // must re-evaluate outstanding work); panics reset and resume, so
-        // a panicking frame loses no future wakeup either. Neither path
-        // repairs tree state — recovery stays the retry's job.
-        let driven = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Rebuild outlet content explicitly before framing: reactive
-            // dependencies alone cannot cover content the host descriptors
-            // never mention, and an explicit rebuild keeps mounting ordered
-            // with the capture above. A vanished mount (unmounted content
-            // prunes its builder) detaches gracefully instead of erroring —
-            // or panicking — every frame. The existence check precedes the
-            // rebuild because pruned builders no longer fail with
-            // `MissingElement`.
-            let attached = outlet
-                .borrow()
-                .mount
-                .get()
-                .filter(|mount| runtime.tree().element_exists(*mount));
-            if attached.is_none() {
-                outlet.borrow_mut().mount.set(None);
-            }
-            if let Some(mount) = attached {
-                match runtime.rebuild_from_builder(mount) {
-                    Ok(()) => {}
-                    Err(TreeError::MissingElement(_)) => {
-                        outlet.borrow_mut().mount.set(None);
-                    }
-                    Err(error) => return Err(OutletError::Frame(error)),
+        // all application-reachable code. The attempt guard owns cleanup:
+        // every early return — and panic unwind — drops it armed and
+        // resets the schedule memos, since a failed present consumes
+        // nothing and the next success must re-evaluate outstanding work.
+        // Neither path repairs tree state — recovery stays the retry's
+        // job.
+        let mut attempt = AttemptGuard::arm(outlet);
+        // Rebuild outlet content explicitly before framing: reactive
+        // dependencies alone cannot cover content the host descriptors
+        // never mention, and an explicit rebuild keeps mounting ordered
+        // with the capture above. A vanished mount (unmounted content
+        // prunes its builder) detaches gracefully instead of erroring —
+        // or panicking — every frame. The existence check precedes the
+        // rebuild because pruned builders no longer fail with
+        // `MissingElement`.
+        let attached = outlet
+            .borrow()
+            .mount
+            .get()
+            .filter(|mount| runtime.tree().element_exists(*mount));
+        if attached.is_none() {
+            outlet.borrow_mut().mount.set(None);
+        }
+        if let Some(mount) = attached {
+            match runtime.rebuild_from_builder(mount) {
+                Ok(()) => {}
+                Err(TreeError::MissingElement(_)) => {
+                    outlet.borrow_mut().mount.set(None);
                 }
+                Err(error) => return Err(OutletError::Frame(error)),
             }
-            // No post-rebuild sampling here: each outlet's builders publish
-            // what they actually consume (see `consumed`), and
-            // reconciliation adopts it. Sampling afterward would credit the
-            // rebuild with navigation it never saw.
-            let output = runtime.run_frame(constraints)?;
-            // A preflight snapshot cannot authorize later content: builders
-            // may have navigated mid-frame, so the tree re-validates before
-            // anything commits. On failure the pending capture survives for
-            // a retry (which preflights first anyway) and no commit, bind,
-            // prune, or restore runs — the error names the offender instead
-            // of silently omitting its content.
-            outlet.borrow().preflight_tree()?;
-            outlet.borrow_mut().reconcile_tree(runtime);
-            Ok(output)
-        }));
-        let output = match driven {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
-                outlet.borrow().reset_signaled_tree();
-                return Err(error);
-            }
-            Err(payload) => {
-                outlet.borrow().reset_signaled_tree();
-                std::panic::resume_unwind(payload);
-            }
-        };
+        }
+        // No post-rebuild sampling here: each outlet's builders publish
+        // what they actually consume (see `consumed`), and reconciliation
+        // adopts it. Sampling afterward would credit the rebuild with
+        // navigation it never saw.
+        let output = runtime.run_frame(constraints)?;
+        // A preflight snapshot cannot authorize later content: builders
+        // may have navigated mid-frame, so the tree re-validates before
+        // anything commits. On failure the pending capture survives for a
+        // retry (which preflights first anyway) and no commit, bind,
+        // prune, or restore runs — the error names the offender instead
+        // of silently omitting its content.
+        outlet.borrow().preflight_tree()?;
+        outlet.borrow_mut().reconcile_tree(runtime);
+        attempt.disarm();
         // Successful-but-stale output schedules its own follow-up: paint
         // may lag the bookkeeping by a frame, and the run_frame reset
         // wipes anything flagged mid-frame. Quiet frames schedule

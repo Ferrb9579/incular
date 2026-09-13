@@ -4421,6 +4421,66 @@ fn outlet_scheduling_tracks_participation() {
 }
 
 #[test]
+fn outlet_preflight_failure_preserves_attempt_state() {
+    // Failure before any attempt state: a stale-flagged tree takes an
+    // overlay push, and the present fails pre-capture — no drives, no
+    // capture disturbance, nothing scheduled. Popping the offender
+    // recovers through the kept capture with the original save.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    // Stale work first: a mid-frame push the frame cannot present.
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.push_page(plain_page("c"));
+                }
+                Widget::box_(Size::new(40., 40.), BLUE)
+            }
+        }))]),
+    ));
+    present(&mut harness);
+    assert!(
+        harness.runtime.frame_requested(),
+        "stale output schedules its follow-up"
+    );
+    // Overlay push, then a present that fails before capture or drives.
+    navigator.push(
+        Route::new("overlay", Widget::box_(Size::new(40., 40.), GREEN)).overlay(vec![
+            OverlayEntry::new(Widget::box_(Size::new(40., 40.), GREEN)),
+        ]),
+    );
+    let drives = harness.outlet.borrow().frame_drive_count();
+    let error = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("overlay stacks fail pre-capture");
+    assert!(matches!(error, OutletError::UnsupportedPresentation { .. }));
+    assert_eq!(
+        harness.outlet.borrow().frame_drive_count(),
+        drives,
+        "preflight failure drives nothing"
+    );
+    assert!(node_a.has_focus());
+    // Recovery commits the kept capture with the original save intact.
+    navigator.pop();
+    present(&mut harness);
+    navigator.pop();
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
 fn outlet_retry_after_below_removal_commits_promptly() {
     // A→B captured, the frame fails, then a covered route is removed
     // below (same active route, smaller member set): the retry builds the
