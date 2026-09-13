@@ -50,6 +50,147 @@ fn duplicate_local_keys_are_rejected() {
     );
 }
 
+#[test]
+fn update_rejects_nested_duplicate_keys_before_mutation() {
+    // The bounded prevalidation in `update` checks the whole incoming
+    // subtree before touching retained state: the duplicate fails with
+    // zero mounts, zero unmounts, and identical children afterwards.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            incular_widgets::Row::new(vec![
+                box_(1),
+                incular_widgets::Column::new(vec![box_(2), box_(3)]).into(),
+            ])
+            .into(),
+        )
+        .unwrap();
+    let before = tree.children(root).unwrap().to_vec();
+    let mounts = tree.diagnostics().mounts;
+    let error = tree
+        .update(
+            root,
+            incular_widgets::Row::new(vec![
+                box_(1),
+                incular_widgets::Column::new(vec![box_(2), box_(2)]).into(),
+            ])
+            .into(),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, TreeError::DuplicateKey { .. }),
+        "unexpected failure: {error:?}"
+    );
+    assert_eq!(tree.children(root).unwrap(), &before[..]);
+    for id in &before {
+        assert!(tree.element_exists(*id));
+    }
+    assert_eq!(tree.diagnostics().mounts, mounts);
+    assert_eq!(tree.diagnostics().unmounts, 0);
+    // Recovery with valid content works on the untouched tree.
+    tree.update(
+        root,
+        incular_widgets::Row::new(vec![
+            box_(1),
+            incular_widgets::Column::new(vec![box_(2), box_(4)]).into(),
+        ])
+        .into(),
+    )
+    .unwrap();
+    assert_eq!(tree.children(root).unwrap().len(), 2);
+}
+
+#[test]
+fn update_allows_same_key_in_disjoint_subtrees() {
+    // Keys scope to siblings: the same key value under two different
+    // parents is legal, and updating one branch never disturbs the other.
+    let mut tree = WidgetTree::new();
+    let first: Widget = incular_widgets::Column::new(vec![box_(1)]).into();
+    let second: Widget = incular_widgets::Column::new(vec![box_(1)]).into();
+    let root = tree
+        .mount(incular_widgets::Row::new(vec![first, second]).into())
+        .unwrap();
+    let before = tree.children(root).unwrap().to_vec();
+    let left: Widget = incular_widgets::Column::new(vec![box_(1), box_(2)]).into();
+    let right: Widget = incular_widgets::Column::new(vec![box_(1)]).into();
+    tree.update(root, incular_widgets::Row::new(vec![left, right]).into())
+        .unwrap();
+    // Unkeyed positional children update in place: same ids, still
+    // distinct, with the new box landing in the left branch only.
+    let after = tree.children(root).unwrap();
+    assert_eq!(after, &before[..]);
+    assert_ne!(after[0], after[1]);
+    assert_eq!(tree.children(after[0]).unwrap().len(), 2);
+    assert_eq!(tree.children(after[1]).unwrap().len(), 1);
+}
+
+#[test]
+fn transparent_wrappers_do_not_hide_duplicate_keys() {
+    // Hidden-but-mounted wrappers are still descriptors: duplicates under
+    // invisible Visibility and offstage content fail before mutation.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(incular_widgets::Row::new(vec![box_(1)]).into())
+        .unwrap();
+    let before = tree.children(root).unwrap().to_vec();
+    let error = tree
+        .update(
+            root,
+            incular_widgets::Row::new(vec![
+                box_(1),
+                incular_widgets::Visibility::new(
+                    incular_widgets::Offstage::new(incular_widgets::Column::new(vec![
+                        box_(2),
+                        box_(2),
+                    ]))
+                    .offstage(true),
+                )
+                .visible(false)
+                .maintain_state(true)
+                .into(),
+            ])
+            .into(),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, TreeError::DuplicateKey { .. }),
+        "unexpected failure: {error:?}"
+    );
+    assert_eq!(tree.children(root).unwrap(), &before[..]);
+    assert_eq!(tree.diagnostics().unmounts, 0);
+}
+
+#[test]
+fn builder_generated_duplicates_surface_at_execution() {
+    // Static validation sees no children inside a LayoutBuilder, but
+    // mounting must execute the builder to materialize anything — so the
+    // duplicate surfaces at mount-execution through the generated-child
+    // check, naming the builder owner rather than a static parent.
+    // Descriptor validation and execution errors stay distinct by
+    // construction.
+    let mut tree = WidgetTree::new();
+    let generated: Widget = incular_widgets::LayoutBuilder::new(|_, _| {
+        incular_widgets::Row::new(vec![box_(1), box_(1)]).into()
+    })
+    .into();
+    // Mounting defers builder execution, so static validation passes.
+    let root = tree
+        .mount(incular_widgets::Column::new(vec![generated]).into())
+        .expect("mount defers builder execution");
+    let error = tree
+        .layout(incular_config::Constraints::tight(incular_core::Size::new(
+            200., 200.,
+        )))
+        .unwrap_err();
+    assert!(
+        matches!(error, TreeError::InvalidGeneratedChild { .. }),
+        "unexpected failure: {error:?}"
+    );
+    // The tree stays usable: valid content updates afterwards.
+    tree.update(root, incular_widgets::Column::new(vec![box_(1)]).into())
+        .unwrap();
+}
+
 /// Property tests for retained child reconciliation: random operation
 /// sequences applied to both the real reconciliation path and a trivial
 /// reference model must agree on logical order, key identity, and retained

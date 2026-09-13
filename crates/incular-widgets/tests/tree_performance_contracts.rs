@@ -30,6 +30,54 @@ mod reconciliation_structural_contracts {
         incular_widgets::Column::new(children).into()
     }
 
+    fn validation_delta(items: usize) -> u64 {
+        let (mut tree, root) = prepared(keyed_row(items, 0));
+        let before = tree.diagnostics();
+        tree.update(root, keyed_row(items, 1)).expect("update");
+        tree.diagnostics().prevalidation_visits - before.prevalidation_visits
+    }
+
+    #[test]
+    fn update_key_validation_scales_linearly_with_breadth() {
+        // One linear prevalidation pass per update: doubling a broad row
+        // must not quadruple validation visits (that would betray a
+        // per-level revalidation).
+        let small = validation_delta(400);
+        let large = validation_delta(800);
+        assert!(small > 0);
+        assert!(
+            large < 3 * small,
+            "broad validation must stay linear: {small} -> {large}"
+        );
+    }
+
+    fn deep_chain(depth: usize, generation: u64) -> Widget {
+        let mut child: Widget =
+            Widget::from(Text::new(format!("leaf {generation}"))).with_key(Key::Value(0));
+        for _ in 0..depth {
+            child = incular_widgets::Column::new(vec![child]).into();
+        }
+        child
+    }
+
+    fn deep_validation_delta(depth: usize) -> u64 {
+        let (mut tree, root) = prepared(deep_chain(depth, 0));
+        let before = tree.diagnostics();
+        tree.update(root, deep_chain(depth, 1)).expect("update");
+        tree.diagnostics().prevalidation_visits - before.prevalidation_visits
+    }
+
+    #[test]
+    fn update_key_validation_scales_linearly_with_depth() {
+        let shallow = deep_validation_delta(30);
+        let deep = deep_validation_delta(60);
+        assert!(shallow > 0);
+        assert!(
+            deep < 3 * shallow,
+            "deep validation must stay linear: {shallow} -> {deep}"
+        );
+    }
+
     fn prepared(root: Widget) -> (WidgetTree, ElementId) {
         let mut tree = WidgetTree::default();
         let root_id = tree.mount(root).expect("mount");

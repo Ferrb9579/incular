@@ -170,6 +170,13 @@ pub struct Diagnostics {
     pub key_comparisons: u64,
     /// Full widget configuration equality checks (deep ==).
     pub config_comparisons: u64,
+    /// Descriptors visited by key-topology prevalidation (mount and
+    /// update entry checks). Exactly one linear pass per validated
+    /// subtree — never per level of a later descent.
+    pub prevalidation_visits: u64,
+    /// Descriptors visited by key-topology prevalidation (mount and
+    /// update entry checks). Exactly one linear pass per validated
+    /// subtree — never per level of a later descent.
     /// Old-key maps built for keyed middle ranges.
     pub key_maps_built: u64,
     /// Entries inserted into those key maps.

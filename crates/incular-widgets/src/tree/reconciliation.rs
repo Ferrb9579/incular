@@ -124,10 +124,12 @@ impl WidgetTree {
         // Bounded prevalidation, mirroring mount_element: reject duplicate
         // keys on the immutable description before destructive
         // reconciliation, so a failed update leaves prior retained state
-        // untouched. Deliberately not a rollback framework — beyond key
-        // topology, update errors remain best-effort partial as before —
-        // just a single upfront pass over what reconciliation would check
-        // level by level anyway.
+        // untouched. This covers only statically present descriptors —
+        // builder-generated children validate when their builders
+        // execute, and surface execution errors instead. Deliberately not
+        // a rollback framework — beyond key topology, update errors
+        // remain best-effort partial as before — just a single upfront
+        // pass over what reconciliation would check level by level anyway.
         self.validate_widget_subtree(&widget, self.parent(id))?;
         let result = self.update_existing(id, &widget);
         if result.is_ok() {
@@ -1450,12 +1452,13 @@ impl WidgetTree {
     /// Generated builders use this before reconciliation so malformed output
     /// cannot leave half-mounted elements or compositor layers behind.
     pub(super) fn validate_widget_subtree(
-        &self,
+        &mut self,
         widget: &Widget,
         parent: Option<ElementId>,
     ) -> Result<(), TreeError> {
         let mut stack = vec![(widget, parent)];
         while let Some((current, owner)) = stack.pop() {
+            self.diagnostics.prevalidation_visits += 1;
             let children = current.children_refs().into_iter().collect::<Vec<_>>();
             self.check_keys_borrowed(owner, children.iter().copied())?;
             // Descendants do not have retained IDs yet. Their duplicate-key
