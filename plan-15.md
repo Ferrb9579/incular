@@ -2708,20 +2708,15 @@ a single ordered `present_frame` operation with pre-reconcile saves and
 frame-scheduled deferred convergence, nearest-outlet ownership with a
 documented nested-mounting pattern, and lifecycle verification across
 reorder, modals, disposal, shutdown, transient navigation, and teardown.
-W4 re-closed on the consumed-identity pass: builders publish the
-snapshot they consume (adopted without touching saves), stale output
-schedules its own follow-up through the existing scheduler, keyed
-popup/modal configuration is declarative with lifetime-preserving
-updates, and failed updates reject key errors before reconciliation
-with immediate intactness plus converging retry. Earlier passes made
-frame transitions transactional (pending capture versus committed
-records), pinned restoration inside an explicit frame contract with
-scheduled follow-ups, gave nested attachment an owned lifecycle with
-cascade driving, enforced driver ownership with typed errors, and made
-unsupported stacks and teardown explicit (typed overlay error, covered
-veils deactivate, real close_window coverage). See plan-19 for the
-itemized evidence; residuals (non-key update partiality, reorder
-element identity) are documented there.
+W4 reopened for the receipt/scheduling pass and stays open until its
+contracts are evidenced: attempt-scoped composition receipts (discarded
+builds authorize nothing), failure-reset scheduling without retry
+loops, prevalidation semantics with linear cost, and the integrated
+state model with combined closeout. Earlier passes established
+transactional frames, restoration frame contracts, owned nested and
+driver lifecycles, consumed snapshots, stale scheduling, declarative
+presentation, and bounded key-error recovery. See plan-19 for the
+itemized evidence.
 
 ## W5 — Scroll and animation state transitions
 

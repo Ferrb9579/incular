@@ -2031,6 +2031,178 @@ fn outlet_production_lifecycle_combined() {
 }
 
 #[test]
+fn outlet_combined_receipt_scheduling_closeout() {
+    // One flow through every contract: speculative compositions
+    // discarded, skipped nested composition, failure plus retry,
+    // navigation changes, and teardown — asserting output paint, focus,
+    // task lifetime, and scheduler state together through public API.
+    let mut runtime1 =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent_scope = runtime1.window_task_scope();
+    let outer_nav = Navigator::new();
+    let inner_nav = Navigator::new();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer_nav, &parent_scope)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner_nav, &parent_scope)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let node_d = FocusNode::new();
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    drop(outlet_inner_for_page);
+    {
+        let outlet_for_build = outlet_outer.clone();
+        let root = runtime1.tree().root().expect("root");
+        runtime1
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_for_build.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime1);
+    RouteOutlet::attach(&outlet_outer, &mut runtime1).expect("outer attaches");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    // Baseline: both bound, A focused, tree idle.
+    inner_nav.push_page(Page::new(
+        "b",
+        focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE)),
+    ));
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_a);
+    let ib = inner_nav.current().expect("inner route").id;
+    let inner_scope = outlet_inner
+        .borrow()
+        .route_task_scope(ib)
+        .expect("inner bound");
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(!runtime1.frame_requested(), "quiet tree idles");
+    // Speculative compositions discarded: a quiet present converges
+    // without authorizing them, painting current content only.
+    let _ = outlet_outer.borrow().widget();
+    let _ = outlet_inner.borrow().widget();
+    let quiet = present_outer_tree_output(&mut runtime1, &outlet_outer);
+    assert!(paints(quiet.commands(), RED));
+    assert!(paints(quiet.commands(), BLUE));
+    assert!(!runtime1.frame_requested());
+    assert!(node_a.has_focus());
+    // Skipped nested composition: solo outer, inner advancing slotless.
+    // The inner revision stays outstanding and schedules once.
+    outer_nav
+        .set_pages([Page::new(
+            "solo",
+            Widget::box_(Size::new(200., 200.), GREEN),
+        )])
+        .unwrap();
+    inner_nav.push_page(Page::new(
+        "d",
+        focus_widget(&node_d, Widget::box_(Size::new(40., 40.), YELLOW)),
+    ));
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert_eq!(runtime1.focused_element(), None);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        runtime1.frame_requested(),
+        "outstanding nested work schedules once"
+    );
+    // Failure plus retry: a bad outer route errors (resetting the memo),
+    // dropping it converges with the inner revision still outstanding —
+    // and scheduling again for exactly that revision.
+    outer_nav.push(Route::new(
+        "bad",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE).with_key(7_u64),
+            Widget::box_(Size::new(40., 40.), GREEN).with_key(7_u64),
+        ]),
+    ));
+    RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime1,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("duplicate keys fail the rebuild");
+    outer_nav
+        .set_pages([Page::new(
+            "solo",
+            Widget::box_(Size::new(200., 200.), GREEN),
+        )])
+        .unwrap();
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        runtime1.frame_requested(),
+        "reset work schedules again after failure"
+    );
+    assert!(inner_nav.lifetime_of(ib).expect("B alive").is_live());
+    assert!(!inner_scope.is_cancelled());
+    // Navigation changes: remount consumes the pending revision, paints
+    // it, idles, and keeps every lifetime bound.
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav
+        .set_pages([Page::new(
+            "a2",
+            Column::new(vec![
+                focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    let remounted = present_outer_tree_output(&mut runtime1, &outlet_outer);
+    assert!(paints(remounted.commands(), RED));
+    assert!(paints(remounted.commands(), YELLOW));
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!runtime1.frame_requested(), "consumed work idles");
+    let oa2 = outer_nav.current().expect("outer route").id;
+    let id = inner_nav.current().expect("inner route").id;
+    let outer_scope = outlet_outer
+        .borrow()
+        .route_task_scope(oa2)
+        .expect("outer bound");
+    let inner_d_scope = outlet_inner
+        .borrow()
+        .route_task_scope(id)
+        .expect("inner bound");
+    tab_until(&mut runtime1, &node_d);
+    inner_nav.pop();
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_b);
+    // Teardown: window closure cancels by lifetime, then everything
+    // releases.
+    let weak_outer = Rc::downgrade(&outlet_outer);
+    let weak_inner = Rc::downgrade(&outlet_inner);
+    let mut app = Application::from_runtime(runtime1, |_| {});
+    app.close_window(app.primary_window());
+    assert!(outer_scope.is_cancelled());
+    assert!(inner_d_scope.is_cancelled());
+    assert!(inner_scope.is_cancelled());
+    outer_nav
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    inner_nav
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    drop(outer_nav);
+    drop(inner_nav);
+    drop(outlet_outer);
+    drop(outlet_inner);
+    drop(app);
+    assert!(weak_outer.upgrade().is_none());
+    assert!(weak_inner.upgrade().is_none());
+}
+
+#[test]
 fn outlet_dropped_bindings_ignore_later_removal() {
     // Bindings detach with the outlet, independent of mounting: bind
     // through bookkeeping-only presents (no attach, no mounted content),

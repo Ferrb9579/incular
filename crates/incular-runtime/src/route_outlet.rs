@@ -27,6 +27,19 @@
 //! flag nothing). Errors schedule no follow-up at all, so rejected
 //! stacks cannot spin a retry loop. Deferred content converges through
 //! its own invalidation afterwards.
+//!
+//! Driving states (derived from the retained fields, not tracked
+//! separately — `pending`, `consumed` vs live revision, `needs_frame`,
+//! and the per-revision schedule memo):
+//!
+//! | Situation | pending | consumed | needs_frame | scheduled | exit |
+//! | Unattached, empty | none | none | false | — | navigate → stale |
+//! | Unattached, routes live | per capture | older/none | true | on success | attach → attached |
+//! | Attached, idle | none | current | false | — | navigate → pending |
+//! | Attempt pending | some | just composed | false | — | commit → consumed; mid-frame nav → stale |
+//! | Failed (error/panic) | kept | older | true | reset, re-evaluates | retry → pending/consumed |
+//! | Successful-but-stale | recaptured/none | older | true | once per rev | follow-up → consumed |
+//! | Detached | kept (own) | frozen | own tree only | own claims | reattach or drive standalone |
 
 use std::{
     cell::{Cell, RefCell},

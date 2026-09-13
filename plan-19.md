@@ -1,13 +1,14 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: complete — reopened for the consumed-identity pass (A–D
-below), then re-closed: consumed-frame identity, scheduling,
-declarative presentation, and recovery are each implemented and
-verified against the evidence table. Earlier passes established
-transactional frames, the restoration frame contract, owned nested
-lifecycles, explicit unsupported/teardown behavior, topology and driver
-ownership. Modal focus containment stays explicitly separate future
-work (removing `focus_trap` implemented nothing). Audit Q04/Q05;
+Status: reopened for the receipt/scheduling pass (A–D below) — not
+re-closed: consumed-frame identity, scheduling, declarative
+presentation, and recovery each need the new receipt and scheduling
+contracts evidenced first. Earlier passes established transactional
+frames, the restoration frame contract, owned nested lifecycles,
+explicit unsupported/teardown behavior, topology and driver ownership,
+consumed snapshots, stale scheduling, declarative presentation, and
+bounded recovery. Modal focus containment stays explicitly separate
+future work (removing `focus_trap` implemented nothing). Audit Q04/Q05;
 specializes plan 15
 W4. Depends on plan 18.
 
@@ -328,6 +329,47 @@ Consumed-identity pass (reopen → re-close), evidence by contract:
   Residuals kept deliberately small: non-key update errors stay
   partial; subtree identity across reorder stays a framework
   reconciliation property.
+
+Receipt/scheduling pass (reopened — not re-closed), evidence by contract:
+- Consumed-frame identity: compositions carry attempt-scoped receipts
+  (`epoch` per driven frame; only the current attempt's receipt
+  adopts). A discarded `widget()` authorizes nothing (proven by
+  disabling the gate: the receipt test fails), bookkeeping still
+  advances independently, and remounting converges. Failed attempts
+  followed by skipped-builder successes keep stale publications until a
+  remount consumes. A pruned-builder panic in `present_frame` now
+  degrades gracefully instead of panicking.
+- Scheduling: the schedule memo resets on every failed present
+  (typed errors) and on panics (catch, reset, rethrow — no state
+  repair attempted), so lost work re-flags instead of suppressing
+  forever; both resets proven by disabling them. Requested follow-ups
+  execute without consuming (slotless success re-flags), later frames
+  consume and idle; detached outlets never enter the cascade;
+  rejections schedule nothing; hosts never poll.
+- Declarative presentation: unchanged this pass (contracts hold;
+  keyed popups/modals, lifetime-preserving updates, restoration
+  survival all still green).
+- Recovery: `WidgetTree::update` prevalidates key topology in one
+  linear pass (`prevalidation_visits` counter proves breadth/depth
+  linearity); scope review shows identical checking at every
+  reconciled level with identical-subtree bailouts (no false
+  positives), sibling scoping by construction, transparent wrappers
+  descended, and builder-generated children surfacing execution errors
+  (`InvalidGeneratedChild`) distinctly from descriptor errors. Docs
+  narrowed to statically available validation. Non-key partial updates
+  stay explicitly partial (precise limitation, not an atomicity claim).
+- Complexity review: `composing` (in-flight write slot), `consumed`
+  (framed publication), and `pending.attempt` (transition-adopted copy
+  plus mount-None commit basis) keep distinct documented roles — no
+  further merge without losing the mount-None path; no new layers. A
+  module-level state-transition table (unattached/attached/pending/
+  failed/stale/consumed/detached) pins the integrated model.
+- Combined closeout: one public-path test covers discarded
+  descriptors, skipped nested composition, failure plus retry,
+  navigation changes, and teardown — asserting paint, focus, task
+  lifetime, and scheduler state together.
+- Not re-closed while: non-key update errors stay best-effort partial;
+  subtree identity across reorder stays a framework property.
 
 Hardening pass (reopen → re-close):
 - Frame transitions are transactional: pending capture (outgoing route,
