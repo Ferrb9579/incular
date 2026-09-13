@@ -16,8 +16,9 @@ use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_semantics::SemanticRole;
 use incular_widgets::internal::TreeError;
 use incular_widgets::{
-    Column, ListView, ListWheelScrollView, RawScrollbar, Scrollable, Semantics,
-    SingleChildScrollView, Viewport, WheelChildDelegate,
+    Column, DraggableScrollableSheet, ListView, ListWheelScrollView, ListWheelViewport,
+    RawScrollbar, Scrollable, Semantics, SingleChildScrollView, TwoDimensionalChildDelegate,
+    TwoDimensionalScrollable, TwoDimensionalViewport, Viewport, WheelChildDelegate,
 };
 use std::time::Instant;
 
@@ -1249,6 +1250,116 @@ fn authority_boundary_lifecycle_end_to_end() {
     assert_eq!(next.content_extent(), 500.);
     assert_eq!(next.max_offset(), 400.);
     assert!(next.jump_to(100.));
+}
+
+#[test]
+fn no_public_route_bypasses_attachment_authority() {
+    // Attach an ordinary viewport, then attempt publication through every
+    // legacy/model route: both controller entries, both wheel aliases,
+    // the 2D pair helper and layout, the sheet inner write, and a second
+    // viewport. Every route fails without changing geometry, offset,
+    // revision, ownership, or notifications; the owner then publishes
+    // normally through its lease.
+    let owned = ScrollController::new();
+    let free = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = owned.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(owned.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(owned.jump_to(30.));
+    let attachment = owned.attachment_id().expect("viewport owns");
+    let revision = owned.revision();
+    events.borrow_mut().clear();
+    let wheel_children: Vec<Widget> = (0..8)
+        .map(|index| Widget::box_(Size::new(80., 20.), Color::WHITE).with_key(index as u64))
+        .collect();
+    // Routes 1-2: controller entries.
+    assert!(owned.update_extents(900., 50.).is_err());
+    assert!(
+        owned
+            .update_extents_with_physics(900., 50., ScrollPhysics::clamping())
+            .is_err()
+    );
+    // Routes 3-4: wheel aliases over the owned controller.
+    let mut wheel = ListWheelViewport::new(
+        owned.clone(),
+        20.0,
+        WheelChildDelegate::children(wheel_children),
+    );
+    assert!(wheel.layout(Size::new(100., 100.)).is_err());
+    assert!(
+        wheel
+            .layout_with_measure(Size::new(100., 100.), |_, constraints| constraints
+                .biggest())
+            .is_err()
+    );
+    // Route 5: 2D pair helper spanning the owned axis.
+    let scrollable = TwoDimensionalScrollable::new(owned.clone(), free.clone());
+    assert!(scrollable.update_extents(1., 1., 1., 1.).is_err());
+    // Route 6: 2D viewport layout over the owned axis.
+    let mut grid = TwoDimensionalViewport::new(
+        TwoDimensionalChildDelegate::new(10, 12, Some),
+        owned.clone(),
+        free.clone(),
+        20.,
+        30.,
+    );
+    assert!(grid.layout(Size::new(90., 60.)).is_err());
+    // Route 7: sheet inner write against an owned inner controller. The
+    // sheet builds its own inner handle, so ownership here is taken
+    // directly — the refused call travels the same checked path an
+    // attached inner list would enforce.
+    let (state, _) =
+        DraggableScrollableSheet::new(|_| Widget::box_(Size::new(80., 20.), Color::WHITE)).mount();
+    let inner = state.inner_controller();
+    let _inner_lease = inner
+        .try_attach(incular_scroll::MetricOwner::of_tree(5))
+        .expect("free inner attaches");
+    assert!(state.set_inner_extents(500., 100.).is_err());
+    // Route 8: a second viewport.
+    let mut probe = WidgetTree::new();
+    probe
+        .mount(sized_viewport(owned.clone(), 200., 100., 300.))
+        .expect("mount defers attachment");
+    assert!(
+        probe
+            .layout(Constraints::tight(Size::new(200., 100.)))
+            .is_err()
+    );
+    // Nothing moved anywhere: owned record intact, free axis untouched,
+    // no notification emitted by any attempt.
+    assert_eq!(owned.content_extent(), 300.);
+    assert_eq!(owned.viewport_extent(), 100.);
+    assert_eq!(owned.max_offset(), 200.);
+    assert_eq!(owned.offset(), 30.);
+    assert_eq!(owned.revision(), revision);
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    assert_eq!(owned.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(free.max_offset(), 0.);
+    assert_eq!(free.metric_owner(), None);
+    assert!(events.borrow().is_empty(), "no route notifies");
+    // The owner publishes normally afterward through its lease.
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(owned.clone(), 200., 100., 320.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(owned.content_extent(), 320.);
+    assert_eq!(owned.max_offset(), 220.);
+    assert_eq!(owned.attachment_id(), Some(attachment));
 }
 
 #[test]

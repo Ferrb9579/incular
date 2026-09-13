@@ -2784,19 +2784,36 @@ own generation tokens, untouched):
 Clocks: ordinary activity is fully synchronous (no timers), so
 determinism needs no clock control — sequences are exact.
 
-API review (no unchecked ownership mutation remains): `try_attach`
-fails on occupied; `release`/`detach`/`teardown` and lease publication
-act only through the live handle; unattached publication acts only
-while free. Deliberately open, not escape hatches: offset control
-(`jump_to`/`scroll_by`/deferred/settle) moves values, never ownership
-or extents; activity `begin`/`end` brackets stay app-driven with tenure
-transitions owned by the detach paths; legacy unrestricted extent
-writes remain for hosts, tests, outright-owned models, the
-element-less render fallback, and the deferred 2D/draggable families —
-documented last-writer-wins geometry that never transfers ownership.
-Diagnostics (`metric_owner`, `attachment_id`, conflict owner trees,
+API audit — every public geometry-writing method and its authority
+check (no unchecked public writer remains):
+
+| Method | Authority rule |
+| `ScrollController::update_extents` / `update_extents_with_physics` | free-only: rejects with `AttachedOwner` before any mutation |
+| `MetricAttachment::update_extents` | live-handle-only: stale handles get `StaleAttachment`, nothing written |
+| `ListWheelViewport::layout` / `layout_with_measure`, `ListWheelScrollView::layout` | free-only, validated before measuring children, selection, or callbacks |
+| `TwoDimensionalViewport::layout` / `layout_with_measure`, `TwoDimensionalScrollView::layout`, `TwoDimensionalScrollable::update_extents` | both axes validated free before either writes (pair-atomic; lease-driven retained path publishes through the lent pair instead) |
+| `DraggableScrollableState::set_inner_extents` | free-only; the sheet never claims the shared inner controller |
+| Retained tree paths (ordinary, sliver, wheel, 2D) | lease-gated: claim first, publish through the stored handles; element-less renders attempt the checked write and skip when owned |
+| `commit_extent_state` / `finish_extent_publication` | private (`pub(crate)`): the single extent algorithm, unreachable except through the checked entries above |
+
+Deliberately open, not escape hatches: offset control (`jump_to`,
+`scroll_by`, deferred jumps, `apply_physics`, settle/spring steps,
+`adjust_for_content_change`) moves positions, never ownership or
+extents; activity `begin`/`end` brackets stay app-driven with tenure
+transitions owned by the detach paths; `set_metrics_context` routes
+notification payloads only; restoration binds/persists positions,
+never publishes geometry. Diagnostics (`metric_owner`,
+`attachment_id`, conflict owner trees,
 `MetricAttachment::controller`) are read-only: naming an owner grants
 no power to mutate it, and controller clones claim nothing.
+
+Internal mutation sites: `content_extent`, `viewport_extent`, and the
+derived `max_offset` are assigned only inside `commit_extent_state`
+(plus zero-initialization at construction). No public path reaches
+them except through the checked entries in the table above — verified
+by searching all three field assignments, and pinned by the combined
+bypass regression (all routes fail without mutation; the owner
+publishes afterward).
 
 Migration notes: attached viewports publish through
 `MetricAttachment` and free controllers through the checked
@@ -2822,14 +2839,17 @@ on the old tenure, never a stranded flag) and fully-preserving
 failure;
 conditional teardown with explicit detach (release + `End`) versus
 teardown (release + silent clear) paths; steady-state lease reuse
-without re-acquire or scans; ordinary, sliver, and wheel viewports all
-claiming through the one mechanism; checked headless publication
-rejected without mutation (headless wheel included); combined
+without re-acquire or scans; ordinary, sliver, wheel, and 2D viewports
+all claiming through the one mechanism (2D per axis pair, with atomic
+pair publication and axis-granular replacement reuse); every public
+geometry writer checked — controller entries, all wheel aliases, 2D
+entries, and sheet inner writes reject without mutation; element-less
+fallbacks skip when owned; combined all-routes-bypass regression
+(owner publishes afterward) alongside the
 headless→attach→reject→replace→wheel→detach/teardown→remount
-authority-boundary lifecycle pinned. Remaining work, explicitly
-untouched: two-dimensional viewport attachment, draggable
-sheet/inner coordination beyond the existing attach model, broader
-animation (ballistic driver) policy; scrollbar-thumb drags stay
+authority-boundary lifecycle. Remaining work, explicitly
+untouched: broader animation (ballistic driver) policy;
+scrollbar-thumb drags stay
 unbracketed programmatic moves by current design.
 
 ## W6 — Input, text and semantic consistency
