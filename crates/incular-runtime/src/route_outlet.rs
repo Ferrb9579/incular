@@ -94,6 +94,18 @@ struct PendingTransition {
     saved: Option<ElementId>,
 }
 
+/// Identity of one [`RouteOutlet`], for actionable error data and host
+/// bookkeeping. Assigned once per outlet; sibling outlets sharing one
+/// tree never collide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OutletId(u64);
+
+impl std::fmt::Display for OutletId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "route-outlet-{}", self.0)
+    }
+}
+
 /// A route outlet refusing to present.
 ///
 /// Returned before changing any mounted or committed state, so hosts can
@@ -102,8 +114,13 @@ struct PendingTransition {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutletError {
     /// One or more routes use portal-managed overlay presentations, which
-    /// the outlet never mounts. Carries the offending route ids.
-    UnsupportedPresentation { routes: Vec<RouteId> },
+    /// the outlet never mounts. Carries the offending outlet alongside
+    /// the route ids, so nested rejections point at the responsible
+    /// navigator instead of the driving root.
+    UnsupportedPresentation {
+        outlet: OutletId,
+        routes: Vec<RouteId>,
+    },
     /// The underlying rebuild or frame failed.
     Frame(TreeError),
 }
@@ -111,10 +128,10 @@ pub enum OutletError {
 impl std::fmt::Display for OutletError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedPresentation { routes } => {
+            Self::UnsupportedPresentation { outlet, routes } => {
                 write!(
                     formatter,
-                    "route outlet cannot present portal-managed overlay routes: {routes:?} \
+                    "{outlet} cannot present portal-managed overlay routes: {routes:?} \
                      (host overlay entries in an OverlayPortal separately)"
                 )
             }
@@ -446,10 +463,18 @@ impl RouteOutlet {
         &self.navigator
     }
 
-    /// Rejects stacks containing portal-managed overlay routes, which the
-    /// outlet never mounts. Pure check: no state changes either way.
-    fn check_supported(navigator: &Navigator) -> Result<(), OutletError> {
-        let unsupported: Vec<RouteId> = navigator
+    /// Returns this outlet's identity, for error data and host bookkeeping.
+    #[must_use]
+    pub fn id(&self) -> OutletId {
+        OutletId(self.namespace)
+    }
+
+    /// Rejects this outlet's stack when it contains portal-managed overlay
+    /// routes, which the outlet never mounts. Pure check: no state changes
+    /// either way.
+    fn preflight(&self) -> Result<(), OutletError> {
+        let unsupported: Vec<RouteId> = self
+            .navigator
             .routes()
             .iter()
             .filter(|route| route.presentation.is_overlay())
@@ -459,9 +484,24 @@ impl RouteOutlet {
             Ok(())
         } else {
             Err(OutletError::UnsupportedPresentation {
+                outlet: self.id(),
                 routes: unsupported,
             })
         }
+    }
+
+    /// Validates the whole outlet tree top-down: this outlet, then every
+    /// nested outlet transitively. Pure check — no revisions, captures,
+    /// rebuilds, or frames happen on either outcome — so
+    /// [`Self::present_frame`] runs it before driving anything and again
+    /// after the frame (navigation may have moved mid-build) before
+    /// committing anything. Reports the outermost offender first.
+    fn preflight_tree(&self) -> Result<(), OutletError> {
+        self.preflight()?;
+        for nested in self.live_nested() {
+            nested.borrow().preflight_tree()?;
+        }
+        Ok(())
     }
 
     /// Attaches the outlet to its mounted widget so [`Self::present_frame`]
@@ -546,6 +586,10 @@ impl RouteOutlet {
         }
         let mut children = Vec::new();
         for (route, visible) in routes.iter().zip(visible) {
+            // Overlay entries never mount here: `present_frame` rejects
+            // their stacks typed (before and after the frame), so reaching
+            // this skip means manual driving — still omitted, never
+            // half-mounted, and never silent through the supported path.
             let OutletPlacement::Stacked { visible, barrier } =
                 OutletPlacement::of(&route.presentation, visible)
             else {
@@ -661,9 +705,10 @@ impl RouteOutlet {
         runtime: &mut Runtime,
         constraints: Constraints,
     ) -> Result<(DisplayList, FrameStats), OutletError> {
-        // Unsupported stacks fail before capture, rebuild, frame, or
-        // reconcile — nothing mounted or committed changes on this path.
-        Self::check_supported(&outlet.borrow().navigator)?;
+        // Unsupported stacks anywhere in the tree fail before revisions,
+        // capture, rebuild, frame, or reconcile — nothing mounted or
+        // committed changes on this path.
+        outlet.borrow().preflight_tree()?;
         {
             let mut outlet = outlet.borrow_mut();
             outlet.begin_frame(runtime);
@@ -684,6 +729,13 @@ impl RouteOutlet {
             }
         }
         let output = runtime.run_frame(constraints)?;
+        // A preflight snapshot cannot authorize later content: builders
+        // may have navigated mid-frame, so the tree re-validates before
+        // anything commits. On failure the pending capture survives for a
+        // retry (which preflights first anyway) and no commit, bind,
+        // prune, or restore runs — the error names the offender instead
+        // of silently omitting its content.
+        outlet.borrow().preflight_tree()?;
         outlet.borrow_mut().reconcile_tree(runtime);
         Ok(output)
     }
@@ -694,7 +746,9 @@ impl RouteOutlet {
     /// restores the activated route's eligible focus (whose targets mounted
     /// in the frame just presented). Manual-driving escape hatch for custom
     /// hosts; prefer [`Self::present_frame`], whose pre-frame capture also
-    /// survives disposal-unmounts. Use one driver per outlet.
+    /// survives disposal-unmounts and which alone runs the tree preflight
+    /// (this hatch validates nothing — unsupported stacks stay omitted).
+    /// Use one driver per outlet.
     pub fn after_frame(&mut self, runtime: &mut Runtime) {
         self.capture_tree(runtime);
         // Manual driving has no fallible step between capture and commit,

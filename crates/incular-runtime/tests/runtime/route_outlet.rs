@@ -688,6 +688,7 @@ fn outlet_rejects_overlay_routes_explicitly() {
         )]),
     );
     let overlay_id = navigator.current().expect("overlay route").id;
+    let outlet_id = harness.outlet.borrow().id();
     // Presenting fails typed before mounting or committing anything: the
     // overlay content is portal-managed, and silent omission is not an
     // option. Ordinary state stays exactly as it was.
@@ -700,6 +701,7 @@ fn outlet_rejects_overlay_routes_explicitly() {
     assert_eq!(
         error,
         OutletError::UnsupportedPresentation {
+            outlet: outlet_id,
             routes: vec![overlay_id]
         }
     );
@@ -1897,4 +1899,199 @@ fn nested_tree_drives_each_outlet_exactly_once() {
     }
     // The whole tree still works end to end: inner content is live.
     tab_until(&mut runtime, &node_b);
+}
+
+#[test]
+fn nested_unsupported_rejected_with_outlet_identity() {
+    // The inner navigator hosts the offending route: the error names the
+    // inner outlet (not the driving root) with the route, and no outlet's
+    // integration state moves — no drives, no captures, no bindings.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, node_b) =
+        nested_inside_setup();
+    inner.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_a);
+    let outer_drives = outlet_outer.borrow().frame_drive_count();
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    let outer_id = outer.current().expect("outer route").id;
+    let outer_scope = outlet_outer
+        .borrow()
+        .route_task_scope(outer_id)
+        .expect("outer bound");
+    inner.push(
+        Route::new("overlay", Widget::box_(Size::new(40., 40.), GREEN)).overlay(vec![
+            OverlayEntry::new(Widget::box_(Size::new(40., 40.), GREEN)),
+        ]),
+    );
+    let overlay_id = inner.current().expect("overlay route").id;
+    let inner_id = outlet_inner.borrow().id();
+    let error = RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("nested overlay stacks are rejected");
+    assert_eq!(
+        error,
+        OutletError::UnsupportedPresentation {
+            outlet: inner_id,
+            routes: vec![overlay_id]
+        }
+    );
+    // Nothing moved: no outlet drove, outer focus and binding hold, and
+    // the offending route never bound.
+    assert_eq!(outlet_outer.borrow().frame_drive_count(), outer_drives);
+    assert_eq!(outlet_inner.borrow().frame_drive_count(), inner_drives);
+    assert!(node_a.has_focus());
+    assert!(!outer_scope.is_cancelled());
+    assert!(outlet_inner.borrow().route_task_scope(overlay_id).is_none());
+    // Recovery: removing the offending route restores the whole tree.
+    inner.pop();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_b);
+    let _ = outer;
+}
+
+#[test]
+fn nested_valid_siblings_present_and_recover_independently() {
+    // Two nested outlets under one outer: both valid present together;
+    // one turning unsupported rejects with its own identity while the
+    // sibling's state holds; fixing it recovers everything.
+    let outer = Navigator::new();
+    let first_nav = Navigator::new();
+    let second_nav = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let outlet_first = Rc::new(RefCell::new(RouteOutlet::new(&first_nav, &parent)));
+    let outlet_second = Rc::new(RefCell::new(RouteOutlet::new(&second_nav, &parent)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let first_for_page = outlet_first.clone();
+    let second_for_page = outlet_second.clone();
+    outer.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&first_for_page),
+            RouteOutlet::nested_widget(&second_for_page),
+        ]),
+    ));
+    let root = runtime.tree().root().expect("root");
+    {
+        let outlet_outer = outlet_outer.clone();
+        runtime
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_outer.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_first).expect("first attaches");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_second).expect("second attaches");
+    first_nav.push_page(focus_page("b", &node_b));
+    second_nav.push_page(plain_page("c"));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_b);
+    // The second sibling turns unsupported: the error names it, the first
+    // sibling's focus and bindings hold, and nothing drove.
+    second_nav.push(
+        Route::new("overlay", Widget::box_(Size::new(40., 40.), GREEN)).overlay(vec![
+            OverlayEntry::new(Widget::box_(Size::new(40., 40.), GREEN)),
+        ]),
+    );
+    let overlay_id = second_nav.current().expect("overlay route").id;
+    let second_id = outlet_second.borrow().id();
+    let error = RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("sibling overlay stacks are rejected");
+    assert_eq!(
+        error,
+        OutletError::UnsupportedPresentation {
+            outlet: second_id,
+            routes: vec![overlay_id]
+        }
+    );
+    assert!(node_b.has_focus());
+    // Recovery is per-navigator: popping the offender restores the tree.
+    second_nav.pop();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(node_b.has_focus());
+}
+
+#[test]
+fn outlet_unsupported_introduced_mid_build_fails_explicitly() {
+    // A builder that pushes an overlay route mid-frame: the preflight
+    // snapshot cannot authorize it, so the post-frame check fails typed
+    // with the route — no commit, no bindings, no silent omission. The
+    // pending transition survives for the retry, which commits the
+    // original save once the offender is gone.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let node_b_for_build = node_b.clone();
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.push(
+                        Route::new("overlay", Widget::box_(Size::new(40., 40.), GREEN)).overlay(
+                            vec![OverlayEntry::new(Widget::box_(Size::new(40., 40.), GREEN))],
+                        ),
+                    );
+                }
+                focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    let outlet_id = harness.outlet.borrow().id();
+    let error = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("mid-build overlay fails explicitly");
+    let overlay_id = navigator.current().expect("overlay pushed").id;
+    assert_eq!(
+        error,
+        OutletError::UnsupportedPresentation {
+            outlet: outlet_id,
+            routes: vec![overlay_id]
+        }
+    );
+    // Nothing committed: the offender never bound, and focus never moved.
+    assert!(
+        harness
+            .outlet
+            .borrow()
+            .route_task_scope(overlay_id)
+            .is_none()
+    );
+    assert!(node_a.has_focus());
+    // Recovery: pop the offender and retry — the kept A→B capture commits
+    // the original save, so the way back restores A.
+    navigator.pop();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
 }

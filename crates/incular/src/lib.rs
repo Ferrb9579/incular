@@ -138,14 +138,14 @@ pub mod prelude {
         FileRestorationStore, FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics,
         GpuSample, InMemoryRestorationStore, LastWindowPolicy, Memo,
         NativeOperationCompletionStatus, NativeOperationRequest, NativeWindowCommand,
-        OutletAttachError, OutletError, OutletPlacement, PerformanceHub, PerformanceSnapshot,
-        ProfilerMode, RenderFrameMetrics, Restorable, RestorableWindowFactory, RestorationConfig,
-        RestorationDiagnostics, RestorationHandle, RestorationMigration, RestorationStore,
-        RestorationStoreError, RouteFocusOwner, RouteFocusState, RouteOutlet, RouteTaskBinding,
-        Runtime, RuntimeDiagnostics, RuntimeErrorReport, SchedulerCounters, Signal, Task,
-        TaskFailure, TaskHandle, TaskScope, TokioHandle, UiDispatcher, UndoHistoryController,
-        UndoHistoryState, WindowCommandEnqueueError, WindowDiagnostics, WindowError, WindowHandle,
-        WindowOpener, WindowPlacementError, WindowRestorationId,
+        OutletAttachError, OutletError, OutletId, OutletPlacement, PerformanceHub,
+        PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable, RestorableWindowFactory,
+        RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
+        RestorationStore, RestorationStoreError, RouteFocusOwner, RouteFocusState, RouteOutlet,
+        RouteTaskBinding, Runtime, RuntimeDiagnostics, RuntimeErrorReport, SchedulerCounters,
+        Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle, UiDispatcher,
+        UndoHistoryController, UndoHistoryState, WindowCommandEnqueueError, WindowDiagnostics,
+        WindowError, WindowHandle, WindowOpener, WindowPlacementError, WindowRestorationId,
     };
     #[cfg(feature = "desktop")]
     pub use incular_runtime::{
