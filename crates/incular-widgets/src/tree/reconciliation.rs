@@ -121,6 +121,14 @@ impl WidgetTree {
         if !self.elements.contains(id.0) {
             return Err(TreeError::MissingElement(id));
         }
+        // Bounded prevalidation, mirroring mount_element: reject duplicate
+        // keys on the immutable description before destructive
+        // reconciliation, so a failed update leaves prior retained state
+        // untouched. Deliberately not a rollback framework — beyond key
+        // topology, update errors remain best-effort partial as before —
+        // just a single upfront pass over what reconciliation would check
+        // level by level anyway.
+        self.validate_widget_subtree(&widget, self.parent(id))?;
         let result = self.update_existing(id, &widget);
         if result.is_ok() {
             self.refresh_notification_listeners();

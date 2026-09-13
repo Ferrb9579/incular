@@ -1,13 +1,14 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: reopened for the lifecycle-ownership pass (A–D below) — not
-re-closed: the outlet contracts are implemented and verified per the
-five evidence areas, but W4 stays open on the two framework-level
-residuals named at the end. Earlier passes established transactional
-frames, the restoration frame contract, owned nested lifecycles, and
-explicit unsupported/teardown behavior. Modal focus containment stays
-explicitly separate future work (removing `focus_trap` implemented
-nothing). Audit Q04/Q05; specializes plan 15
+Status: complete — reopened for the consumed-identity pass (A–D
+below), then re-closed: consumed-frame identity, scheduling,
+declarative presentation, and recovery are each implemented and
+verified against the evidence table. Earlier passes established
+transactional frames, the restoration frame contract, owned nested
+lifecycles, explicit unsupported/teardown behavior, topology and driver
+ownership. Modal focus containment stays explicitly separate future
+work (removing `focus_trap` implemented nothing). Audit Q04/Q05;
+specializes plan 15
 W4. Depends on plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
@@ -290,6 +291,43 @@ Lifecycle-ownership pass (reopened — not re-closed), evidence by area:
   have no keyed identity (keyed popups/modals cannot be declared, so
   reconciliation re-ids them — navigation design, outside outlet
   scope).
+
+Consumed-identity pass (reopen → re-close), evidence by contract:
+- Consumed-frame identity: each outlet composition records the
+  immutable snapshot it built children from (`composing`, published to
+  `consumed` only on the success path); reconcile adopts it without
+  touching the outgoing save. Rebuild-phase trips publish pre-trip
+  content, nested builders record on execution, skipped builders publish
+  nothing (proven by stash comparison: the skip test fails without the
+  adoption), failed composition publishes nothing. Post-rebuild sampling
+  (`refresh_attempt`, `built`) removed as overlapping.
+- Scheduling: successful-but-stale output schedules its own follow-up
+  through `request_frame`, edge-triggered per outlet per revision —
+  mid-build navigation flags, the follow-up renders newer content, quiet
+  frames idle, nested staleness wakes the root driver, and rejected
+  stacks schedule no retry loop. Errors and stale successes stay
+  distinct; no new scheduler, no polling loop required.
+- Declarative presentation: `Page` carries `presentation` and
+  `transition`; same-key updates preserve the lifetime (ID, restoration
+  metadata, scope data) while configuration follows the latest page,
+  retiring replaced app-owned values outside navigator borrows. Keyed
+  transparent routes, modal barriers, retention and transition changes,
+  reorder preservation, duplicate rejection, and restoration survival
+  all pinned; the mid-build keyed-popup reorder test now uses the real
+  public API; migration rows added.
+- Recovery: `WidgetTree::update` prevalidates key topology before
+  destructive reconciliation (bounded — one immutable pass, no rollback
+  framework), so the known partial-update failure now leaves the tree
+  exactly intact: focus, elements, bindings, and tasks assert
+  immediately, drive counts stay exact, and retry converges with the
+  original save. Beyond key topology, update errors stay best-effort
+  partial (documented residual).
+- Complexity review: the manual lifecycle removals stand; the `drives`
+  counter merged into `revision` (one begin per present); every
+  remaining `RouteOutlet` field carries an owner/invariant note.
+  Residuals kept deliberately small: non-key update errors stay
+  partial; subtree identity across reorder stays a framework
+  reconciliation property.
 
 Hardening pass (reopen → re-close):
 - Frame transitions are transactional: pending capture (outgoing route,

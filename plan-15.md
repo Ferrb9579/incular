@@ -2708,19 +2708,20 @@ a single ordered `present_frame` operation with pre-reconcile saves and
 frame-scheduled deferred convergence, nearest-outlet ownership with a
 documented nested-mounting pattern, and lifecycle verification across
 reorder, modals, disposal, shutdown, transient navigation, and teardown.
-W4 is currently reopened for the lifecycle-ownership pass and stays
-open: lifetime continuity is separated from frame identity (revision plus
-identities, refreshed per build, no approximation), the manual lifecycle
-is removed, driver ownership is enforced with typed errors, and the
-supported lifecycle is verified combined — but re-close waits on the two
-framework-level residuals in plan-19 (partial tree updates are not
-atomic; declarative non-page presentations have no keyed identity).
-Earlier passes made frame transitions transactional (pending capture
-versus committed records), pinned restoration inside an explicit frame
-contract with scheduled follow-ups, gave nested attachment an owned
-lifecycle with cascade driving, and made unsupported stacks and teardown
-explicit (typed overlay error, covered veils deactivate, real
-close_window coverage). See plan-19 for the itemized evidence.
+W4 re-closed on the consumed-identity pass: builders publish the
+snapshot they consume (adopted without touching saves), stale output
+schedules its own follow-up through the existing scheduler, keyed
+popup/modal configuration is declarative with lifetime-preserving
+updates, and failed updates reject key errors before reconciliation
+with immediate intactness plus converging retry. Earlier passes made
+frame transitions transactional (pending capture versus committed
+records), pinned restoration inside an explicit frame contract with
+scheduled follow-ups, gave nested attachment an owned lifecycle with
+cascade driving, enforced driver ownership with typed errors, and made
+unsupported stacks and teardown explicit (typed overlay error, covered
+veils deactivate, real close_window coverage). See plan-19 for the
+itemized evidence; residuals (non-key update partiality, reorder
+element identity) are documented there.
 
 ## W5 — Scroll and animation state transitions
 

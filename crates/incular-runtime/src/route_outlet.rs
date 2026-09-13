@@ -313,6 +313,20 @@ impl std::error::Error for OutletAttachError {}
 /// Dropping the outlet releases the integration: focus records, bindings,
 /// and tags go with it (bound scopes then follow ordinary [`TaskScope`]
 /// ownership, detached from later removals).
+///
+/// State inventory (owner → invariant): `navigator` (cloned handle —
+/// identity and lifetimes live in navigation); `focus`, `bindings`,
+/// `tags` (outlet — pruned to live routes on every reconcile);
+/// `nested`/`parent` (attachment graph — weak both ways, single-parent,
+/// acyclic); `driver` (driving runtime — claimed on drive, released on
+/// detach or runtime drop); `task_parent` (host scope — never mutated);
+/// `presented`/`pending` (transition bookkeeping — advance only on
+/// commit); `composing`/`consumed` (composition record — written by
+/// builders, promoted on success only); `signaled` (schedule memo —
+/// edge-triggered per revision); `namespace`/`root_key` (immutable
+/// construction identity); `tag_sequence` (monotonic, never reused);
+/// `revision` (invalidation generation — doubles as the drive counter);
+/// `mount` (attached element — cleared when it vanishes).
 pub struct RouteOutlet {
     navigator: Navigator,
     focus: RouteFocusState,
@@ -336,9 +350,6 @@ pub struct RouteOutlet {
     /// drops. No global registry: ownership lives in this claim plus the
     /// runtime's own builder registration.
     driver: RefCell<Option<(u64, Weak<u64>)>>,
-    /// Frames driven through this outlet (cascade included). Test-visible
-    /// proof that one present drives each outlet exactly once.
-    drives: Cell<u64>,
     task_parent: TaskScope,
     /// Last successfully presented active route. Transitions capture
     /// against this and advance it only on commit — never on failure.
@@ -370,10 +381,11 @@ pub struct RouteOutlet {
     tag_sequence: Cell<u64>,
     /// Mount tag on the outlet root, used to locate it for [`Self::attach`].
     root_key: Key,
-    /// Invalidation revision bumped by every [`Self::present_frame`].
-    /// Attached builders and nested stateful slots observe it to rebuild
-    /// outlet content; builder-owned children survive ancestor rebuilds,
-    /// so nested state and focus persist across outer frames.
+    /// Invalidation generation bumped once per driven frame; nested
+    /// stateful slots observe it to rebuild outlet content (builder-owned
+    /// children survive ancestor rebuilds, so nested state and focus
+    /// persist across outer frames). Doubles as the drive counter read by
+    /// [`Self::frame_drive_count`]: one begin per present per outlet.
     revision: Rc<Cell<u64>>,
     /// Attached mount element, if [`Self::attach`] located the outlet root.
     /// Cleared when the mount disappears so later frames degrade to
@@ -431,7 +443,6 @@ impl RouteOutlet {
             nested,
             parent: Rc::default(),
             driver: RefCell::default(),
-            drives: Cell::new(0),
             task_parent: task_parent.clone(),
             presented: None,
             pending: None,
@@ -439,6 +450,8 @@ impl RouteOutlet {
             consumed: None,
             signaled: Cell::new(0),
             namespace,
+            // NOTE: no separate drive counter — `revision` below advances
+            // once per driven frame and serves as the drive count.
             tag_sequence: Cell::new(0),
             root_key: Key::String(format!("route-outlet-root-{namespace}")),
             revision: Rc::new(Cell::new(0)),
@@ -550,10 +563,12 @@ impl RouteOutlet {
 
     /// Frames driven through this outlet, cascade included. Each
     /// [`Self::present_frame`] on the driving root advances every
-    /// participating outlet by exactly one.
+    /// participating outlet by exactly one. Reads the invalidation
+    /// generation, which advances once per driven frame and needs no
+    /// separate counter.
     #[must_use]
     pub fn frame_drive_count(&self) -> u64 {
-        self.drives.get()
+        self.revision.get()
     }
 
     /// Mounts a nested outlet's widget with the required builder identity:
@@ -1172,7 +1187,6 @@ impl RouteOutlet {
     /// runtime once per outlet. The topology guarantees (acyclic,
     /// single-parent) make every participant reachable exactly once.
     fn begin_frame(&mut self, runtime: &Runtime) {
-        self.drives.set(self.drives.get().wrapping_add(1));
         self.revision.set(self.revision.get().wrapping_add(1));
         self.capture_transition(runtime);
         for nested in self.live_nested() {

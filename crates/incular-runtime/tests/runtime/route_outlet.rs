@@ -1263,11 +1263,11 @@ fn two_focus_route(name: &str, first: &FocusNode, second: &FocusNode, color: Col
 
 #[test]
 fn outlet_rebuild_failure_consumes_nothing() {
-    // Duplicate keys fail the explicit rebuild: the pending capture
-    // survives uncommitted, navigator and binding state stays exact, and
-    // recovery heals cleanly. (The failed update itself may leave partial
-    // tree state — update_existing is not transactional — so focus
-    // assertions wait for the healing present.)
+    // Duplicate keys fail the explicit rebuild — rejected by prevalidation
+    // before destructive reconciliation, so the tree is exactly as before:
+    // focus, elements, and bindings assert immediately, not after healing.
+    // The pending capture survives uncommitted, and recovery still heals
+    // cleanly for good measure.
     let navigator = Navigator::new();
     let mut harness = harness(&navigator);
     let node_a1 = FocusNode::new();
@@ -1275,6 +1275,7 @@ fn outlet_rebuild_failure_consumes_nothing() {
     navigator.push_page(two_focus_route_page("a", &node_a1, &node_a2));
     present(&mut harness);
     tab_until(&mut harness.runtime, &node_a1);
+    let ea1 = harness.runtime.focused_element().expect("A1 focused");
     let ra = navigator.current().expect("route A").id;
     navigator.push(Route::new(
         "bad",
@@ -1296,14 +1297,20 @@ fn outlet_rebuild_failure_consumes_nothing() {
         "unexpected failure: {error:?}"
     );
     // Nothing consumed at the integration level: A still active and bound,
-    // and the bad route — alive in the navigator — was never bound.
-    // (Tree-level focus state is partial after a failed update; the heal
-    // below re-establishes it before asserting.)
+    // and the bad route — alive in the navigator — was never bound. And
+    // nothing disturbed at the tree level either: the failed update never
+    // applied, so focus sits exactly where the user left it.
     let rb = navigator.current().expect("bad route pushed").id;
     assert!(navigator.lifetime_of(ra).expect("A alive").is_live());
     assert!(harness.outlet.borrow().route_task_scope(ra).is_some());
     assert!(navigator.lifetime_of(rb).expect("B alive").is_live());
     assert!(harness.outlet.borrow().route_task_scope(rb).is_none());
+    assert_eq!(harness.runtime.focused_element(), Some(ea1));
+    assert!(node_a1.has_focus());
+    assert!(
+        harness.outlet.borrow().needs_frame(),
+        "the failed frame still owes a retry"
+    );
     // Recovery heals: popping the bad route and presenting remounts clean
     // content, and focus moves freely again.
     navigator.pop();
@@ -1322,6 +1329,81 @@ fn outlet_rebuild_failure_consumes_nothing() {
 
 fn two_focus_route_page(name: &str, first: &FocusNode, second: &FocusNode) -> Page {
     two_focus_route(name, first, second, RED)
+}
+
+#[test]
+fn outlet_failed_attempt_causes_no_side_effects() {
+    // A failed attempt disturbs nothing but the error return: the live
+    // route's task completes normally through the failure (no cancellation
+    // caused by it), the drive count advances exactly once per present
+    // (no leaked duplicate builder), bindings stay exact, and popping the
+    // offender plus presenting recovers fully with the original save.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let wake = Arc::new(TestWake::default());
+    harness.runtime.set_wake_handler(wake.clone());
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ra = navigator.current().expect("route A").id;
+    let scope_a = harness
+        .outlet
+        .borrow()
+        .route_task_scope(ra)
+        .expect("A bound");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_completion = completed.clone();
+    harness
+        .runtime
+        .spawner()
+        .spawn_into_in(&scope_a, async { 7_u8 }, move |result, _| {
+            assert_eq!(result.expect("failure never cancels"), 7_u8);
+            completed_for_completion.store(true, Ordering::Release);
+        });
+    let drives = harness.outlet.borrow().frame_drive_count();
+    navigator.push(Route::new(
+        "bad",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE).with_key(7_u64),
+            Widget::box_(Size::new(40., 40.), GREEN).with_key(7_u64),
+        ]),
+    ));
+    let error = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("duplicate keys fail the rebuild");
+    assert!(matches!(
+        error,
+        OutletError::Frame(TreeError::DuplicateKey { .. })
+    ));
+    // Exact fallout: one drive (begin ran, reconcile did not), A's binding
+    // untouched, the offender unbound, focus unmoved, and the task still
+    // completes through the real scheduler afterwards.
+    assert_eq!(
+        harness.outlet.borrow().frame_drive_count(),
+        drives + 1,
+        "a failed present drives exactly once"
+    );
+    let rb = navigator.current().expect("bad route pushed").id;
+    assert!(harness.outlet.borrow().route_task_scope(ra).is_some());
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_none());
+    assert!(node_a.has_focus());
+    assert!(!scope_a.is_cancelled());
+    pump_until(&mut harness.runtime, &completed);
+    // Recovery: pop, present, and the original save still restores —
+    // repeat presents drive exactly once each, so no builder leaked.
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.outlet.borrow().frame_drive_count(), drives + 2);
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_none());
+    navigator.push_page(focus_page("b", &node_a));
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
 }
 
 #[test]
