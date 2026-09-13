@@ -1259,8 +1259,10 @@ fn outlet_shutdown_cancels_bindings() {
 #[test]
 fn outlet_transient_routes_never_bind() {
     // Navigation between construction and frame completion: routes pushed
-    // and popped before any frame never mount, never bind, and leave no
-    // records — bindings represent mounted ownership, not snapshots.
+    // and popped before any frame end their lifetime before any frame, so
+    // they never bind and leave no records. Bindings follow the lifetime,
+    // not mounted content — unmounted-but-live routes do bind (see the
+    // disposal coverage); ended ones never do.
     let navigator = Navigator::new();
     let mut harness = harness(&navigator);
     navigator.push_page(plain_page("a"));
@@ -1438,7 +1440,7 @@ fn outlet_navigation_during_build_reconciles_mounted_snapshot() {
     let rb = navigator.routes()[1].id;
     assert!(
         harness.outlet.borrow().route_task_scope(rb).is_some(),
-        "mounted routes bind even when their activation is abandoned"
+        "live routes bind even when their activation is abandoned"
     );
     present(&mut harness);
     navigator.pop();
@@ -2028,6 +2030,231 @@ fn nested_valid_siblings_present_and_recover_independently() {
     second_nav.pop();
     present_outer_tree(&mut runtime, &outlet_outer);
     assert!(node_b.has_focus());
+}
+
+/// Drives one A→B→A round trip and asserts the return restores A's focus:
+/// proves the A→B frame committed (an abandoned capture restores nothing).
+fn round_trip_restores(
+    node_a: &FocusNode,
+    node_b: &FocusNode,
+    navigator: &Navigator,
+    harness: &mut OutletHarness,
+) {
+    tab_until(&mut harness.runtime, node_b);
+    navigator.pop();
+    present(harness);
+    assert!(
+        node_a.has_focus(),
+        "the way back restores the committed save"
+    );
+    let _ = navigator;
+}
+
+#[test]
+fn outlet_same_identity_replacement_mid_build_commits() {
+    // The attempt snapshot covers same-key/same-ID child replacement:
+    // identities and configuration match, so the transition commits and
+    // the way back restores — replacement is content churn, not a new
+    // navigation. (The replacement mounts on the frame after the layout
+    // that requested it, hence the second present before tabbing.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let ka = PageKey::new("a").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let node_b2 = FocusNode::new();
+    navigator.push_page(Page::new("a", focus_child(&node_a)).key(ka.clone()));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let node_a_for_build = node_a.clone();
+    let node_b2_for_build = node_b2.clone();
+    navigator.push_page(
+        Page::new(
+            "b",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                let ka = ka.clone();
+                let kb = kb.clone();
+                move |_, _| {
+                    if trip.take() {
+                        // Same keys, new widgets: entry identities survive.
+                        navigator
+                            .set_pages([
+                                Page::new("a", focus_child(&node_a_for_build)).key(ka.clone()),
+                                Page::new(
+                                    "b",
+                                    focus_widget(
+                                        &node_b2_for_build,
+                                        Widget::box_(Size::new(40., 40.), BLUE),
+                                    ),
+                                )
+                                .key(kb.clone()),
+                            ])
+                            .unwrap();
+                    }
+                    focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE))
+                }
+            }))]),
+        )
+        .key(kb.clone()),
+    );
+    let rb = navigator.current().expect("route B").id;
+    present(&mut harness);
+    // Same route B throughout: still bound under its original id.
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_some());
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b2);
+    round_trip_restores(&node_a, &node_b2, &navigator, &mut harness);
+}
+
+#[test]
+fn outlet_push_pop_to_original_top_mid_build_commits() {
+    // A builder excursion that nets back to the attempt's stack (push X,
+    // pop X) keeps the snapshot covering: the transition commits.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let node_b_for_build = node_b.clone();
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    let x = navigator.push_page(plain_page("x"));
+                    assert!(navigator.lifetime_of(x).is_some());
+                    navigator.pop();
+                }
+                focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    present(&mut harness);
+    assert_eq!(navigator.routes().len(), 2);
+    round_trip_restores(&node_a, &node_b, &navigator, &mut harness);
+}
+
+#[test]
+fn outlet_lower_reorder_beneath_top_mid_build_commits() {
+    // Reordering covered routes beneath an unchanged top is order-only
+    // churn: the member set still covers, so the transition commits.
+    // Shared widget instances: cloning the same value means reconciliation
+    // sees identical content, so the mid-build reorder below exercises
+    // order-only churn — no remount, no stale targets. (Fresh instances
+    // would remount the subtrees and the return would correctly fall back
+    // through the fail-closed restore instead.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let kx = PageKey::new("x").unwrap();
+    let ky = PageKey::new("y").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let kc = PageKey::new("c").unwrap();
+    let node_b = FocusNode::new();
+    let node_c = FocusNode::new();
+    let child_x = Widget::box_(Size::new(40., 40.), RED);
+    let child_y = Widget::box_(Size::new(40., 40.), BLUE);
+    let child_b = focus_child(&node_b);
+    let child_c = focus_widget(&node_c, Widget::box_(Size::new(40., 40.), GREEN));
+    navigator
+        .set_pages([
+            Page::new("x", child_x.clone()).key(kx.clone()),
+            Page::new("y", child_y.clone()).key(ky.clone()),
+            Page::new("b", child_b.clone()).key(kb.clone()),
+        ])
+        .unwrap();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    // B→C transition in flight while the builder swaps X/Y strictly
+    // beneath B; B never moves and stays on top once C pops.
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(
+        Page::new(
+            "c",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                let kx = kx.clone();
+                let ky = ky.clone();
+                let kb = kb.clone();
+                let kc = kc.clone();
+                let child_x = child_x.clone();
+                let child_y = child_y.clone();
+                let child_b = child_b.clone();
+                let child_c = child_c.clone();
+                move |_, _| {
+                    if trip.take() {
+                        navigator
+                            .set_pages([
+                                Page::new("y", child_y.clone()).key(ky.clone()),
+                                Page::new("x", child_x.clone()).key(kx.clone()),
+                                Page::new("b", child_b.clone()).key(kb.clone()),
+                                Page::new("c", child_c.clone()).key(kc.clone()),
+                            ])
+                            .unwrap();
+                    }
+                    child_c.clone()
+                }
+            }))]),
+        )
+        .key(kc.clone()),
+    );
+    present(&mut harness);
+    assert_eq!(navigator.current().expect("top").name, "c");
+    round_trip_restores(&node_b, &node_c, &navigator, &mut harness);
+}
+
+#[test]
+fn outlet_retry_keeps_original_save_despite_intervening_focus() {
+    // The kept capture is never re-read: after a failed attempt focus
+    // legitimately moves within the still-mounted outgoing route, yet the
+    // retry commits the pre-attempt save. (A transparent cover keeps A
+    // mounted so the move is legal while B's half-built content settles.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a1 = FocusNode::new();
+    let node_a2 = FocusNode::new();
+    navigator.push_page(two_focus_route_page("a", &node_a1, &node_a2));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a1);
+    let ea1 = harness.runtime.focused_element().expect("A1 focused");
+    let trip = Rc::new(Cell::new(true));
+    navigator.push(
+        Route::new(
+            "b",
+            Column::new(vec![Widget::from(LayoutBuilder::new(move |_, _| {
+                if trip.take() {
+                    panic!("cover boom");
+                }
+                Widget::box_(Size::new(40., 40.), BLUE)
+            }))]),
+        )
+        .presentation(RoutePresentation::popup(None)),
+    );
+    let outlet = harness.outlet.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        RouteOutlet::present_frame(
+            &outlet,
+            &mut harness.runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+    }));
+    result.expect_err("cover panic unwinds the frame");
+    // The outgoing route stayed mounted under its transparent cover, so
+    // focus moves within it before the retry.
+    tab_until(&mut harness.runtime, &node_a2);
+    assert_ne!(harness.runtime.focused_element(), Some(ea1));
+    // Retry commits the original A1 save — never the intervening A2.
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea1));
+    assert!(node_a1.has_focus());
 }
 
 #[test]

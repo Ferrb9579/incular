@@ -82,16 +82,89 @@ impl OutletPlacement {
     }
 }
 
-/// One uncommitted frame transition: the outgoing route whose focus was
-/// captured pre-frame, the incoming route to restore on success, and the
-/// captured focus itself. The save lives here — not in the records — until
-/// the frame presenting it commits, so failed attempts and navigation
-/// mid-frame can never disturb committed state.
+/// Composition-relevant route configuration as built: exactly the flags
+/// [`RouteOutlet::widget`] branches on when composing content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RouteConfig {
+    overlay: bool,
+    opaque: bool,
+    retained: bool,
+    modal: bool,
+}
+
+impl RouteConfig {
+    fn of(presentation: &RoutePresentation) -> Self {
+        Self {
+            overlay: presentation.is_overlay(),
+            opaque: presentation.is_opaque(),
+            retained: presentation.maintains_state(),
+            modal: presentation.blocks_background_input(),
+        }
+    }
+}
+
+/// The navigation state one frame attempt built content from: the stack
+/// revision plus the route identities and configurations the frame
+/// actually composed. The commit compares against this — not against the
+/// bare active id — so navigation during the attempt resolves explicitly
+/// instead of by assumption.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FrameAttempt {
+    revision: u64,
+    active: Option<RouteId>,
+    members: Vec<(RouteId, RouteConfig)>,
+}
+
+impl FrameAttempt {
+    fn capture(navigator: &Navigator) -> Self {
+        let routes = navigator.routes();
+        Self {
+            revision: navigator.revision(),
+            active: routes.last().map(|route| route.id),
+            members: routes
+                .iter()
+                .map(|route| (route.id, RouteConfig::of(&route.presentation)))
+                .collect(),
+        }
+    }
+
+    /// Whether `navigator` still authorizes committing content built from
+    /// this attempt. Same revision means nothing moved. Otherwise the
+    /// member set (identities plus configurations) must match with the
+    /// same active route: order-only changes (a lower-route reorder
+    /// beneath an unchanged top) and same-identity child replacement keep
+    /// the per-route bookkeeping valid, while membership or configuration
+    /// changes — pushes, pops, removals, presentation swaps — abandon.
+    /// Push-then-pop back to the original top with no pending transition
+    /// never reaches the commit; with one in flight the ids differ and
+    /// the capture abandons cleanly.
+    fn covers(&self, navigator: &Navigator) -> bool {
+        if navigator.revision() == self.revision {
+            return true;
+        }
+        let current = Self::capture(navigator);
+        current.active == self.active
+            && current.members.len() == self.members.len()
+            && self
+                .members
+                .iter()
+                .all(|member| current.members.contains(member))
+    }
+}
+
+/// One uncommitted frame transition: the outgoing route whose focus was
+/// captured pre-frame, the incoming route to restore on success, the
+/// captured focus itself, and the attempt snapshot the frame built from.
+/// The save lives here — not in the records — until the frame presenting
+/// it commits, so failed attempts and navigation mid-frame can never
+/// disturb committed state, and a retry never re-reads (and overwrites)
+/// the outgoing focus captured before the attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingTransition {
     previous: Option<RouteId>,
     incoming: Option<RouteId>,
     saved: Option<ElementId>,
+    attempt: FrameAttempt,
 }
 
 /// Identity of one [`RouteOutlet`], for actionable error data and host
@@ -201,8 +274,9 @@ impl std::error::Error for OutletAttachError {}
 ///
 /// The outlet owns the integration state the navigator cannot: per-route
 /// mount tags feeding the focus ownership oracle, a [`RouteFocusState`]
-/// driven across transitions, and one [`RouteTaskBinding`] per mounted
-/// route. Use one outlet per navigator; nested navigators get nested
+/// driven across transitions, and one [`RouteTaskBinding`] per live
+/// route (lifetime-owned, including unmounted-but-alive routes). Use one
+/// outlet per navigator; nested navigators get nested
 /// outlets and stay isolated through disjoint tags and states.
 ///
 /// Dropping the outlet releases the integration: focus records, bindings,
@@ -742,7 +816,7 @@ impl RouteOutlet {
 
     /// Reconciles integration state with live navigator state after a
     /// frame: captures and commits transitions, forgets records, bindings,
-    /// and tags for unmounted routes, binds newly mounted routes, and
+    /// and tags for removed routes, binds newly live routes, and
     /// restores the activated route's eligible focus (whose targets mounted
     /// in the frame just presented). Manual-driving escape hatch for custom
     /// hosts; prefer [`Self::present_frame`], whose pre-frame capture also
@@ -767,9 +841,10 @@ impl RouteOutlet {
 
     /// Captures a pending transition when none is outstanding and the
     /// active route moved since the last commit. The outgoing focus is
-    /// read once into the pending slot — never into the records — so a
-    /// later retry cannot overwrite it with intermediate focus, and
-    /// abandoning the capture drops it without touching committed state.
+    /// read once into the pending slot — never into the records — alongside
+    /// the attempt snapshot, so a later retry cannot overwrite it with
+    /// intermediate focus, and abandoning the capture drops it without
+    /// touching committed state.
     fn capture_transition(&mut self, runtime: &Runtime) {
         if self.pending.is_some() {
             return;
@@ -789,15 +864,18 @@ impl RouteOutlet {
             previous: self.presented,
             incoming: active,
             saved,
+            attempt: FrameAttempt::capture(&self.navigator),
         });
     }
 
     /// Commits the pending transition when the frame actually presented
-    /// it: the active route still matches the captured incoming route, so
-    /// the mounted content is the transition's own. Anything else —
-    /// navigation mid-frame, or a removed incoming route — abandons the
-    /// capture and re-captures fresh, leaving committed records alone.
-    /// Returns whether a transition committed.
+    /// it: the active route still matches the captured incoming route, the
+    /// incoming lifetime is alive, and the attempt snapshot still covers
+    /// the navigator — so the mounted content is the transition's own.
+    /// Anything else — navigation mid-frame beyond order/child-only
+    /// changes, or a removed incoming route — abandons the capture and
+    /// re-captures fresh, leaving committed records alone. Returns whether
+    /// a transition committed.
     fn commit_transition(&mut self, runtime: &mut Runtime) -> bool {
         let active = self.navigator.current().map(|route| route.id);
         let Some(pending) = self.pending.take() else {
@@ -807,6 +885,7 @@ impl RouteOutlet {
             || pending
                 .incoming
                 .is_some_and(|incoming| self.navigator.lifetime_of(incoming).is_none())
+            || !pending.attempt.covers(&self.navigator)
         {
             // Stale capture (already taken above): re-capture fresh for the
             // route that actually won, without writing anything first.
@@ -821,10 +900,12 @@ impl RouteOutlet {
         true
     }
 
-    /// Drops records, bindings, and tags for unmounted routes. Lifetime-end
-    /// notifications already fired at commit time, so bound scopes were
-    /// cancelled before their bindings drop here.
-    fn prune_unmounted(&mut self) {
+    /// Drops records, bindings, and tags for permanently removed routes.
+    /// Lifetime-end notifications already fired at commit time, so bound
+    /// scopes were cancelled before their bindings drop here. Unmounted
+    /// but live routes (covered, retained, disposal-unmounted) keep
+    /// everything: removal is a lifetime event, not a mount event.
+    fn prune_removed(&mut self) {
         self.focus.retain_mounted(&self.navigator);
         self.bindings
             .retain(|id, _| self.navigator.lifetime_of(*id).is_some());
@@ -833,8 +914,13 @@ impl RouteOutlet {
             .retain(|id, _| self.navigator.lifetime_of(*id).is_some());
     }
 
-    /// Binds every mounted route lacking a binding. Inactive routes keep
-    /// their tasks: only permanent removal ends the lifetime behind them.
+    /// Binds every live route lacking a binding. Scope ownership follows
+    /// the route lifetime — not mounted content: covered, retained, and
+    /// even disposal-unmounted routes stay bound while alive, so their
+    /// tasks outlive their pixels; only permanent removal ends them.
+    /// Focus records are the mounted-content side of the integration
+    /// (attributed through the live tree); bindings are the lifetime side
+    /// (keyed by navigator state, including routes with no pixels).
     fn ensure_bindings(&mut self) {
         for route in self.navigator.routes() {
             if !self.bindings.contains_key(&route.id)
@@ -863,12 +949,12 @@ impl RouteOutlet {
     }
 
     /// Post-frame reconciliation: commit the pending transition against
-    /// the mounted snapshot, then prune, bind, and restore or retry. The
+    /// the attempt snapshot, then prune, bind, and restore or retry. The
     /// commit runs before pruning so a just-committed record for a route
     /// removed mid-frame is dropped rather than resurrected.
     fn reconcile_presented(&mut self, runtime: &mut Runtime) {
         let transitioned = self.commit_transition(runtime);
-        self.prune_unmounted();
+        self.prune_removed();
         self.ensure_bindings();
         self.restore_or_retry(runtime, transitioned);
     }
