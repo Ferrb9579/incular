@@ -2708,16 +2708,18 @@ a single ordered `present_frame` operation with pre-reconcile saves and
 frame-scheduled deferred convergence, nearest-outlet ownership with a
 documented nested-mounting pattern, and lifecycle verification across
 reorder, modals, disposal, shutdown, transient navigation, and teardown.
-W4 reopened for the ownership-proof pass and stays open until its
-contracts are evidenced: side-effect-free descriptors with
-mounting-path acknowledgment, sustained scheduling participation,
-scoped attempt cleanup across all four failure phases, and one
-combined ownership flow asserting paint, identity, focus, tasks, and
-scheduler together. Earlier passes established transactional frames,
-restoration frame contracts, owned nested and driver lifecycles,
-consumed snapshots, stale scheduling, declarative presentation, and
-bounded key-error recovery. See plan-19 for the itemized evidence;
-non-key update partiality stays explicitly partial.
+W4 re-closed on the acceptance-review pass: a bounded host loop
+converges in exactly one follow-up and idles, deferred revisions
+re-request per new navigation with remount executing, the receipt path
+audits to a single writer/promoter/cleanup owner with no
+counterexample, and all original exit criteria hold (no parallel
+arrays, no name ambiguity, no callbacks under borrows, no duplicated
+engine). Earlier passes established transactional frames, restoration
+frame contracts, owned nested and driver lifecycles, consumed
+snapshots, stale scheduling, declarative presentation, bounded
+key-error recovery, and the combined ownership flow. See plan-19 for
+the itemized evidence; non-key update partiality stays explicitly
+partial.
 
 ## W5 — Scroll and animation state transitions
 

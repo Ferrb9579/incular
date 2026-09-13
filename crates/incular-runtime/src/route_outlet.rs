@@ -744,8 +744,10 @@ impl RouteOutlet {
     /// with a non-empty stack, and after navigation newer than the last
     /// consumed snapshot (including navigation during a build, whose paint
     /// lags one frame behind the bookkeeping). False once composition
-    /// consumes current state. Advisory scheduling help for hosts; it does
-    /// not report failed frames (their error return does that).
+    /// consumes current state. Diagnostics and custom drivers only:
+    /// ordinary hosts must not poll this for mandatory work — the
+    /// scheduler flag from `present_frame` carries that. It does not
+    /// report failed frames (their error return does that).
     #[must_use]
     pub fn needs_frame(&self) -> bool {
         let stale = match &self.consumed {

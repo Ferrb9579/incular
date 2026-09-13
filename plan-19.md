@@ -1,15 +1,14 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: reopened for the ownership-proof pass (A–D below) — not
-re-closed: mounted-consumption receipts, sustained scheduling,
-attempt cleanup, and the integrated ownership flow each need their
-contracts evidenced first. Earlier passes established transactional
-frames, the restoration frame contract, owned nested lifecycles,
-explicit unsupported/teardown behavior, topology and driver ownership,
-consumed snapshots, stale scheduling, declarative presentation, and
-bounded recovery. Modal focus containment stays explicitly separate
-future work (removing `focus_trap` implemented nothing). Audit Q04/Q05;
-specializes plan 15
+Status: complete — reopened for the acceptance-review pass (A–D
+below), then re-closed: every original exit criterion holds and the
+ownership-proof contracts are evidenced. Earlier passes established
+transactional frames, the restoration frame contract, owned nested
+lifecycles, explicit unsupported/teardown behavior, topology and driver
+ownership, consumed snapshots, stale scheduling, declarative
+presentation, and bounded recovery. Modal focus containment stays
+explicitly separate future work (removing `focus_trap` implemented
+nothing). Audit Q04/Q05; specializes plan 15
 W4. Depends on plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
@@ -370,6 +369,27 @@ Receipt/scheduling pass (reopened — not re-closed), evidence by contract:
   lifetime, and scheduler state together.
 - Not re-closed while: non-key update errors stay best-effort partial;
   subtree identity across reorder stays a framework property.
+
+Acceptance-review pass (reopen → re-close), evidence by package:
+- A — bounded acceptance: a host loop (`while frame_requested`,
+  bounded) converges in exactly one follow-up after a stale present
+  and idles — no polling, no spin. Deferred revisions re-request per
+  new navigation (flag, silence, re-flag, remount-executes); the
+  reactivating event is new navigation on the deferred stack, proven
+  requesting, with remount executing. Receipt audit: one writer
+  (mounting builders), one promotion site (success-path reconcile),
+  one cleanup owner (attempt guard) — no counterexample, no new
+  machinery. `needs_frame` documented diagnostics-only. Duplicated
+  rustdoc removed; no stale references remain.
+- W4 verdict against the original exit criteria: no parallel route
+  arrays (single `RouteEntry`), no name-as-identity ambiguity
+  (`PageKey` with pre-mutation typed rejection), no callbacks under
+  mutable domain borrows (retirement outside borrows throughout), no
+  duplicated lifecycle engine (one `present_frame`, one scheduler, no
+  second engine). Items 1–5 hold as previously recorded, plus the
+  ownership-proof contracts above. Residuals stay explicit and small:
+  non-key update errors are best-effort partial (not atomic); subtree
+  identity across reorder is a framework reconciliation property.
 
 Ownership-proof pass (reopened — not re-closed), evidence by package:
 - A — descriptor construction is side-effect free: `widget()` builds

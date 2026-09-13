@@ -4238,6 +4238,135 @@ fn outlet_nested_layout_navigation_keeps_build_consumption() {
 }
 
 #[test]
+fn outlet_scheduler_loop_converges_and_idles() {
+    // The production shape: a stale present flags, then an ordinary host
+    // loop (`while frame_requested, bounded`) drives. Exactly one
+    // follow-up consumes the pending revision and idles — no polling
+    // `needs_frame()`, no extra rounds, no spin. All routes stay
+    // transparent so no focus sweep can flag either way.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(Page::new(
+        "a",
+        focus_widget(&node_a, Widget::box_(Size::new(200., 200.), RED)),
+    ));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    navigator.push(
+        Route::new(
+            "t",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                move |_, _| {
+                    if trip.take() {
+                        navigator.push(
+                            Route::new("c", Widget::box_(Size::new(40., 40.), YELLOW))
+                                .presentation(RoutePresentation::popup(None)),
+                        );
+                    }
+                    Widget::box_(Size::new(40., 40.), GREEN)
+                }
+            }))]),
+        )
+        .presentation(RoutePresentation::popup(None)),
+    );
+    let first = present(&mut harness);
+    assert!(!paints(first.commands(), YELLOW));
+    assert!(
+        harness.runtime.frame_requested(),
+        "stale output schedules its follow-up"
+    );
+    // Ordinary host loop, bounded against retry loops.
+    let mut rounds = 0_u32;
+    while harness.runtime.frame_requested() && rounds < 5 {
+        present(&mut harness);
+        rounds += 1;
+    }
+    assert_eq!(rounds, 1, "exactly one follow-up converges");
+    let settled = repaint(&mut harness);
+    assert!(paints(settled.commands(), YELLOW));
+    assert!(!harness.outlet.borrow().needs_frame());
+    assert!(!harness.runtime.frame_requested(), "settled tree idles");
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_deferred_revision_requests_again() {
+    // Deferred work reactivates on new navigation: a slotless stale
+    // revision flags once, stays silent while identical, then a newer
+    // deferred revision flags again — each event requesting its own
+    // frame. Remounting executes the pending work and idles.
+    let outer = Navigator::new();
+    let inner = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner, &parent)));
+    outer.push_page(Page::new(
+        "solo",
+        Widget::box_(Size::new(200., 200.), GREEN),
+    ));
+    let outlet_for_build = outlet_outer.clone();
+    let root = runtime.tree().root().expect("root");
+    runtime
+        .register_builder(root, move || {
+            Column::new(vec![SizedBox::from_dimensions(
+                Some(200.),
+                Some(200.),
+                Some(outlet_for_build.borrow().widget()),
+            )])
+            .into()
+        })
+        .expect("builder registers");
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    // No focus anywhere: only outlet scheduling can flag below.
+    inner.push_page(Page::new("c", Widget::box_(Size::new(40., 40.), YELLOW)));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        runtime.frame_requested(),
+        "deferred work requests its frame"
+    );
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        !runtime.frame_requested(),
+        "identical staleness does not re-flag"
+    );
+    // The reactivating event is new navigation on the deferred stack.
+    inner.push_page(Page::new("d", Widget::box_(Size::new(40., 40.), BLUE)));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        runtime.frame_requested(),
+        "the newer deferred revision requests again"
+    );
+    // Remounting executes the pending work: paints it, then idles.
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), RED),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    drop(outlet_inner_for_page);
+    let remounted = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(remounted.commands(), RED));
+    assert!(paints(remounted.commands(), BLUE));
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!outlet_outer.borrow().needs_frame());
+    assert!(!runtime.frame_requested(), "executed work idles");
+    let _ = outer;
+}
+
+#[test]
 fn outlet_mid_build_navigation_schedules_followup_frame() {
     // A→B in flight while B's builder pushes a yellow C: the presenting
     // frame paints pre-push content but schedules a follow-up through the
