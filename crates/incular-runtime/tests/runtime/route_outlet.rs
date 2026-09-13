@@ -3646,6 +3646,124 @@ fn outlet_rebuild_phase_navigation_consumes_pre_trip_snapshot() {
 }
 
 #[test]
+fn outlet_same_attempt_discard_changes_nothing() {
+    // The receipt rule within one attempt: a fresh trip page navigates to
+    // B mid-frame and discards a fresh widget(); the frame still reports
+    // only what its builders consumed. B stays unconsumed with follow-up
+    // pending — descriptor construction acknowledges nothing.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b_for_build = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let outlet_for_trip = harness.outlet.clone();
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(Page::new(
+        "t",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.push_page(Page::new(
+                        "b",
+                        focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE)),
+                    ));
+                    // Speculative composition mid-frame: discarded, and
+                    // (by construction) unpublished.
+                    let _ = outlet_for_trip.borrow().widget();
+                }
+                Widget::box_(Size::new(40., 40.), GREEN)
+            }
+        }))]),
+    ));
+    // The frame composes A and T, then the callback navigates and
+    // discards: B never composes although the trip ran.
+    let first = present(&mut harness);
+    assert!(paints(first.commands(), GREEN));
+    assert!(
+        !paints(first.commands(), BLUE),
+        "B pushed mid-frame never composed"
+    );
+    assert!(node_a.has_focus());
+    let rb = navigator.current().expect("B pushed").id;
+    assert!(
+        harness.outlet.borrow().route_task_scope(rb).is_some(),
+        "the live route binds although never mounted"
+    );
+    assert!(
+        harness.outlet.borrow().needs_frame(),
+        "B stays unconsumed with follow-up pending"
+    );
+    assert!(
+        harness.runtime.frame_requested(),
+        "the stale frame schedules its follow-up"
+    );
+    // The next present converges: mounts B, commits, consumes current —
+    // then the way back restores A. (The frame still flags a follow-up
+    // for covering A: the orphan sweep clears through the scheduler,
+    // which is scheduling, not staleness.)
+    let second = present(&mut harness);
+    assert!(paints(second.commands(), BLUE));
+    assert!(!harness.outlet.borrow().needs_frame());
+    navigator.pop();
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_nested_same_attempt_discard_changes_nothing() {
+    // Same rule through a nested outlet: the inner layout callback
+    // navigates and discards a fresh inner widget(); the inner outlet
+    // keeps its build-time consumption while the outer stays current.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, _node_b) =
+        nested_inside_setup();
+    let armed = Rc::new(Cell::new(true));
+    let outlet_inner_for_trip = outlet_inner.clone();
+    inner.push_page(Page::new(
+        "ib",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE),
+            Widget::from(LayoutBuilder::new({
+                let inner = inner.clone();
+                let armed = armed.clone();
+                move |_, _| {
+                    if armed.take() {
+                        inner.push_page(Page::new("ic", Widget::box_(Size::new(40., 40.), YELLOW)));
+                        let _ = outlet_inner_for_trip.borrow().widget();
+                    }
+                    Widget::box_(Size::new(40., 40.), GREEN)
+                }
+            })),
+        ]),
+    ));
+    // The trip is armed from construction: it fires on this present's
+    // layout, after the slot builder consumed the pre-trip stack.
+    let first = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(!paints(first.commands(), YELLOW));
+    assert!(
+        outlet_inner.borrow().needs_frame(),
+        "inner keeps its build-time consumption"
+    );
+    assert!(
+        runtime.frame_requested(),
+        "nested staleness wakes the root driver"
+    );
+    let ic = inner.current().expect("pushed route").id;
+    assert!(
+        outlet_inner.borrow().route_task_scope(ic).is_some(),
+        "the live route binds although never mounted"
+    );
+    let second = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(second.commands(), YELLOW));
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!runtime.frame_requested());
+    let _ = (outer, node_a);
+}
+
+#[test]
 fn outlet_discarded_composition_authorizes_no_frame() {
     // The receipt rule, step by step: present revision A; navigate to B;
     // compose B outside any frame and discard it; run a frame whose

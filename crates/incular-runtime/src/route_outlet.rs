@@ -334,10 +334,11 @@ impl std::error::Error for OutletAttachError {}
 /// acyclic); `driver` (driving runtime — claimed on drive, released on
 /// detach or runtime drop); `task_parent` (host scope — never mutated);
 /// `presented`/`pending` (transition bookkeeping — advance only on
-/// commit); `epoch` (attempt counter — one per driven frame);
-/// `composing`/`consumed` (composition record — receipted by attempt,
-/// written by builders, promoted on success only); `signaled` (schedule
-/// memo — edge-triggered per revision); `namespace`/`root_key` (immutable
+/// commit); `epoch` (attempt context — one per driven frame);
+/// `composing`/`consumed` (composition record — receipted mounting
+/// builders only, promoted on success only); `signaled`
+/// (schedule memo — edge-triggered per revision); `namespace`/`root_key`
+/// (immutable
 /// construction identity); `tag_sequence` (monotonic, never reused);
 /// `revision` (invalidation generation — doubles as the drive counter);
 /// `mount` (attached element — cleared when it vanishes).
@@ -370,20 +371,17 @@ pub struct RouteOutlet {
     presented: Option<RouteId>,
     /// Uncommitted capture: `Some` while a frame transition is in flight.
     pending: Option<PendingTransition>,
-    /// Frame attempt counter: bumped by every [`Self::begin_frame`], so
-    /// each present (and each cascade participant) owns a distinct
-    /// attempt. [`Self::widget`] stamps compositions with the attempt
-    /// they ran under; reconciliation only honors the current attempt's
-    /// receipt — a speculative or leftover composition can never
-    /// authorize a later frame.
+    /// Frame attempt counter: bumped by every [`Self::begin_frame`].
+    /// Necessary context for [`Self::composing`], not proof of mounting:
+    /// only a receipt stamped by a mounting builder during the current
+    /// attempt authorizes adoption.
     epoch: Cell<u64>,
-    /// Publication slot for in-flight composition: [`Self::widget`] writes
-    /// a receipt (attempt epoch plus snapshot) here on every execution,
-    /// from the same route list it builds children from. Never read
-    /// directly for decisions — reconciliation promotes it (see
-    /// `consumed`) only on the success path and only for the current
-    /// attempt, so failed composition publishes nothing and discarded
-    /// compositions authorize nothing.
+    /// Publication slot for in-flight composition: the mounting builders
+    /// write a receipt (attempt plus snapshot) here on every execution
+    /// (see [`Self::compose_and_record`]). Never read directly for
+    /// decisions — reconciliation promotes it (see `consumed`) only on
+    /// the success path for the current attempt, so failed composition
+    /// publishes nothing and discarded descriptors authorize nothing.
     composing: RefCell<Option<(u64, FrameAttempt)>>,
     /// Last composition a frame carried through reconciliation for this
     /// outlet. Comparing it against live state answers whether newer
@@ -611,8 +609,10 @@ impl RouteOutlet {
             (nested.revision.clone(), nested.namespace)
         };
         let nested_for_build = Rc::clone(nested);
-        Widget::stateful_layout_builder(revision, move |_, _| nested_for_build.borrow().widget())
-            .with_key(Key::String(format!("route-outlet-slot-{namespace}")))
+        Widget::stateful_layout_builder(revision, move |_, _| {
+            nested_for_build.borrow().compose_and_record()
+        })
+        .with_key(Key::String(format!("route-outlet-slot-{namespace}")))
     }
 
     /// Number of live nested attachments. Dead handles prune on every
@@ -838,7 +838,9 @@ impl RouteOutlet {
         // transition bookkeeping's back.
         let outlet_for_build = Rc::clone(outlet);
         runtime
-            .register_builder(mount, move || outlet_for_build.borrow().widget())
+            .register_builder(mount, move || {
+                outlet_for_build.borrow().compose_and_record()
+            })
             .map_err(OutletError::Frame)?;
         outlet.borrow().claim_driver(runtime);
         outlet.borrow_mut().mount.set(Some(mount));
@@ -850,19 +852,23 @@ impl RouteOutlet {
     /// semantics block every earlier route while the veiled route itself
     /// stays visible. The visible suffix paints from the top down to the
     /// first opaque page inclusive; retained but covered routes stay
-    /// mounted inert (no paint, hit, semantics, or focus); routes without
-    /// retention unmount; overlay entries are left for their portal host.
+    /// Builds the outlet widget for mounting, without touching any
+    /// bookkeeping: safe to call speculatively and discard. Only the
+    /// mounting builders (registered by `attach`, and nested slots)
+    /// acknowledge what they accept. Covered routes without retention
+    /// unmount (disposal); retained ones stay mounted inert while
+    /// invisible; overlay entries are left for their portal host.
     #[must_use]
     pub fn widget(&self) -> Widget {
+        self.compose().0
+    }
+
+    /// Composes the widget from the current routes alongside the immutable
+    /// snapshot it was built from. Pure: acquisition and composition stay
+    /// together here, publication happens only where the result mounts.
+    fn compose(&self) -> (Widget, FrameAttempt) {
         let routes = self.navigator.routes();
-        // Publish exactly what this composition consumes: the snapshot
-        // comes from the same route list the children build from, so later
-        // callbacks cannot relabel already-built content. Builders that
-        // never execute (skipped slots, failed frames) publish nothing.
-        *self.composing.borrow_mut() = Some((
-            self.epoch.get(),
-            FrameAttempt::of(self.navigator.revision(), &routes),
-        ));
+        let attempt = FrameAttempt::of(self.navigator.revision(), &routes);
         // Top-down visibility: everything paints until (and including) the
         // first opaque page.
         let mut visible = vec![false; routes.len()];
@@ -905,7 +911,26 @@ impl RouteOutlet {
         // always a stack — even empty — so mounting and unmounting the
         // last route never flips the element kind.
         let root: Widget = Stack::new(children).into();
-        root.with_key(self.root_key.clone())
+        (root.with_key(self.root_key.clone()), attempt)
+    }
+
+    /// Composes for mounting and publishes the consumed receipt: the only
+    /// path (besides [`Self::compose`]'s pure construction) that writes
+    /// [`Self::composing`], stamped with the current attempt. Called
+    /// solely by the mounting builders, so a discarded or speculative
+    /// descriptor can never authorize a frame.
+    fn compose_and_record(&self) -> Widget {
+        let (widget, attempt) = self.compose();
+        eprintln!(
+            "PROBE-C outlet={} epoch={} rev={} n={}\n{:?}",
+            self.namespace,
+            self.epoch.get(),
+            attempt.revision,
+            attempt.members.len(),
+            std::backtrace::Backtrace::force_capture()
+        );
+        *self.composing.borrow_mut() = Some((self.epoch.get(), attempt));
+        widget
     }
 
     /// Composes one mounted route's content inside the outlet's own
@@ -1188,12 +1213,13 @@ impl RouteOutlet {
     /// save — so the commit judges built content, and retries describe
     /// their own build. Runs only on the success path (reconciliation),
     /// so failed composition publishes nothing; skipped builders simply
-    /// re-promote their previous publication. Only the current attempt's
-    /// receipt adopts: a composition from any other attempt (speculative
-    /// builds, leftover slots, predated captures) authorizes nothing, and
-    /// within the attempt only newer-or-equal snapshots relabel. All
-    /// values are immutable copies, so application callbacks running
-    /// later in reconciliation cannot relabel built content.
+    /// re-promote their previous publication. Only mounting builders
+    /// write the slot, and only the current attempt's receipt adopts: a
+    /// stale receipt (failed attempt, predated capture) authorizes
+    /// nothing even at a matching revision. Within the attempt, only
+    /// newer-or-equal snapshots relabel. All values are immutable copies,
+    /// so application callbacks running later in reconciliation cannot
+    /// relabel built content.
     fn adopt_consumed(&mut self) {
         let Some((epoch, composing)) = self.composing.borrow().clone() else {
             return;
