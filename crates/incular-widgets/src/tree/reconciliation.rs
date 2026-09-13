@@ -1302,65 +1302,55 @@ impl WidgetTree {
     }
 
     /// Claims `controller` for the viewport at `element`, enforcing the
-    /// single-live-attachment contract for ordinary scroll viewports: a
-    /// second live viewport fails before overwriting shared geometry.
-    /// Authority lives in the controller (`metric_owner` names the owning
-    /// tree, so cross-tree conflicts need no scan and overlapping arena
-    /// indices cannot collide); this tree's lease map only resolves the
-    /// same-tree owner element. Cloned handles compare equal (never new
-    /// attachments); read-only coordination never calls here. Dead owners
-    /// release deterministically on unmount and tree drop, with the
-    /// liveness gate below for safety.
+    /// single-live-attachment contract: a second live viewport fails
+    /// before overwriting shared geometry. Authority lives in the
+    /// controller as one attachment slot; this tree's lease map holds
+    /// the handles and resolves the same-tree owner element on the
+    /// failure path only. Steady-state layouts hit the fast path below:
+    /// one map lookup, no controller traffic, no scans. Cloned handles
+    /// compare equal to their source (never new attachments); read-only
+    /// coordination never calls here.
     pub(super) fn claim_scroll_viewport(
         &mut self,
         element: ElementId,
         controller: &ScrollController,
     ) -> Result<(), TreeError> {
-        // Replacement turnover: this element previously drove a different
-        // controller whose record still names this tree. Release it — the
-        // render already moved on — so a replaced-away handle stays free
-        // across trees. Same-handle reclaims skip this harmlessly.
-        if let Some(previous) = self.scroll_attachments.get(&element)
-            && *previous != *controller
+        // Fast path: this element already drives this controller. The
+        // stored lease is the live attachment, so reuse claims nothing.
+        if let Some(lease) = self.scroll_attachments.get(&element)
+            && lease.controller() == controller
         {
-            previous.clear_metric_owner(self.tree_id);
+            return Ok(());
         }
-        match controller.metric_owner() {
-            Some(owner) if owner != self.tree_id => {
-                return Err(TreeError::DuplicateScrollAttachment {
-                    owner_tree: owner,
-                    owner: None,
-                    attempted: element,
+        // Replacement turnover: this element previously drove a different
+        // controller. Release that attachment so the replaced-away handle
+        // stays free across trees. (Acquire-before-release ordering lands
+        // with the replacement package.)
+        if let Some(previous) = self.scroll_attachments.remove(&element) {
+            let _ = previous.release();
+        }
+        match controller.try_attach(MetricOwner::of_tree(self.tree_id)) {
+            Ok(attachment) => {
+                self.scroll_attachments.insert(element, attachment);
+                Ok(())
+            }
+            Err(conflict) => {
+                let owner = (conflict.owner_tree() == self.tree_id).then(|| {
+                    self.scroll_attachments
+                        .iter()
+                        .find_map(|(candidate, lease)| {
+                            (lease.id() == conflict.attachment_id()
+                                && self.element_exists(*candidate))
+                            .then_some(*candidate)
+                        })
                 });
+                Err(TreeError::DuplicateScrollAttachment {
+                    owner_tree: conflict.owner_tree(),
+                    owner: owner.flatten(),
+                    attempted: element,
+                })
             }
-            Some(_) => {
-                let dead: Vec<ElementId> = self
-                    .scroll_attachments
-                    .keys()
-                    .copied()
-                    .filter(|owner| !self.element_exists(*owner))
-                    .collect();
-                for owner in dead {
-                    self.scroll_attachments.remove(&owner);
-                }
-                if let Some(owner) = self
-                    .scroll_attachments
-                    .iter()
-                    .find(|(owner, attached)| **owner != element && *attached == controller)
-                    .map(|(owner, _)| *owner)
-                {
-                    return Err(TreeError::DuplicateScrollAttachment {
-                        owner_tree: self.tree_id,
-                        owner: Some(owner),
-                        attempted: element,
-                    });
-                }
-            }
-            None => {}
         }
-        controller.set_metric_owner(self.tree_id);
-        self.scroll_attachments.insert(element, controller.clone());
-        Ok(())
     }
 
     pub(super) fn scroll_controller_for_element(&self, id: ElementId) -> Option<ScrollController> {
@@ -1419,23 +1409,24 @@ impl WidgetTree {
             Exit(ElementId, RenderObjectId),
         }
 
-        // Controllers whose viewports go away below: an app-driven
+        // Attachments whose viewports go away below: an app-driven
         // activity left open must end with the viewport, not linger as a
         // stuck flag that swallows the next gesture's Start. Only owned
-        // leases trigger this — a render merely carrying a controller
-        // (rejected duplicate, replaced-but-unlaid-out) must not end
-        // another viewport's activity. Collected here, ended and released
-        // after the work loop so no listener observes a half-removed
-        // tree.
-        let mut ended_activities: Vec<ScrollController> = Vec::new();
+        // leases trigger this — taking the handle here proves this
+        // viewport drove the controller, so a render merely carrying one
+        // (rejected duplicate, replaced-but-unlaid-out) holds no lease
+        // and cannot end another viewport's activity. Taken here, ended
+        // and released after the work loop so no listener observes a
+        // half-removed tree.
+        let mut detached: Vec<MetricAttachment> = Vec::new();
         let mut work = vec![UnmountWork::Enter(id)];
         while let Some(next) = work.pop() {
             match next {
                 UnmountWork::Enter(id) => {
                     self.raw_input_unmounted(id);
                     self.external_drop_target_unmounted(id);
-                    if let Some(controller) = self.scroll_attachments.get(&id).cloned() {
-                        ended_activities.push(controller);
+                    if let Some(attachment) = self.scroll_attachments.remove(&id) {
+                        detached.push(attachment);
                     }
                     let Some(element) = self.elements.remove(id.0) else {
                         continue;
@@ -1499,9 +1490,10 @@ impl WidgetTree {
                     if let Some(render) = self.renders.remove(render_id.0) {
                         render.object.layers.remove(&mut self.compositor);
                     }
-                    // Deterministic attachment release: a viewport going
-                    // away frees its controller for remounting elsewhere.
-                    self.scroll_attachments.remove(&id);
+                    // Leases leave with their viewport in Enter above; the
+                    // viewport going away frees its controller for remounts
+                    // elsewhere.
+                    let _ = self.scroll_attachments.remove(&id);
                     self.unmounted.push(id);
                     self.diagnostics.unmounts += 1;
                 }
@@ -1510,10 +1502,9 @@ impl WidgetTree {
         // Release ownership before notifying: a listener reattaching
         // the same controller during End must find it free, and no
         // trailing cleanup may cancel an activity the listener starts.
-        let tree = self.tree_id;
-        for controller in ended_activities {
-            controller.clear_metric_owner(tree);
-            controller.end_activity();
+        for attachment in detached {
+            let _ = attachment.release();
+            attachment.controller().end_activity();
         }
     }
     pub(super) fn check_keys_borrowed<'a>(

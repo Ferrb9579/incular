@@ -37,8 +37,9 @@ use incular_rendering::{
     PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma, resolve_follower_target,
 };
 use incular_scroll::{
-    ScrollController, ScrollNotification, ScrollNotificationSubscription, ScrollPhysics,
-    ScrollbarGeometry, SliverConstraints, scrollbar_geometry,
+    MetricAttachment, MetricOwner, ScrollController, ScrollNotification,
+    ScrollNotificationSubscription, ScrollPhysics, ScrollbarGeometry, SliverConstraints,
+    scrollbar_geometry,
 };
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
@@ -978,10 +979,11 @@ pub struct WidgetTree {
     raw_recognizers: HashMap<ElementId, HashMap<TypeId, Box<dyn GestureRecognizer>>>,
     raw_gesture_streams: HashMap<GestureArenaKey, ActiveRawGesture>,
     raw_pointer_routes: HashMap<GestureArenaKey, Vec<ElementId>>,
-    /// Ordinary scroll viewport attachments: viewport element to the
-    /// controller it drives. One live viewport per controller; entries
-    /// release on unmount with a liveness gate at claim time.
-    scroll_attachments: HashMap<ElementId, ScrollController>,
+    /// Scroll viewport attachments: viewport element to its live
+    /// attachment handle. One live viewport per controller; the handle
+    /// is the only key that releases, so entries here always name live
+    /// ownership. Entries leave on unmount, replacement, and tree drop.
+    scroll_attachments: HashMap<ElementId, MetricAttachment>,
     mouse_hover: HashMap<GestureArenaKey, Vec<ElementId>>,
     consumed_tap_pointers: HashSet<GestureArenaKey>,
     pointer_captures: HashMap<GestureArenaKey, ElementId>,
@@ -1018,13 +1020,13 @@ impl Drop for WidgetTree {
     /// controllers remount cleanly elsewhere after teardown. Open
     /// activities clear silently — listeners belong to torn-down context,
     /// and notifying from `Drop` could panic during unwinding — so the
-    /// next begin starts fresh instead of bricking. Controllers owned by
-    /// other trees are never touched.
+    /// next begin starts fresh instead of bricking. Handles owned by
+    /// other trees can never sit in this map: only a live attachment
+    /// releases, so foreign owners are unreachable here.
     fn drop(&mut self) {
-        let tree = self.tree_id;
-        for controller in std::mem::take(&mut self.scroll_attachments).into_values() {
-            controller.clear_metric_owner(tree);
-            controller.abort_activity();
+        for attachment in std::mem::take(&mut self.scroll_attachments).into_values() {
+            let _ = attachment.release();
+            attachment.controller().abort_activity();
         }
     }
 }

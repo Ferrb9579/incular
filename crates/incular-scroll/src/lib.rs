@@ -1,6 +1,7 @@
 //! Widget-independent scroll state, physics, and scrollbar geometry.
 
 mod activity;
+mod attachment;
 mod controller;
 mod coordinator;
 mod extent_index;
@@ -12,6 +13,7 @@ mod scrollbar;
 mod sliver;
 
 pub use activity::{DragStartBehavior, ScrollViewKeyboardDismissBehavior};
+pub use attachment::{AttachmentConflict, MetricAttachment, MetricOwner};
 pub use controller::ScrollController;
 pub use coordinator::NestedScrollCoordinator;
 pub use extent_index::{ExtentIndexMetrics, MeasuredExtentIndex};

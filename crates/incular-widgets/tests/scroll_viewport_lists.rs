@@ -1471,6 +1471,31 @@ fn deferred_jump_applies_on_first_attached_layout() {
 }
 
 #[test]
+fn steady_layout_reuses_its_lease() {
+    // The stored lease is the attachment: repeated layouts neither
+    // re-acquire nor disturb ownership — the attachment identity stays
+    // put while geometry keeps refreshing. The viewport is built from a
+    // clone, proving clones configure the same attachment.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        sized_viewport(controller.clone(), 200., 100., 300.),
+        200.,
+        100.,
+    );
+    let first = controller.attachment_id().expect("attached");
+    assert_eq!(controller.metric_owner(), Some(tree.tree_id()));
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("second layout");
+    assert_eq!(controller.attachment_id(), Some(first));
+    assert_eq!(controller.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(controller.max_offset(), 200.);
+    // A clone observes the same live attachment without claiming.
+    assert_eq!(controller.clone().attachment_id(), Some(first));
+}
+
+#[test]
 fn dropped_tree_releases_attachments() {
     // Window-teardown shape: dropping the whole tree releases every
     // claim, so the app-owned controller mounts cleanly in a fresh tree.

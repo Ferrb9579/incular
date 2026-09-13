@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use incular_core::{RestorationKey, RestorationScope};
 
 use crate::{
+    attachment::{AttachmentConflict, MetricAttachment, MetricOwner, StoredAttachment},
     notifications::{ScrollNotificationListener, ScrollNotificationType},
     restoration::{ScrollRestoration, persist_scroll_offset, restored_scroll_offset},
     scrollbar::ScrollbarStyle,
@@ -57,12 +58,13 @@ pub(crate) struct ScrollState {
     pub(crate) scrollbar_style: ScrollbarStyle,
     pub(crate) scrollbar_thumb_visibility: bool,
     pub(crate) revision: u64,
-    /// Authoritative metric owner: the widget-tree id currently driving
-    /// geometry, if any. Plain data by design — widget element types must
-    /// not leak into this crate. Viewport layouts claim and release it;
-    /// clones, scrollbar readers, and coordination handles never touch
-    /// it. No global registry: one slot per controller.
-    pub(crate) metric_owner: Option<u64>,
+    /// Authoritative metric owner: the live attachment driving geometry,
+    /// if any. Plain data by design — widget element types must not leak
+    /// into this crate. The attachment identity decides release; the
+    /// recorded tree only names the owner in conflict reports. Clones,
+    /// scrollbar readers, and coordination handles never touch it. No
+    /// global registry: one slot per controller.
+    pub(crate) metric_attachment: Option<StoredAttachment>,
     pub(crate) restoration: Option<ScrollRestoration>,
     pub(crate) pending_restored_offset: Option<f32>,
     pub(crate) pending_jump_offset: Option<f32>,
@@ -155,34 +157,40 @@ impl ScrollController {
         }
     }
 
+    /// Attaches `owner` as the controller's metric driver, failing when
+    /// another attachment is live. An occupied controller rejects every
+    /// newcomer — there is no re-acquire and no overwrite — so geometry
+    /// always has exactly one writer. The returned handle is the only
+    /// key that releases; keep it for the attachment's lifetime.
+    /// Framework-internal: viewport layouts call this through their
+    /// tree's lease map, never directly per frame.
+    #[doc(hidden)]
+    pub fn try_attach(&self, owner: MetricOwner) -> Result<MetricAttachment, AttachmentConflict> {
+        let mut state = self.state.borrow_mut();
+        if let Some(live) = state.metric_attachment {
+            return Err(AttachmentConflict::for_owner(live));
+        }
+        let stored = StoredAttachment::mint(owner.tree());
+        state.metric_attachment = Some(stored);
+        Ok(MetricAttachment::new(self.clone(), stored.id, stored.tree))
+    }
+
     /// Returns the widget-tree id currently owning metric publication,
-    /// if any. Framework-internal: viewport layouts use this to enforce
-    /// single-owner attachment across trees.
+    /// if any. Diagnostic only: naming the owner grants no power to
+    /// release it. Framework-internal.
     #[doc(hidden)]
     #[must_use]
     pub fn metric_owner(&self) -> Option<u64> {
-        self.state.borrow().metric_owner
+        self.state.borrow().metric_attachment.map(|live| live.tree)
     }
 
-    /// Records a widget tree as the metric owner. Framework-internal:
-    /// callers verify conflicts first.
+    /// Returns the live attachment's identity, if any. Diagnostic only:
+    /// trees match this against their leases to report which viewport
+    /// owns the controller. Framework-internal.
     #[doc(hidden)]
-    pub fn set_metric_owner(&self, tree: u64) {
-        self.state.borrow_mut().metric_owner = Some(tree);
-    }
-
-    /// Releases the metric owner when it matches `tree` (teardown and
-    /// unmount paths). Framework-internal: foreign owners are never
-    /// cleared here.
-    #[doc(hidden)]
-    pub fn clear_metric_owner(&self, tree: u64) -> bool {
-        let mut state = self.state.borrow_mut();
-        if state.metric_owner == Some(tree) {
-            state.metric_owner = None;
-            true
-        } else {
-            false
-        }
+    #[must_use]
+    pub fn attachment_id(&self) -> Option<u64> {
+        self.state.borrow().metric_attachment.map(|live| live.id)
     }
 }
 
