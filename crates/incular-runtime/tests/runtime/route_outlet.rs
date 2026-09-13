@@ -1804,6 +1804,294 @@ fn outlet_dropped_bindings_ignore_later_removal() {
     assert!(!scope.is_cancelled());
 }
 
+/// Mounts `outlet`'s widget in a fresh runtime (framed, not attached) —
+/// the second driver domain for ownership-conflict tests. Attaching and
+/// presenting stay explicit per test: they are the rejection points.
+fn second_driver(outlet: &Rc<RefCell<RouteOutlet>>) -> Runtime {
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let outlet_for_build = outlet.clone();
+    let root = runtime.tree().root().expect("root");
+    runtime
+        .register_builder(root, move || {
+            Column::new(vec![SizedBox::from_dimensions(
+                Some(200.),
+                Some(200.),
+                Some(outlet_for_build.borrow().widget()),
+            )])
+            .into()
+        })
+        .expect("builder registers");
+    frame(&mut runtime);
+    runtime
+}
+
+#[test]
+fn outlet_child_driven_separately_rejected() {
+    // A nested child presented directly — instead of through its root's
+    // cascade — is rejected with both identities before any mutation: no
+    // drives, no capture, focus and bindings exactly intact.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, node_b) =
+        nested_inside_setup();
+    inner.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_a);
+    let outer_drives = outlet_outer.borrow().frame_drive_count();
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    let ib = inner.current().expect("inner route").id;
+    assert!(
+        outlet_inner.borrow().route_task_scope(ib).is_some(),
+        "inner bound before the rejected drive"
+    );
+    let error = RouteOutlet::present_frame(
+        &outlet_inner,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("separate child driving is rejected");
+    assert_eq!(
+        error,
+        OutletError::SeparateDrive {
+            outlet: outlet_inner.borrow().id(),
+            parent: outlet_outer.borrow().id(),
+        }
+    );
+    assert_eq!(outlet_outer.borrow().frame_drive_count(), outer_drives);
+    assert_eq!(outlet_inner.borrow().frame_drive_count(), inner_drives);
+    assert!(node_a.has_focus());
+    assert!(
+        outlet_inner.borrow().route_task_scope(ib).is_some(),
+        "rejection commits nothing and binds nothing new"
+    );
+    // The supported path still works end to end afterwards.
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(node_a.has_focus());
+    let _ = outer;
+}
+
+#[test]
+fn outlet_second_runtime_rejected_before_mutation() {
+    // One outlet, two live runtimes: attaching or presenting through the
+    // second fails with the owning and attempted runtime ids, drives
+    // nothing, and leaves the first runtime driving undisturbed.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let first_id = harness.runtime.id();
+    let drives = harness.outlet.borrow().frame_drive_count();
+    let outlet_id = harness.outlet.borrow().id();
+    let mut runtime2 = second_driver(&harness.outlet);
+    let second_id = runtime2.id();
+    assert_ne!(first_id, second_id);
+    // Attaching to the second live runtime fails before registering
+    // anything.
+    let error = RouteOutlet::attach(&harness.outlet, &mut runtime2)
+        .expect_err("second-runtime attach is rejected");
+    assert_eq!(
+        error,
+        OutletError::DriverConflict {
+            outlet: outlet_id,
+            owner: first_id,
+            attempted: second_id,
+        }
+    );
+    // Presenting through the second runtime fails before any mutation.
+    let error = RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut runtime2,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("second-runtime present is rejected");
+    assert_eq!(
+        error,
+        OutletError::DriverConflict {
+            outlet: outlet_id,
+            owner: first_id,
+            attempted: second_id,
+        }
+    );
+    assert_eq!(harness.outlet.borrow().frame_drive_count(), drives);
+    assert!(node_a.has_focus());
+    // The first runtime drives on undisturbed.
+    present(&mut harness);
+    assert_eq!(harness.outlet.borrow().frame_drive_count(), drives + 1);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_cross_runtime_nesting_rejected() {
+    // A child owned by one live runtime, attached under a parent mounted
+    // in another: presenting the parent fails naming the child and its
+    // owner before anything drives or commits.
+    let holder =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent_scope = holder.spawner().scope();
+    let inner_nav = Navigator::new();
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner_nav, &parent_scope)));
+    let mut runtime1 = second_driver(&outlet_inner);
+    RouteOutlet::attach(&outlet_inner, &mut runtime1).expect("rt1 attaches");
+    let node_b = FocusNode::new();
+    inner_nav.push_page(focus_page("b", &node_b));
+    RouteOutlet::present_frame(
+        &outlet_inner,
+        &mut runtime1,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("rt1 presents");
+    let first_id = runtime1.id();
+    let inner_id = outlet_inner.borrow().id();
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    // Parent in a second runtime, wired to the foreign child.
+    let outer_nav = Navigator::new();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer_nav, &parent_scope)));
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav.push_page(Page::new(
+        "a",
+        Column::new(vec![RouteOutlet::nested_widget(&outlet_inner_for_page)]),
+    ));
+    drop(outlet_inner_for_page);
+    let mut runtime2 = second_driver(&outlet_outer);
+    RouteOutlet::attach(&outlet_outer, &mut runtime2).expect("rt2 attaches");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("topology attaches");
+    let second_id = runtime2.id();
+    let outer_drives = outlet_outer.borrow().frame_drive_count();
+    let error = RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime2,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("cross-runtime nesting is rejected");
+    assert_eq!(
+        error,
+        OutletError::DriverConflict {
+            outlet: inner_id,
+            owner: first_id,
+            attempted: second_id,
+        }
+    );
+    assert_eq!(outlet_outer.borrow().frame_drive_count(), outer_drives);
+    assert_eq!(outlet_inner.borrow().frame_drive_count(), inner_drives);
+    // Detaching releases the child: the parent then presents cleanly in
+    // its own runtime.
+    RouteOutlet::detach_nested(&outlet_outer, &outlet_inner);
+    RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime2,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("parent presents after detach");
+    let _ = holder;
+}
+
+#[test]
+fn outlet_detach_transfers_driver_ownership() {
+    // A child driven under one runtime detaches and moves to another:
+    // attach plus present claim the new domain, and the old domain
+    // rejects it afterwards — while the old parent keeps presenting
+    // without it.
+    let holder =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent_scope = holder.spawner().scope();
+    let outer_nav = Navigator::new();
+    let inner_nav = Navigator::new();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer_nav, &parent_scope)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner_nav, &parent_scope)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    drop(outlet_inner_for_page);
+    let mut runtime1 = second_driver(&outlet_outer);
+    RouteOutlet::attach(&outlet_outer, &mut runtime1).expect("rt1 attaches");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    inner_nav.push_page(focus_page("b", &node_b));
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_a);
+    let first_id = runtime1.id();
+    // Detach, then move the child to a second runtime wholesale.
+    RouteOutlet::detach_nested(&outlet_outer, &outlet_inner);
+    let mut runtime2 = second_driver(&outlet_inner);
+    RouteOutlet::attach(&outlet_inner, &mut runtime2).expect("rt2 attaches after detach");
+    RouteOutlet::present_frame(
+        &outlet_inner,
+        &mut runtime2,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("rt2 presents after detach");
+    tab_until(&mut runtime2, &node_b);
+    let second_id = runtime2.id();
+    // The old domain no longer drives it.
+    let error = RouteOutlet::present_frame(
+        &outlet_inner,
+        &mut runtime1,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("old runtime loses the transferred child");
+    assert_eq!(
+        error,
+        OutletError::DriverConflict {
+            outlet: outlet_inner.borrow().id(),
+            owner: second_id,
+            attempted: first_id,
+        }
+    );
+    // The old parent presents on without the child.
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(node_a.has_focus());
+    let _ = holder;
+}
+
+#[test]
+fn outlet_teardown_releases_driver_claim() {
+    // Teardown releases ownership without any registry: dropping the
+    // first runtime lets a second runtime attach and present the same
+    // outlet end to end. Task scopes live under a surviving holder, so
+    // only the driver domain moves.
+    let holder =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent_scope = holder.spawner().scope();
+    let navigator = Navigator::new();
+    let outlet = Rc::new(RefCell::new(RouteOutlet::new(&navigator, &parent_scope)));
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    let mut runtime1 = second_driver(&outlet);
+    RouteOutlet::attach(&outlet, &mut runtime1).expect("rt1 attaches");
+    RouteOutlet::present_frame(
+        &outlet,
+        &mut runtime1,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("rt1 presents");
+    tab_until(&mut runtime1, &node_a);
+    let first_id = runtime1.id();
+    drop(runtime1);
+    let mut runtime2 = second_driver(&outlet);
+    assert_ne!(runtime2.id(), first_id);
+    RouteOutlet::attach(&outlet, &mut runtime2).expect("teardown released the claim");
+    RouteOutlet::present_frame(
+        &outlet,
+        &mut runtime2,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("rt2 presents after teardown");
+    tab_until(&mut runtime2, &node_a);
+    assert!(node_a.has_focus());
+    let _ = holder;
+}
+
 /// Topology-only outlets: no mounting, no frames — attachment policy is
 /// pure registration. The runtime stays alive so task scopes stay valid.
 fn topology_outlets(count: usize) -> (Runtime, Vec<Rc<RefCell<RouteOutlet>>>) {

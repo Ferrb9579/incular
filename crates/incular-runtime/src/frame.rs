@@ -42,9 +42,14 @@ use incular_widgets::{TextInputActionHint, TextInputTypeHint, Widget};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
-    rc::Rc,
+    rc::{Rc, Weak},
+    sync::atomic::{AtomicU64, Ordering},
     time::Instant,
 };
+
+/// Sequence numbering runtime driver domains so outlet ownership errors
+/// can name the runtimes involved.
+static RUNTIME_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameStats {
@@ -129,6 +134,11 @@ pub struct Runtime {
     pub(crate) window_id: Option<WindowId>,
     pub(crate) window_scope: TaskScope,
     pub(crate) window_manager: Option<WindowManager>,
+    /// Stable driver identity shared with outlet ownership claims: the id
+    /// names this runtime in [`OutletError`](super::route_outlet::OutletError)s,
+    /// while the shared ownership doubles as a liveness token — dropping
+    /// the runtime releases every claim without a global registry.
+    driver_domain: Rc<u64>,
 }
 
 pub(crate) fn diagnostic_input_trigger(event: &InputEvent) -> String {
@@ -267,6 +277,7 @@ impl Runtime {
             window_id,
             window_scope,
             window_manager,
+            driver_domain: Rc::new(RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed)),
         };
         // Focus nodes live outside the retained tree so they may be shared by
         // rebuildable descriptors. Resolve the first mounted autofocus listener
@@ -277,6 +288,20 @@ impl Runtime {
         }
         Ok(runtime)
     }
+    /// Stable identity of this runtime's driver domain, for outlet
+    /// ownership diagnostics: pairs with the outlet id to name both sides
+    /// of a driver conflict.
+    #[must_use]
+    pub fn id(&self) -> u64 {
+        *self.driver_domain
+    }
+
+    /// Liveness token for outlet driver claims. Dies with the runtime, so
+    /// teardown releases outlet ownership without any registry.
+    pub(crate) fn driver_token(&self) -> Weak<u64> {
+        Rc::downgrade(&self.driver_domain)
+    }
+
     /// Starts work owned by this retained root. Component code should prefer
     /// the build context's spawn API so completion lifetime follows its owner.
     #[must_use]

@@ -175,6 +175,21 @@ pub enum OutletError {
         outlet: OutletId,
         routes: Vec<RouteId>,
     },
+    /// Another live runtime already drives this outlet: the outlet is
+    /// attached to (or last presented by) `owner`, so presenting through
+    /// `attempted` would split one lifecycle across two frame loops.
+    /// Detach or drop the first runtime to release the claim — teardown
+    /// releases it automatically — then drive here.
+    DriverConflict {
+        outlet: OutletId,
+        owner: u64,
+        attempted: u64,
+    },
+    /// This outlet nests under a live parent: drive the root instead.
+    /// Separate presents would drive the child twice per frame (once
+    /// directly, once through the cascade) and corrupt the pending
+    /// capture. Detach first to drive it standalone.
+    SeparateDrive { outlet: OutletId, parent: OutletId },
     /// The underlying rebuild or frame failed.
     Frame(TreeError),
 }
@@ -189,6 +204,24 @@ impl std::fmt::Display for OutletError {
                      (host overlay entries in an OverlayPortal separately)"
                 )
             }
+            Self::DriverConflict {
+                outlet,
+                owner,
+                attempted,
+            } => {
+                write!(
+                    formatter,
+                    "{outlet} is already driven by runtime-{owner}: refusing runtime-{attempted} \
+                     (one lifecycle per runtime; release the first claim before driving here)"
+                )
+            }
+            Self::SeparateDrive { outlet, parent } => {
+                write!(
+                    formatter,
+                    "{outlet} nests under {parent}: drive the root instead of presenting \
+                     the child separately (detach first to drive it standalone)"
+                )
+            }
             Self::Frame(error) => {
                 write!(formatter, "route outlet frame failed: {error}")
             }
@@ -199,7 +232,9 @@ impl std::fmt::Display for OutletError {
 impl std::error::Error for OutletError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::UnsupportedPresentation { .. } => None,
+            Self::UnsupportedPresentation { .. }
+            | Self::DriverConflict { .. }
+            | Self::SeparateDrive { .. } => None,
             Self::Frame(error) => Some(error),
         }
     }
@@ -280,6 +315,12 @@ pub struct RouteOutlet {
     /// [`OutletAttachError`]): set on attach, cleared on detach or when
     /// the parent drops.
     parent: Rc<RefCell<Option<Weak<RefCell<RouteOutlet>>>>>,
+    /// The runtime driving this outlet, with its liveness token. Claimed
+    /// on attach and on every driven present (roots and cascade children
+    /// alike); released on detach and automatically when the runtime
+    /// drops. No global registry: ownership lives in this claim plus the
+    /// runtime's own builder registration.
+    driver: RefCell<Option<(u64, Weak<u64>)>>,
     /// Frames driven through this outlet (cascade included). Test-visible
     /// proof that one present drives each outlet exactly once.
     drives: Cell<u64>,
@@ -362,6 +403,7 @@ impl RouteOutlet {
             tags,
             nested,
             parent: Rc::default(),
+            driver: RefCell::default(),
             drives: Cell::new(0),
             task_parent: task_parent.clone(),
             presented: None,
@@ -429,7 +471,9 @@ impl RouteOutlet {
     /// Detaches a nested outlet. The child keeps its own records, bindings,
     /// and tags, but the parent's cascade no longer drives it: a detached
     /// outlet receives no frame work even while application code retains
-    /// its handle. Reattaching elsewhere (or back) is allowed afterwards.
+    /// its handle. Detach also releases the child's driver claim, so
+    /// ownership transfers cleanly — reattaching elsewhere (or driving it
+    /// standalone, including under another runtime) claims anew.
     /// Detaching a non-child is a no-op.
     pub fn detach_nested(outlet: &Rc<RefCell<Self>>, nested: &Rc<RefCell<Self>>) {
         {
@@ -441,6 +485,7 @@ impl RouteOutlet {
                 .is_some_and(|current| Rc::ptr_eq(&current, outlet));
             if mine {
                 parent.take();
+                child.driver.borrow_mut().take();
             }
         }
         {
@@ -519,6 +564,61 @@ impl RouteOutlet {
             .collect()
     }
 
+    /// The live parent, if this outlet is attached under one.
+    fn live_parent(&self) -> Option<Rc<RefCell<Self>>> {
+        self.parent.borrow().as_ref().and_then(Weak::upgrade)
+    }
+
+    /// The live driver claim's runtime id, if a live runtime owns it. A
+    /// dead token means teardown released the claim: treated as unowned.
+    fn live_driver(&self) -> Option<u64> {
+        self.driver
+            .borrow()
+            .as_ref()
+            .and_then(|(id, token)| token.upgrade().is_some().then_some(*id))
+    }
+
+    /// Claims this outlet for `runtime`, superseding a dead owner's
+    /// leftover. Callers verify conflicts first.
+    fn claim_driver(&self, runtime: &Runtime) {
+        *self.driver.borrow_mut() = Some((runtime.id(), runtime.driver_token()));
+    }
+
+    /// Rejects conflicting drivers for the whole tree before any mutation:
+    /// the root must not nest under a live parent (drive the root
+    /// instead), and every participant must be unclaimed or claimed by
+    /// `runtime` — a live foreign claim fails with both identities.
+    fn check_drivers(&self, runtime: &Runtime, is_root: bool) -> Result<(), OutletError> {
+        if is_root && let Some(parent) = self.live_parent() {
+            return Err(OutletError::SeparateDrive {
+                outlet: self.id(),
+                parent: parent.borrow().id(),
+            });
+        }
+        if let Some(owner) = self.live_driver()
+            && owner != runtime.id()
+        {
+            return Err(OutletError::DriverConflict {
+                outlet: self.id(),
+                owner,
+                attempted: runtime.id(),
+            });
+        }
+        for nested in self.live_nested() {
+            nested.borrow().check_drivers(runtime, false)?;
+        }
+        Ok(())
+    }
+
+    /// Claims the whole tree for `runtime` after [`Self::check_drivers`]
+    /// passes. Refreshes matching claims harmlessly.
+    fn claim_tree(&self, runtime: &Runtime) {
+        self.claim_driver(runtime);
+        for nested in self.live_nested() {
+            nested.borrow().claim_tree(runtime);
+        }
+    }
+
     /// Returns the navigator this outlet hosts.
     #[must_use]
     pub fn navigator(&self) -> &Navigator {
@@ -591,6 +691,11 @@ impl RouteOutlet {
     /// [`Self::widget`]: the mount element is located through the outlet
     /// root tag. Re-attaching replaces the previous builder harmlessly.
     ///
+    /// Attachment claims the outlet for `runtime`'s driver domain: an
+    /// outlet nested under a live parent, or claimed by another live
+    /// runtime, is rejected before mutation. Detach (nested) or drop the
+    /// owning runtime (teardown releases) before attaching elsewhere.
+    ///
     /// ```rust
     /// use std::{cell::RefCell, rc::Rc};
     /// use incular_config::Constraints;
@@ -626,22 +731,45 @@ impl RouteOutlet {
     pub fn attach(
         outlet: &Rc<RefCell<RouteOutlet>>,
         runtime: &mut Runtime,
-    ) -> Result<(), TreeError> {
+    ) -> Result<(), OutletError> {
+        {
+            let outlet = outlet.borrow();
+            if let Some(parent) = outlet.live_parent() {
+                return Err(OutletError::SeparateDrive {
+                    outlet: outlet.id(),
+                    parent: parent.borrow().id(),
+                });
+            }
+            if let Some(owner) = outlet.live_driver()
+                && owner != runtime.id()
+            {
+                return Err(OutletError::DriverConflict {
+                    outlet: outlet.id(),
+                    owner,
+                    attempted: runtime.id(),
+                });
+            }
+        }
         let mount = {
             let outlet = outlet.borrow();
             runtime
                 .tree()
                 .element_with_key(&outlet.root_key)
-                .ok_or_else(|| TreeError::InvalidWidgetConfiguration {
-                    widget: "RouteOutlet",
-                    reason: "mount outlet.widget() in the tree before attaching".to_owned(),
+                .ok_or_else(|| {
+                    OutletError::Frame(TreeError::InvalidWidgetConfiguration {
+                        widget: "RouteOutlet",
+                        reason: "mount outlet.widget() in the tree before attaching".to_owned(),
+                    })
                 })?
         };
         // The builder carries no reactive dependencies: present_frame
         // rebuilds it explicitly, so content never refreshes behind the
         // transition bookkeeping's back.
         let outlet_for_build = Rc::clone(outlet);
-        runtime.register_builder(mount, move || outlet_for_build.borrow().widget())?;
+        runtime
+            .register_builder(mount, move || outlet_for_build.borrow().widget())
+            .map_err(OutletError::Frame)?;
+        outlet.borrow().claim_driver(runtime);
         outlet.borrow_mut().mount.set(Some(mount));
         Ok(())
     }
@@ -769,18 +897,20 @@ impl RouteOutlet {
             .map(|binding| binding.scope().clone())
     }
 
-    /// Presents one production frame through the outlet: captures any
-    /// pending transition, rebuilds outlet content, runs layout, then
-    /// commits the transition against the mounted tree. This is the
-    /// supported recurring operation: the save runs before the frame
-    /// reconciles (rebuilding may unmount covered content and the drain
-    /// clears dead focus), while the restore runs after layout when
-    /// targets are eligible.
+    /// Presents one production frame through the outlet: validates the
+    /// tree, captures any pending transition, rebuilds outlet content,
+    /// runs layout, then commits the transition against the mounted tree.
+    /// This is the supported recurring operation: the save runs before
+    /// the frame reconciles (rebuilding may unmount covered content and
+    /// the drain clears dead focus), while the restore runs after layout
+    /// when targets are eligible.
     ///
     /// Takes the outlet shared (rather than `&mut self`) because the
     /// attached builder reenters it immutably while the frame runs; short
-    /// borrows never span the frame. A rebuild or frame failure keeps the
-    /// pending capture for a safe retry instead of consuming the
+    /// borrows never span the frame. Driving claims the whole tree for
+    /// `runtime`: presenting a nested child directly, or through a second
+    /// live runtime, fails before any mutation. A rebuild or frame failure
+    /// keeps the pending capture for a safe retry instead of consuming the
     /// activation, and navigation mid-frame abandons the stale capture
     /// without touching committed records.
     pub fn present_frame(
@@ -790,8 +920,11 @@ impl RouteOutlet {
     ) -> Result<(DisplayList, FrameStats), OutletError> {
         // Unsupported stacks anywhere in the tree fail before revisions,
         // capture, rebuild, frame, or reconcile — nothing mounted or
-        // committed changes on this path.
+        // committed changes on this path. Driver conflicts fail next, also
+        // before any mutation; the claim lands only on this success path.
         outlet.borrow().preflight_tree()?;
+        outlet.borrow().check_drivers(runtime, true)?;
+        outlet.borrow().claim_tree(runtime);
         {
             let mut outlet = outlet.borrow_mut();
             outlet.begin_frame(runtime);
