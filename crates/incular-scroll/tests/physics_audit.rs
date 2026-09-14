@@ -370,3 +370,71 @@ fn coordinator_spans_ranges_innermost_first_with_conservation() {
     coordinator.cancel();
     assert_eq!(coordinator.active_index(), None);
 }
+
+#[test]
+fn fling_step_matches_the_analytic_integral() {
+    // Hand-derived from distance(t) = v0*(1-exp(-k*t))/k with k = 4:
+    // 2,000 px/s over 16 ms travels 2000*(1-exp(-0.064))/4 and keeps
+    // 2000*exp(-0.064). Evaluated here in f64 so the f32 implementation
+    // never grades its own homework.
+    let step = ScrollPhysics::clamping().fling_step(2000., 0.016);
+    let decay = (-4.0f64 * 0.016).exp();
+    assert!(!step.settled);
+    assert!(approx(
+        step.offset_delta,
+        (2000.0 * (1.0 - decay) / 4.0) as f32
+    ));
+    assert!(approx(step.velocity, (2000.0 * decay) as f32));
+    // Both velocity signs integrate symmetrically.
+    let back = ScrollPhysics::clamping().fling_step(-2000., 0.016);
+    assert!(!back.settled);
+    assert!(approx(back.offset_delta, -step.offset_delta));
+    assert!(approx(back.velocity, -step.velocity));
+}
+
+#[test]
+fn fling_step_partitions_agree_on_elapsed_time() {
+    // 160 ms of travel at 2,000 px/s settles only after ~922 ms, so no
+    // partition below settles early: one frame, two, ten, or sixteen
+    // cover the same distance as the closed form — frame rate never
+    // changes where the fling goes.
+    fn travel(partitions: usize) -> (f32, bool) {
+        let dt = 0.16 / partitions as f32;
+        let (mut total, mut velocity, mut settled) = (0., 2000., false);
+        for _ in 0..partitions {
+            let step = ScrollPhysics::clamping().fling_step(velocity, dt);
+            total += step.offset_delta;
+            velocity = step.velocity;
+            settled = step.settled;
+        }
+        (total, settled)
+    }
+    let closed = (2000.0f64 * (1.0 - (-4.0f64 * 0.16f64).exp()) / 4.0) as f32;
+    for partitions in [1, 2, 10, 16] {
+        let (total, settled) = travel(partitions);
+        assert!(!settled, "partition {partitions} settled early");
+        assert!(
+            (total - closed).abs() < 0.05,
+            "partition {partitions}: {total} vs closed form {closed}"
+        );
+    }
+}
+
+#[test]
+fn fling_step_applies_final_displacement_when_settling() {
+    // A 10 s frame crosses the ~922 ms settle time (ln(2000/50)/4):
+    // the step settles but still applies the travel up to the crossing
+    // — 2000*(1-50/2000)/4 = 487.5 — instead of dropping it.
+    let step = ScrollPhysics::clamping().fling_step(2000., 10.);
+    assert!(step.settled);
+    assert_eq!(step.velocity, 0.);
+    let expected = (2000.0f64 * (1.0 - 50.0 / 2000.0) / 4.0) as f32;
+    assert!(approx(step.offset_delta, expected));
+    // Negative velocity settles symmetrically; sub-threshold velocity
+    // is already settled with no travel.
+    let back = ScrollPhysics::clamping().fling_step(-2000., 10.);
+    assert!(back.settled && back.velocity == 0.);
+    assert!(approx(back.offset_delta, -expected));
+    let parked = ScrollPhysics::clamping().fling_step(49., 0.016);
+    assert!(parked.settled && parked.offset_delta == 0. && parked.velocity == 0.);
+}

@@ -389,13 +389,19 @@ impl ScrollPhysics {
     /// never drifts between call sites.
     const FLING_FRICTION: f32 = 4.0;
 
-    /// Integrates one ballistic step: decays `velocity` over `dt_seconds`
-    /// and reports the offset delta to apply. Pure math in the physics
-    /// owner — drivers schedule it, never reimplement it. Settles when
-    /// the decayed velocity drops under
-    /// [`min_fling_velocity`](Self::min_fling_velocity); non-finite
-    /// inputs settle immediately, and non-positive time advances
-    /// nothing while staying active.
+    /// Integrates one ballistic step over `dt_seconds` with the exact
+    /// integral of exponential decay — `v(t) = v0 * exp(-k*t)`, so
+    /// `distance(t) = v0 * (1 - exp(-k*t)) / k` with
+    /// `k = FLING_FRICTION`. Exact per-step integration makes total
+    /// travel depend only on elapsed time, never on how frames
+    /// partition it. When the interval crosses the settling threshold
+    /// (`|v|` under [`min_fling_velocity`](Self::min_fling_velocity)),
+    /// only the travel up to the crossing integrates — and that final
+    /// displacement still applies before the step reports settled, so
+    /// no distance is silently dropped. Pure math in the physics owner
+    /// — drivers schedule it, never reimplement it. Non-finite inputs
+    /// settle immediately, and non-positive time advances nothing while
+    /// staying active.
     #[must_use]
     pub fn fling_step(&self, velocity: f32, dt_seconds: f32) -> FlingStep {
         if !velocity.is_finite() {
@@ -412,17 +418,31 @@ impl ScrollPhysics {
                 settled: false,
             };
         }
-        let decayed = velocity * (-dt_seconds * Self::FLING_FRICTION).exp();
-        if decayed.abs() < self.min_fling_velocity() {
+        let friction = Self::FLING_FRICTION;
+        let minimum = self.min_fling_velocity();
+        if velocity.abs() < minimum {
             return FlingStep {
                 offset_delta: 0.,
                 velocity: 0.,
                 settled: true,
             };
         }
+        // Time until the decayed speed reaches the settling threshold.
+        let settle_time = (velocity.abs() / minimum).ln() / friction;
+        if dt_seconds >= settle_time {
+            // The interval crosses settlement: integrate only to the
+            // crossing, then finish with the final displacement applied.
+            let traveled = velocity * (1. - (-friction * settle_time).exp()) / friction;
+            return FlingStep {
+                offset_delta: traveled,
+                velocity: 0.,
+                settled: true,
+            };
+        }
+        let decay = (-friction * dt_seconds).exp();
         FlingStep {
-            offset_delta: (velocity + decayed) * 0.5 * dt_seconds,
-            velocity: decayed,
+            offset_delta: velocity * (1. - decay) / friction,
+            velocity: velocity * decay,
             settled: false,
         }
     }

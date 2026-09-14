@@ -1877,8 +1877,8 @@ fn fling_interrupted_by_new_drag_continues() {
 
 #[test]
 fn fling_into_bounds_clamps_and_settles() {
-    // A fling aimed past the edge never overshoots: clamped jumps hold
-    // the bound while decay runs out, then one End closes.
+    // A fling aimed past the edge never overshoots: the bound holds,
+    // and one End closes.
     use incular_core::PointerPhase::{Down, Move, Up};
     use incular_scroll::ScrollNotificationType::End;
     use std::time::{Duration, Instant};
@@ -1911,6 +1911,47 @@ fn fling_into_bounds_clamps_and_settles() {
         assert_eq!(controller.offset(), 200.);
     }
     assert_eq!(ends.get(), 1);
+}
+
+#[test]
+fn outward_fling_at_hard_boundary_stops_promptly() {
+    // Pinned at the edge with the release aimed further outward, no
+    // movement is possible: the first pump closes the tenure instead
+    // of scheduling useless frames until the velocity decays. One
+    // Start, one End, zero travel.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(200.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    // Upward finger motion at the maximum offset: clamped in place, but
+    // the release still carries outward (positive) velocity.
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 48.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 40.), Up, 20);
+    assert_eq!(controller.offset(), 200.);
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(36), false),
+        "no movement possible, no further frames"
+    );
+    assert_eq!(controller.offset(), 200.);
+    assert_eq!(events.borrow().as_slice(), &[Start, End]);
 }
 
 #[test]

@@ -2804,6 +2804,7 @@ a metric attachment):
 | completing tick with newer driver | Completed (own trajectory) | reaching target reports completion even when the final notification started a newer tenure; the tick never clears another activity |
 | accepted touch drag | Start, then Update per move | bracket opens at acceptance (pending presses claim nothing); moves drive captured controller increments |
 | fast release → fling | (silence at handoff) | token transfers with no End/Start churn; frames pump decayed motion with Updates until settle |
+| fling step with listener interference | own-tenure End, or silent stale drop | each step drives through the owned token with the commit snapshotted before `Update` delivery; a listener jump/bounds change closes the driver's own tenure without overwriting the new position; a listener takeover drops the stale driver silently; same-value jumps disturb nothing |
 | fling settle | End | decay under the minimum velocity closes the transferred bracket exactly once |
 | slow release / cancel | End | below threshold or cancelled: normal release semantics, no driver retained |
 | new drag mid-fling | (takeover, silent) | fresh stream takes ownership; stale driver drops silently at next pump; motion continues |
@@ -2829,10 +2830,13 @@ spring-math tests alone:
   viewports): release velocity from the recognizer's release details
   (offset-space px/sec) transfers the drag token past the physics
   minimum — no End/Start churn; `ScrollPhysics::fling_step` integrates
-  exponential decay (pure math in the physics owner); the runtime frame
-  clock pumps drivers before layout and requests frames while any
-  remain; settle, takeover, external-move mismatch, unmount, and
-  reduced motion close as tabulated above. Proven through the
+  the exact analytic decay integral (partition-independent travel;
+  settle-crossing intervals still apply their final displacement); the
+  runtime frame clock pumps drivers before layout and requests frames
+  while any remain; settle, takeover, external-move mismatch, unmount,
+  and reduced motion close as tabulated above. A hard boundary with an
+  outward fling and no movement possible stops promptly instead of
+  scheduling useless frames until decay. Proven through the
   production frame path with deterministic tree-level steps plus one
   time-tolerant runtime integration test.
 - Still unsupported: 2D/wheel/draggable-sheet fling, nested remainder
@@ -2858,7 +2862,7 @@ check (no unchecked public writer remains):
 | `commit_extent_state` / `finish_extent_publication` | private (`pub(crate)`): the single extent algorithm, unreachable except through the checked entries above |
 | `ScrollController::start_owned_activity` / `OwnedActivity::finish` | generation tokens: takeover bumps silently (no duplicate `Start`); only the current token's finish emits `End`; stale finishes and stale drops change nothing |
 | `ViewportMetricsUpdate::with_axis` | the axis-carrying publication form: geometry and context commit together on every viewport path (ordinary, sliver, wheel retained + headless, 2D both axes) |
-| `ScrollPhysics::fling_step` | pure ballistic integration (decay + settle) used only by retained fling drivers; never schedules or notifies by itself |
+| `ScrollPhysics::fling_step` | exact analytic integral of exponential decay (`v0*(1-exp(-k*t))/k`); intervals crossing the settle threshold integrate only to the crossing and still apply the final displacement; used only by retained fling drivers; never schedules or notifies by itself |
 | `ScrollController::try_set_metrics_context` | free-only standalone context declaration for headless hosts/tests; refused with `AttachedOwner` while owned, mutating nothing |
 | Viewport/wheel/2D descriptor setters (`new`, `set_axis_directions`, `set_physics`) | local configuration only — shared controller state untouched; context publishes at authorized layout |
 

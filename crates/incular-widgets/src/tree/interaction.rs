@@ -733,6 +733,16 @@ impl WidgetTree {
                 driver.activity.finish();
                 continue;
             }
+            if committed.offset == previous
+                && ((step.offset_delta > 0. && previous >= driver.controller.max_offset())
+                    || (step.offset_delta < 0. && previous <= 0.))
+            {
+                // Hard boundary with an outward fling and no movement
+                // possible: stop now instead of scheduling useless
+                // frames until the velocity decays.
+                driver.activity.finish();
+                continue;
+            }
             if committed.offset != previous {
                 moved += 1;
             }
