@@ -6,6 +6,7 @@ use common::*;
 use incular_config::{Axis, Constraints};
 use incular_core::{Color, Offset, Size};
 use incular_scroll::ScrollPhysics;
+use incular_semantics::SemanticRole;
 use incular_widgets::internal::*;
 use serde_json::json;
 use std::{cell::Cell, rc::Rc, time::Instant};
@@ -926,13 +927,63 @@ fn keyed_sliver_view(controller: &ScrollController, keys: &[u64]) -> Widget {
     .into()
 }
 
+/// Labeled unequal rows for measurement-transfer scenarios. Labels read
+/// `row{key}` so identity, paint, hits, and semantics can all name the
+/// same row. Semantics merges into the row element (no extra level),
+/// so child counts and hit targets match plain boxes.
+fn labeled_row(height: f32, key: u64) -> Widget {
+    Widget::from(
+        incular_widgets::Semantics::new(Widget::box_(Size::new(100., height), Color::WHITE))
+            .role(SemanticRole::Group)
+            .label(format!("row{key}")),
+    )
+    .with_key(Key::Value(key))
+}
+
+/// Bare (fallback-estimate) unequal rows through ListView: measured
+/// truth comes only from layout passes.
+fn bare_labeled_view(controller: &ScrollController, heights: &[f32], keys: &[u64]) -> Widget {
+    assert_eq!(heights.len(), keys.len());
+    let heights = heights.to_vec();
+    let keys = keys.to_vec();
+    incular_widgets::ListView::builder(heights.len(), move |index| {
+        labeled_row(heights[index], keys[index])
+    })
+    .controller(controller.clone())
+    .into()
+}
+
+/// Seeded unequal rows: the extent builder carries exact per-row
+/// knowledge, so fresh indexes are exact without visiting anything.
+fn seeded_labeled_view(controller: &ScrollController, heights: &[f32], keys: &[u64]) -> Widget {
+    assert_eq!(heights.len(), keys.len());
+    let heights = heights.to_vec();
+    let keys = keys.to_vec();
+    let seed_heights = heights.clone();
+    incular_widgets::ListView::builder(heights.len(), move |index| {
+        labeled_row(heights[index], keys[index])
+    })
+    .item_extent_builder(move |index| seed_heights[index])
+    .controller(controller.clone())
+    .into()
+}
+
+fn labeled_paint_origins(tree: &mut WidgetTree) -> Vec<Offset> {
+    rect_origins(&tree.paint())
+        .into_iter()
+        .filter(|origin| origin.x < 100.)
+        .collect()
+}
+
 #[test]
 fn dynamic_keyed_rotation_lookups_stay_linear() {
     // An N-child rotation moves every element through the keyed path:
-    // compatibility work stays linear (at most one positional probe
-    // plus one keyed pop per child), the keyed index is built exactly
-    // once with one entry per keyed old child, and nothing mounts or
-    // unmounts. Repeated full scans would grow quadratically instead.
+    // compatibility work stays linear, the keyed index is built once
+    // per reconcile pass (hygiene plus one converging pass here, each
+    // filing every keyed old exactly once), only the hygiene pass
+    // probes it (the converging pass resolves positionally), and
+    // nothing mounts or unmounts. Repeated full scans would grow
+    // quadratically instead.
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
     let keys: Vec<u64> = (0..8).collect();
@@ -964,11 +1015,11 @@ fn dynamic_keyed_rotation_lookups_stay_linear() {
         ]
     );
     let after = tree.diagnostics();
-    assert_eq!(after.key_maps_built - before.key_maps_built, 1);
-    assert_eq!(after.key_map_entries - before.key_map_entries, 8);
+    assert_eq!(after.key_maps_built - before.key_maps_built, 2);
+    assert_eq!(after.key_map_entries - before.key_map_entries, 16);
     assert_eq!(after.key_lookups - before.key_lookups, 8);
     assert!(
-        after.key_comparisons - before.key_comparisons <= 16,
+        after.key_comparisons - before.key_comparisons <= 32,
         "compatibility work stays linear in moved children"
     );
     assert_eq!(after.mounts - before.mounts, 0);
@@ -988,6 +1039,426 @@ fn dynamic_keyed_rotation_lookups_stay_linear() {
     assert_eq!(quiet.key_lookups - settled.key_lookups, 0);
     assert_eq!(quiet.mounts - settled.mounts, 0);
     assert_eq!(quiet.unmounts - settled.unmounts, 0);
+}
+
+fn base_heights(count: usize) -> Vec<f32> {
+    (0..count).map(|i| 30. + 4. * i as f32).collect()
+}
+
+fn base_keys(count: usize) -> Vec<u64> {
+    (0..count as u64).collect()
+}
+
+fn mount_baseline(seeded: bool) -> (WidgetTree, ScrollController, ElementId) {
+    let heights = base_heights(40);
+    let keys = base_keys(40);
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(if seeded {
+            seeded_labeled_view(&controller, &heights, &keys)
+        } else {
+            bare_labeled_view(&controller, &heights, &keys)
+        })
+        .unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(controller.jump_to(150.));
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
+    (tree, controller, root)
+}
+
+fn snapshot(
+    tree: &mut WidgetTree,
+    controller: &ScrollController,
+    root: ElementId,
+) -> (f32, f32, Vec<Offset>, Vec<ElementId>, String) {
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
+    tree.update_semantics();
+    (
+        controller.offset(),
+        controller.max_offset(),
+        labeled_paint_origins(tree),
+        tree.children(root).unwrap().to_vec(),
+        tree.semantics_debug_dump(),
+    )
+}
+
+fn hit_element(tree: &WidgetTree, point: Offset) -> Option<ElementId> {
+    tree.hit_test(point)
+        .and_then(|render| tree.element_for_render(render))
+}
+
+/// Widget keys of materialized children, in order. Inverts
+/// `element_with_key` over the scenario's candidate keys.
+fn window_keys(tree: &WidgetTree, kids: &[ElementId], candidates: &[u64]) -> Vec<u64> {
+    kids.iter()
+        .map(|kid| {
+            candidates
+                .iter()
+                .find(|key| tree.element_with_key(&Key::Value(**key)) == Some(*kid))
+                .copied()
+                .expect("materialized child carries a scenario key")
+        })
+        .collect()
+}
+
+#[test]
+fn transfer_unequal_rebuild_holds_anchor() {
+    // Identical descriptor rebuild while scrolled: offset and paint
+    // stay put, every old element survives (new rows may join the
+    // estimate-widened window), and the total matches the window
+    // model exactly — bare or seeded.
+    for seeded in [false, true] {
+        let (mut tree, controller, root) = mount_baseline(seeded);
+        let before = tree.children(root).unwrap().to_vec();
+        let heights = base_heights(40);
+        let keys = base_keys(40);
+        tree.update(
+            root,
+            if seeded {
+                seeded_labeled_view(&controller, &heights, &keys)
+            } else {
+                bare_labeled_view(&controller, &heights, &keys)
+            },
+        )
+        .expect("update");
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
+        let (offset, max, paint, kids, dump) = snapshot(&mut tree, &controller, root);
+        assert_eq!(offset, 150., "seeded={seeded}: anchor holds");
+        assert_eq!(
+            paint,
+            vec![
+                Offset::new(0., -6.),
+                Offset::new(0., 40.),
+                Offset::new(0., 90.)
+            ]
+        );
+        assert!(kids.len() < 40, "seeded={seeded}: still lazy");
+        for id in &before {
+            assert!(kids.contains(id), "seeded={seeded}: no element lost");
+        }
+        let window = window_keys(&tree, &kids, &keys);
+        // Total composition (hand-derived best-available accounting):
+        // materialized rows contribute adopted/measured truth, rows
+        // never visited contribute honest estimates — seeded exactness
+        // where the variant carries explicit knowledge (48.0 lazy
+        // fallback elsewhere) — plus retained truth in slots whose
+        // rows left the window (same content, informative, harmless).
+        // Bare here: truth rows 0..=10 (550) + retained row-11 truth
+        // (74) + 28 fallbacks (1344) = 1968, max 1868.
+        if seeded {
+            assert_eq!(max, 4220.);
+        } else {
+            assert_eq!(window, (0..11).collect::<Vec<_>>());
+            assert_eq!(max, 1868.);
+        }
+        for key in [4u64, 5, 6] {
+            assert!(
+                dump.contains(&format!("label=Some(\"row{key}\")")),
+                "seeded={seeded}: visible row{key} in semantics"
+            );
+        }
+    }
+}
+
+#[test]
+fn transfer_insertion_before_viewport_keeps_pixels() {
+    // Insert a 50px row (fresh key) at index 0 of a scrolled list:
+    // pixels hold (offset stays 150), total grows by exactly the new
+    // row, paint shows the shifted rows, and the fresh row
+    // materializes without scrolling. Seeded and bare agree because
+    // identity adoption carries true sizes and the gate suppresses
+    // the index-confused correction.
+    for seeded in [false, true] {
+        let (mut tree, controller, root) = mount_baseline(seeded);
+        let mut heights = vec![50.];
+        heights.extend_from_slice(&base_heights(40));
+        let mut keys = vec![100u64];
+        keys.extend_from_slice(&base_keys(40));
+        tree.update(
+            root,
+            if seeded {
+                seeded_labeled_view(&controller, &heights, &keys)
+            } else {
+                bare_labeled_view(&controller, &heights, &keys)
+            },
+        )
+        .expect("update");
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
+        let (offset, max, paint, kids, dump) = snapshot(&mut tree, &controller, root);
+        assert_eq!(offset, 150., "seeded={seeded}: pixels hold");
+        assert_eq!(
+            paint,
+            vec![
+                Offset::new(0., -36.),
+                Offset::new(0., 2.),
+                Offset::new(0., 44.),
+                Offset::new(0., 90.)
+            ],
+            "seeded={seeded}: shifted rows paint exact"
+        );
+        // Window at 150 by adopted-truth cumulative holds new rows
+        // 0..=10 (X plus old rows 0..=9): eleven materialized of
+        // forty-one, far rows never visited.
+        assert_eq!(kids.len(), 11);
+        assert!(kids.len() < 41, "seeded={seeded}: still lazy");
+        // Fresh row leads; every materialized old element moved
+        // exactly one slot.
+        assert_eq!(tree.element_with_key(&Key::Value(100)), Some(kids[0]));
+        for (position, key) in base_keys(40).iter().enumerate().take(10) {
+            assert_eq!(
+                tree.element_with_key(&Key::Value(*key)),
+                Some(kids[position + 1]),
+                "seeded={seeded}: old row {key} moved +1"
+            );
+        }
+        // Viewport point y=10 is content y=160, inside new row 4
+        // (old row 3, key 3): hits track moved content, not indices.
+        assert_eq!(
+            hit_element(&tree, Offset::new(50., 10.)),
+            tree.element_with_key(&Key::Value(3)),
+            "seeded={seeded}: hit lands on shifted row"
+        );
+        for key in [100u64, 1, 2, 3, 4] {
+            assert!(
+                dump.contains(&format!("label=Some(\"row{key}\")")),
+                "seeded={seeded}: row{key} in semantics"
+            );
+        }
+        if seeded {
+            assert_eq!(max, 4270.);
+        } else {
+            // Adopted window truth (X50 + rows 0..=9 truth 480 = 530)
+            // with 30 fallbacks (1440): total 1970, max 1870.
+            assert_eq!(max, 1870.);
+        }
+    }
+}
+
+#[test]
+fn transfer_removal_before_viewport_keeps_pixels() {
+    // Drop index 0 of a scrolled list: pixels hold, total loses
+    // exactly the removed row, paint shows the shifted rows, and the
+    // removed label leaves semantics. Keyed moves gate the anchor
+    // correction in both variants.
+    for seeded in [false, true] {
+        let (mut tree, controller, root) = mount_baseline(seeded);
+        let heights = base_heights(40)[1..].to_vec();
+        let keys = base_keys(40)[1..].to_vec();
+        tree.update(
+            root,
+            if seeded {
+                seeded_labeled_view(&controller, &heights, &keys)
+            } else {
+                bare_labeled_view(&controller, &heights, &keys)
+            },
+        )
+        .expect("update");
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
+        let (offset, max, paint, kids, dump) = snapshot(&mut tree, &controller, root);
+        assert_eq!(offset, 150., "seeded={seeded}: pixels hold");
+        // New mapping: r1 0-34, r2 34-72, r3 72-114, r4 114-160,
+        // r5 160-210, r6 210-264.
+        assert_eq!(
+            paint,
+            vec![
+                Offset::new(0., -36.),
+                Offset::new(0., 10.),
+                Offset::new(0., 60.)
+            ]
+        );
+        assert!(kids.len() < 39, "seeded={seeded}: still lazy");
+        assert_eq!(kids.len(), 10);
+        for (position, key) in keys.iter().enumerate().take(kids.len()) {
+            assert_eq!(
+                tree.element_with_key(&Key::Value(*key)),
+                Some(kids[position]),
+                "seeded={seeded}: surviving row {key} kept identity"
+            );
+        }
+        // Content y=160 sits in new row 5 (old row 5, key 5).
+        assert_eq!(
+            hit_element(&tree, Offset::new(50., 10.)),
+            tree.element_with_key(&Key::Value(5)),
+            "seeded={seeded}: hit follows shifted content"
+        );
+        for key in [4u64, 5, 6] {
+            assert!(
+                dump.contains(&format!("label=Some(\"row{key}\")")),
+                "seeded={seeded}: visible row{key} in semantics"
+            );
+        }
+        assert!(
+            !dump.contains("label=Some(\"row0\")"),
+            "seeded={seeded}: removed label gone from semantics"
+        );
+        if seeded {
+            assert_eq!(max, 4190.);
+        } else {
+            // Adopted window truth (new rows 0..=11 = old rows
+            // 1..=12: 672) with 27 fallbacks (1296): total 1968.
+            assert_eq!(max, 1868.);
+        }
+    }
+}
+
+#[test]
+fn transfer_distant_reorder_keeps_pixels() {
+    // Swap indices 0 and 8 (unequal heights travel with their keys):
+    // cumulative offsets above the viewport change, yet pixels hold
+    // because identity adoption carries true sizes and the gate
+    // suppresses the index-confused correction.
+    for seeded in [false, true] {
+        let (mut tree, controller, root) = mount_baseline(seeded);
+        let mut heights = base_heights(40);
+        heights.swap(0, 8);
+        let mut keys = base_keys(40);
+        keys.swap(0, 8);
+        tree.update(
+            root,
+            if seeded {
+                seeded_labeled_view(&controller, &heights, &keys)
+            } else {
+                bare_labeled_view(&controller, &heights, &keys)
+            },
+        )
+        .expect("update");
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
+        let (offset, max, paint, kids, dump) = snapshot(&mut tree, &controller, root);
+        assert_eq!(offset, 150., "seeded={seeded}: pixels hold");
+        // New cumulative: 62, 96, 134, 176, 222, ... : rows 2, 3, 4
+        // paint at -16, 26, 72.
+        assert_eq!(
+            paint,
+            vec![
+                Offset::new(0., -16.),
+                Offset::new(0., 26.),
+                Offset::new(0., 72.)
+            ]
+        );
+        assert!(kids.len() < 40, "seeded={seeded}: still lazy");
+        assert_eq!(kids.len(), 11);
+        assert_eq!(tree.element_with_key(&Key::Value(8)), Some(kids[0]));
+        assert_eq!(tree.element_with_key(&Key::Value(0)), Some(kids[8]));
+        // Viewport point y=10 is content y=160, inside new row 3
+        // (old row 3, key 3): hits track moved content, not indices.
+        assert_eq!(
+            hit_element(&tree, Offset::new(50., 10.)),
+            tree.element_with_key(&Key::Value(3)),
+            "seeded={seeded}: hit follows reordered content"
+        );
+        for key in [3u64, 4, 5] {
+            assert!(
+                dump.contains(&format!("label=Some(\"row{key}\")")),
+                "seeded={seeded}: visible row{key} in semantics"
+            );
+        }
+        if seeded {
+            assert_eq!(max, 4220.);
+        } else {
+            // Same multiset in new positions: adopted truth rows
+            // 0..=10 sums identically (550), plus retained row-11
+            // truth (74, same content) with 28 fallbacks (1344).
+            assert_eq!(max, 1868.);
+        }
+    }
+}
+
+#[test]
+fn transfer_replacement_content_revalidates_coherently() {
+    // Completely different content (uniform rows, fresh keys): no row
+    // identity survives, so transferred guesses are demoted and the
+    // first sight refines like a fresh estimate — content-stable,
+    // exact totals, coherent paint/hit/semantics, stale labels gone.
+    for seeded in [false, true] {
+        let (mut tree, controller, root) = mount_baseline(seeded);
+        let before = tree.children(root).unwrap().to_vec();
+        let heights = vec![44.; 40];
+        let keys: Vec<u64> = (50..90).collect();
+        tree.update(
+            root,
+            if seeded {
+                seeded_labeled_view(&controller, &heights, &keys)
+            } else {
+                bare_labeled_view(&controller, &heights, &keys)
+            },
+        )
+        .expect("update");
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
+        let (offset, max, paint, kids, dump) = snapshot(&mut tree, &controller, root);
+        assert!(kids.len() < 40, "seeded={seeded}: still lazy");
+        let mut distinct = kids.clone();
+        distinct.sort_by_key(|id| format!("{id:?}"));
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            kids.len(),
+            "seeded={seeded}: no aliased rows"
+        );
+        for id in &before {
+            assert!(!kids.contains(id), "seeded={seeded}: stale rows unmounted");
+        }
+        for (position, key) in keys.iter().enumerate().take(kids.len()) {
+            assert_eq!(
+                tree.element_with_key(&Key::Value(*key)),
+                Some(kids[position]),
+                "seeded={seeded}: fresh row {key} placed"
+            );
+        }
+        for key in [50u64, 51, 52, 53] {
+            assert!(
+                dump.contains(&format!("label=Some(\"row{key}\")")),
+                "seeded={seeded}: fresh row{key} in semantics"
+            );
+        }
+        assert!(
+            !dump.contains("label=Some(\"row5\")"),
+            "seeded={seeded}: stale labels gone"
+        );
+        if seeded {
+            // Forty uniform 44px rows: total 1760, max 1660. Offset
+            // holds (exact seeds, nothing to refine); rows at 44px
+            // pitch paint at -18, 26, 70.
+            assert_eq!(offset, 150.);
+            assert_eq!(max, 1660.);
+            assert_eq!(
+                paint,
+                vec![
+                    Offset::new(0., -18.),
+                    Offset::new(0., 26.),
+                    Offset::new(0., 70.)
+                ]
+            );
+        } else {
+            // Bare replacement: no row identity survives, so the
+            // transferred guesses are demoted and the first sight
+            // refines like fresh estimates — the anchor holds the
+            // newly measured content stable instead of jumping.
+            // Estimates place row 3 at 144; truth is 132; the -12
+            // correction lands at 138 with rows at 44px pitch. Twelve
+            // rows materialize (12×44 measured) with 28 fallbacks:
+            // total 1872, max 1772 — honest estimates, no stale rows.
+            assert_eq!(offset, 138.);
+            assert_eq!(kids.len(), 12);
+            assert_eq!(max, 1772.);
+            assert_eq!(
+                paint,
+                vec![
+                    Offset::new(0., -6.),
+                    Offset::new(0., 38.),
+                    Offset::new(0., 82.)
+                ]
+            );
+        }
+    }
 }
 
 #[test]

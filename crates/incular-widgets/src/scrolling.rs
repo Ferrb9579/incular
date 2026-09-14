@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -49,6 +49,7 @@ use layout::{
     single_sliver_viewport_with_options, sliver_child_constraints, snap_activity_subscription,
     widget_main_extent_hint,
 };
+pub(crate) use layout::{adopt_reconciled_measurement, invalidate_transferred_measurement};
 
 pub use notifications::*;
 pub use reorderable::{

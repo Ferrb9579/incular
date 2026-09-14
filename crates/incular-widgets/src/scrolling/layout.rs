@@ -313,6 +313,13 @@ pub(super) struct VariableExtentRenderSliver {
     pub(super) index: MeasuredExtentIndex,
     pub(super) builder: Rc<dyn Fn(usize) -> Widget>,
     pub(super) widgets: HashMap<usize, Widget>,
+    /// Slots the last compatible-state transfer wrote. Transfer runs at
+    /// descriptor-update time, before element reconciliation establishes
+    /// row identity; reconciliation consults this set to tell
+    /// transferred guesses apart from explicit seeds. Per-delegate
+    /// generation: a fresh delegate starts empty, and entries are only
+    /// ever read for fresh mounts of that same generation.
+    pub(super) transferred: RefCell<HashSet<usize>>,
 }
 
 impl VariableExtentRenderSliver {
@@ -321,6 +328,7 @@ impl VariableExtentRenderSliver {
             index,
             builder,
             widgets: HashMap::new(),
+            transferred: RefCell::new(HashSet::new()),
         }
     }
 
@@ -2060,15 +2068,114 @@ fn adopt_variable_extent_measurements(
     let mut adopted = false;
     for index in 0..len {
         // Fresh seeds (Some) always win; only bare fallbacks (None)
-        // accept a carried measurement.
+        // accept a carried measurement. Carried slots are recorded so
+        // reconciliation can later tell transferred guesses apart from
+        // explicit seeds. This transfer only shields totals and first
+        // paint; per-row truth is established post-mapping below.
         if fresh.index.measured_extent(index).is_some() {
             continue;
         }
-        if let Some(extent) = retained.index.measured_extent(index) {
-            adopted |= fresh.index.set_measured_extent(index, extent);
+        if let Some(extent) = retained.index.measured_extent(index)
+            && fresh.index.set_measured_extent(index, extent)
+        {
+            adopted = true;
+            fresh.transferred.borrow_mut().insert(index);
         }
     }
     adopted
+}
+
+struct VariableSlot {
+    index: MeasuredExtentIndex,
+    local: usize,
+    transferred: bool,
+}
+
+/// Resolves a viewport-scoped child to its variable-extent slot:
+/// the shared index, the sliver-local row, and whether the last
+/// transfer wrote that slot without established identity. Descends
+/// sequences by scope and through transparent single-inner wrappers
+/// (same set as the transfer helper). Shared borrows only; the
+/// cloned index shares state. Returns None for non-variable shapes,
+/// which manage their own measurements.
+fn variable_slot_for_child(
+    delegate: &dyn SliverViewportDelegate,
+    child: SliverChildId,
+) -> Option<VariableSlot> {
+    fn slot_in_sliver(sliver: &mut dyn RenderSliver, local: usize) -> Option<VariableSlot> {
+        if let Some(variable) = sliver
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<VariableExtentRenderSliver>())
+        {
+            return Some(VariableSlot {
+                index: variable.index.clone(),
+                local,
+                transferred: variable.transferred.borrow().contains(&local),
+            });
+        }
+        if let Some(wrapper) = sliver
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<PaddingRenderSliver>())
+        {
+            return slot_in_sliver(&mut **wrapper.inner.borrow_mut(), local);
+        }
+        if let Some(wrapper) = sliver
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<WidgetWrapRenderSliver>())
+        {
+            return slot_in_sliver(&mut **wrapper.inner.borrow_mut(), local);
+        }
+        if let Some(wrapper) = sliver
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<OverlapAbsorberRenderSliver>())
+        {
+            return slot_in_sliver(&mut **wrapper.inner.borrow_mut(), local);
+        }
+        None
+    }
+    let local = usize::try_from(child.local().0.checked_sub(1)?).ok()?;
+    let sequence = delegate
+        .as_any()?
+        .downcast_ref::<SequenceViewportDelegate>()?;
+    let sequence = sequence.sequence.borrow();
+    let sliver = sequence.children.get(child.scope())?;
+    slot_in_sliver(&mut **sliver.borrow_mut(), local)
+}
+
+/// Records an identity-established measurement after element
+/// reconciliation: `extent` is the retained size of the reused old
+/// element now sitting at `child`. Applies only to previously
+/// unseeded slots — fresh explicit seeds always stand — and reports
+/// whether the index changed. Non-variable shapes report false.
+pub(crate) fn adopt_reconciled_measurement(
+    delegate: &dyn SliverViewportDelegate,
+    child: SliverChildId,
+    extent: f32,
+) -> bool {
+    let Some(slot) = variable_slot_for_child(delegate, child) else {
+        return false;
+    };
+    if slot.index.measured_extent(slot.local).is_some() {
+        return false;
+    }
+    slot.index.set_measured_extent(slot.local, extent)
+}
+
+/// Demotes a transferred guess for a fresh-mounted child back to an
+/// estimate. Fires only for slots the last transfer wrote without
+/// established identity, so explicit seeds and untouched fallbacks
+/// are never disturbed. Non-variable shapes report false.
+pub(crate) fn invalidate_transferred_measurement(
+    delegate: &dyn SliverViewportDelegate,
+    child: SliverChildId,
+) -> bool {
+    let Some(slot) = variable_slot_for_child(delegate, child) else {
+        return false;
+    };
+    if !slot.transferred {
+        return false;
+    }
+    slot.index.invalidate_extent(slot.local)
 }
 
 /// Adopts a measured box extent so replacing a viewport descriptor does not

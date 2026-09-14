@@ -13,6 +13,17 @@ struct DesiredDynamicChild<K> {
 struct DynamicChildResult<K> {
     keys: Vec<K>,
     children: Vec<ElementId>,
+    provenance: Vec<ChildProvenance>,
+}
+
+/// Where one reconciled dynamic child came from: a reused old element
+/// (and whether it changed position) or a fresh mount. Measurement
+/// adoption and the scroll-anchor gate consume this; callers without
+/// anchor math ignore it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChildProvenance {
+    Reused { moved: bool },
+    Fresh,
 }
 
 impl WidgetTree {
@@ -795,7 +806,7 @@ impl WidgetTree {
         id: RenderObjectId,
         config: &SliverViewportConfig,
         layout: &SliverViewportLayout,
-    ) -> Result<(), TreeError> {
+    ) -> Result<bool, TreeError> {
         let element_id = self.element_for_render(id).unwrap_or_else(|| {
             self.panic_invariant(
                 InvariantCategory::Ownership,
@@ -820,6 +831,47 @@ impl WidgetTree {
             self.reconcile_dynamic_children(element_id, &old_ids, desired, true, |key| {
                 GeneratedChildIdentity::Sliver(format!("{key:?}"))
             })?;
+        // Identity-established measurements: reused elements carry
+        // their retained size into previously unseeded slots, and
+        // fresh mounts demote transferred guesses without established
+        // identity. Fresh seeds always stand. Reports whether any
+        // element moved, which suppresses this pass's anchor
+        // correction (pixels hold across structural edits).
+        let delegate: &dyn crate::scrolling::SliverViewportDelegate = &*config.delegate;
+        let mut mapping_changed = false;
+        for (position, (child, origin)) in reconciled
+            .children
+            .iter()
+            .copied()
+            .zip(reconciled.provenance.iter().copied())
+            .enumerate()
+        {
+            let Some(scoped) = layout.children.get(position).map(|child| child.id) else {
+                continue;
+            };
+            match origin {
+                ChildProvenance::Reused { moved } => {
+                    mapping_changed |= moved;
+                    // Adopt only from laid-out renders: elements mounted
+                    // or dirtied by this update have no trustworthy size
+                    // yet, so their slots keep seeds or estimates until
+                    // the measure pass records truth.
+                    let size = self
+                        .elements
+                        .get(child.0)
+                        .and_then(|element| self.renders.get(element.render.0))
+                        .filter(|render| !render.dirty.contains(DirtyFlags::LAYOUT))
+                        .map(|render| config.axis.main_extent(render.size));
+                    if let Some(size) = size {
+                        crate::scrolling::adopt_reconciled_measurement(delegate, scoped, size);
+                    }
+                }
+                ChildProvenance::Fresh => {
+                    crate::scrolling::invalidate_transferred_measurement(delegate, scoped);
+                }
+            }
+        }
+
         let mut next_semantic_indices = Vec::with_capacity(layout.children.len());
         let mut overlays = HashSet::new();
         for child in &layout.children {
@@ -843,7 +895,7 @@ impl WidgetTree {
         element.sliver_delegate_revision = config.delegate.revision();
         element.sliver_scroll_revision = config.controller.revision();
         self.sync_render_children(element_id);
-        Ok(())
+        Ok(mapping_changed)
     }
 
     /// Reconciles children materialized by one of the renderer-independent
@@ -943,17 +995,27 @@ impl WidgetTree {
             self.diagnostics.key_map_entries +=
                 keyed_index.values().map(Vec::len).sum::<usize>() as u64;
         }
+        // Old positions for move detection below. One linear pass; every
+        // reuse below then classifies in O(1).
+        let old_positions: HashMap<ElementId, usize> = old_children
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(position, id)| (id, position))
+            .collect();
         let mut retained = HashSet::with_capacity(desired.len());
         let mut next_keys = Vec::with_capacity(desired.len());
         let mut next_children = Vec::with_capacity(desired.len());
+        let mut provenance = Vec::with_capacity(desired.len());
 
         for DesiredDynamicChild { key, widget } in desired {
+            let new_position = next_children.len();
             // Positional path: the generated key names exactly one old
             // element, which must be unconsumed. Sibling keys are
             // unique (checked above), so a consumed candidate here is
             // unreachable; the filter still enforces one-element-once
             // structurally, falling through instead of aliasing.
-            let child = if let Some(candidate) = existing
+            let (child, origin) = if let Some(candidate) = existing
                 .get(&key)
                 .copied()
                 .filter(|candidate| !retained.contains(candidate))
@@ -966,18 +1028,24 @@ impl WidgetTree {
                         source: Box::new(source),
                     }
                 })?;
-                candidate
-            } else if let Some(moved) = self.take_keyed_move(&mut keyed_index, &widget) {
+                let moved = old_positions
+                    .get(&candidate)
+                    .is_some_and(|old| *old != new_position);
+                (candidate, ChildProvenance::Reused { moved })
+            } else if let Some(element) = self.take_keyed_move(&mut keyed_index, &widget) {
                 // Same declarative identity at a new algorithm index: a
                 // reorder moves the element instead of rebuilding it.
-                self.update_existing(moved, &widget).map_err(|source| {
+                self.update_existing(element, &widget).map_err(|source| {
                     TreeError::InvalidGeneratedChild {
                         owner,
                         child: identity(&key),
                         source: Box::new(source),
                     }
                 })?;
-                moved
+                let moved = old_positions
+                    .get(&element)
+                    .is_some_and(|old| *old != new_position);
+                (element, ChildProvenance::Reused { moved })
             } else {
                 if account_items {
                     self.diagnostics.items_built += 1;
@@ -992,11 +1060,12 @@ impl WidgetTree {
                 if account_items {
                     self.diagnostics.items_mounted += 1;
                 }
-                child
+                (child, ChildProvenance::Fresh)
             };
             retained.insert(child);
             next_keys.push(key);
             next_children.push(child);
+            provenance.push(origin);
         }
 
         for child in old_children {
@@ -1013,6 +1082,7 @@ impl WidgetTree {
         Ok(DynamicChildResult {
             keys: next_keys,
             children: next_children,
+            provenance,
         })
     }
 

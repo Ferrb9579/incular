@@ -84,14 +84,18 @@ impl WidgetTree {
     /// learning; the nonconvergence fallback applies a retained snapshot with
     /// recording disabled so the snapshot's geometry stays authoritative for
     /// the delegate. Either way children are positioned from identical code.
+    /// Measures materialized sliver children. Returns `(pass_changed,
+    /// mapping_changed)`: whether any measurement changed, and whether
+    /// any element moved index this pass (which suppresses that pass's
+    /// anchor correction so structural edits keep pixels).
     fn measure_sliver_children(
         &mut self,
         id: RenderObjectId,
         config: &crate::scrolling::SliverViewportConfig,
         sliver_layout: &crate::scrolling::SliverViewportLayout,
         record_measurements: bool,
-    ) -> Result<bool, TreeError> {
-        self.reconcile_sliver_children(id, config, sliver_layout)?;
+    ) -> Result<(bool, bool), TreeError> {
+        let mapping_changed = self.reconcile_sliver_children(id, config, sliver_layout)?;
         let materialized = self
             .render_live(id, "sliver viewport render must remain live")
             .children
@@ -115,7 +119,7 @@ impl WidgetTree {
             self.compositor
                 .update_transform(layer, CoreTransform::translation(offset));
         }
-        Ok(pass_changed)
+        Ok((pass_changed, mapping_changed))
     }
 
     pub(super) fn layout_sliver_kind(
@@ -226,13 +230,34 @@ impl WidgetTree {
                     )),
                 );
 
+                // Hygiene: establish row identity (adopt true sizes,
+                // demote unaffiliated guesses) before any anchor is
+                // taken, so the anchor never compares transferred
+                // guesses. Mapping without measuring; adopted positions
+                // take effect on the corrective layout below. Seeds the
+                // structural flag: keyed moves keep pixels for the
+                // whole call, while genuine refinements still correct.
+                let mut structural = self.reconcile_sliver_children(id, &config, &sliver_layout)?;
+                sliver_layout = self.publish_sliver_attempt(
+                    viewport_element,
+                    &config,
+                    &mut last_published,
+                    size,
+                    viewport_extent,
+                    config.delegate.perform_layout(make_constraints(
+                        physical_scroll_offset(&config.controller, config.reverse),
+                        viewport_extent,
+                    )),
+                );
+
                 let mut converged = false;
                 for _ in 0..3 {
                     let physical_before =
                         physical_scroll_offset(&config.controller, config.reverse);
                     let anchor_before = sliver_anchor(&sliver_layout, physical_before);
-                    let pass_changed =
+                    let (pass_changed, mapping_changed) =
                         self.measure_sliver_children(id, &config, &sliver_layout, true)?;
+                    structural |= mapping_changed;
                     // Shrink-wrapping viewports derive size from content, so a
                     // layout whose content no longer matches the size must
                     // re-run with consistent constraints even when no child
@@ -289,7 +314,15 @@ impl WidgetTree {
                             )),
                         );
                     }
-                    if let Some((anchor_id, anchor_offset)) = anchor_before
+                    // A structural layout keeps pixels: moved index names
+                    // now address different rows, so comparing them
+                    // would correct for a shift that is the edit
+                    // itself, not a measurement refinement. The flag is
+                    // sticky for the call because later passes see a
+                    // stable mapping; genuine refinements then correct
+                    // as before.
+                    if !structural
+                        && let Some((anchor_id, anchor_offset)) = anchor_before
                         && let Some(updated) = next_layout
                             .children
                             .iter()
