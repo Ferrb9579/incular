@@ -1,4 +1,24 @@
-use crate::{controller::ScrollController, notifications::ScrollNotificationType};
+use crate::{
+    controller::{ScrollController, ScrollState},
+    notifications::ScrollNotificationType,
+};
+
+/// Advances the activity identity without reuse: exhaustion panics
+/// explicitly rather than wrapping, so a generation can never alias an
+/// earlier activity — the same policy as attachment identities. The
+/// 64-bit space makes exhaustion unreachable in practice; the panic
+/// exists so wraparound can never silently break stale-token safety.
+fn next_activity_generation(state: &mut ScrollState) -> u64 {
+    match state.activity_generation.checked_add(1) {
+        Some(next) => {
+            state.activity_generation = next;
+            next
+        }
+        None => {
+            panic!("scroll activity identity space exhausted: refusing to reuse a generation")
+        }
+    }
+}
 
 /// Which driver owns an activity token. Metric-attachment ownership
 /// stays separate: this names the input/animation driver holding the
@@ -8,6 +28,8 @@ use crate::{controller::ScrollController, notifications::ScrollNotificationType}
 pub enum ActivityOrigin {
     /// A scrollbar thumb drag owns the bracket.
     Scrollbar,
+    /// One wheel/trackpad sample owns its complete bracket.
+    Wheel,
 }
 
 impl ScrollController {
@@ -21,7 +43,7 @@ impl ScrollController {
                 false
             } else {
                 state.activity_active = true;
-                state.activity_generation = state.activity_generation.wrapping_add(1);
+                next_activity_generation(&mut state);
                 true
             }
         };
@@ -51,8 +73,8 @@ impl ScrollController {
             let mut state = self.state.borrow_mut();
             let started = !state.activity_active;
             state.activity_active = true;
-            state.activity_generation = state.activity_generation.wrapping_add(1);
-            (started, state.activity_generation)
+            let generation = next_activity_generation(&mut state);
+            (started, generation)
         };
         let token = OwnedActivity {
             controller: self.clone(),

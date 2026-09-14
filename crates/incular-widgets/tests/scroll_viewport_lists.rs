@@ -1363,6 +1363,57 @@ fn no_public_route_bypasses_attachment_authority() {
 }
 
 #[test]
+fn wheel_sample_completion_preserves_reentrant_activity() {
+    // Through the real wheel adapter: a newer activity started inside a
+    // sample's notification survives the old sample's completion — the
+    // sample's token went stale at takeover, so its finish stays silent
+    // instead of ending the newer bracket.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update, UserScroll};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let controller_for_listener = controller.clone();
+    let taken_handle = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let taken_for_listener = taken_handle.clone();
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == UserScroll && taken_for_listener.borrow().is_none() {
+                // Take over mid-sample; the sample's own token goes stale.
+                *taken_for_listener.borrow_mut() = Some(
+                    controller_for_listener
+                        .start_owned_activity(incular_scroll::ActivityOrigin::Wheel),
+                );
+            }
+            false
+        }
+    });
+    assert!(tree.scroll_at(Offset::new(50., 50.), Offset::new(0., 20.)));
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, UserScroll, Update],
+        "sample completion stays silent after takeover"
+    );
+    let taken = taken_handle
+        .borrow_mut()
+        .take()
+        .expect("listener retained its takeover");
+    assert!(!controller.begin_activity(), "newer bracket still open");
+    assert!(taken.finish());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, UserScroll, Update, End]
+    );
+}
+
+#[test]
 fn dropping_tree_with_open_activity_stays_silent_and_reusable() {
     // Teardown policy: dropping the tree releases ownership and clears
     // the open activity with no End notification — then the retained
