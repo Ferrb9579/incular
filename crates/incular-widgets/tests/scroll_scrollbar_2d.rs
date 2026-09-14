@@ -182,6 +182,156 @@ fn overlay_scrollbar_drag_and_track_share_geometry() {
 }
 
 #[test]
+fn retained_thumb_drag_brackets_one_activity() {
+    // Through production input dispatch: thumb down opens one activity,
+    // the move publishes a plain Update, release closes with End — exact
+    // order, single bracket.
+    use incular_core::PointerPhase;
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        incular_widgets::ListView::new(rows(5))
+            .controller(controller.clone())
+            .into(),
+        100.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    assert!(tree.scrollbar_pointer(PointerPhase::Down, Offset::new(96., 10.)));
+    assert!(tree.scrollbar_pointer(PointerPhase::Move, Offset::new(96., 60.)));
+    assert_eq!(controller.offset(), 100.);
+    assert!(tree.scrollbar_pointer(PointerPhase::Up, Offset::new(96., 60.)));
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End],
+        "one bracket around a plain move"
+    );
+}
+
+#[test]
+fn retained_replacement_mid_drag_ends_old_bracket() {
+    // The press-time bracket survives a viewport controller swap: later
+    // moves resolve the replacement for geometry, but release closes
+    // only the held controller — never the replacement's activity.
+    use incular_core::PointerPhase;
+    let controller = ScrollController::new();
+    let replacement = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        incular_widgets::ListView::new(rows(5))
+            .controller(controller.clone())
+            .into(),
+        100.,
+        100.,
+    );
+    let old_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let new_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_old = old_ends.clone();
+    let counted_new = new_ends.clone();
+    let _old_subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_old.set(counted_old.get() + 1);
+        }
+        false
+    });
+    let _new_subscription = replacement.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_new.set(counted_new.get() + 1);
+        }
+        false
+    });
+    assert!(tree.scrollbar_pointer(PointerPhase::Down, Offset::new(96., 10.)));
+    tree.update(
+        root,
+        incular_widgets::ListView::new(rows(5))
+            .controller(replacement.clone())
+            .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert!(tree.scrollbar_pointer(PointerPhase::Move, Offset::new(96., 60.)));
+    assert_eq!(replacement.offset(), 100.);
+    assert_eq!(controller.offset(), 0.);
+    assert!(tree.scrollbar_pointer(PointerPhase::Up, Offset::new(96., 60.)));
+    assert_eq!(old_ends.get(), 1);
+    assert_eq!(new_ends.get(), 0);
+    assert!(replacement.begin_activity());
+    assert!(replacement.end_activity());
+}
+
+#[test]
+fn retained_unmount_and_close_end_drag_bracket() {
+    // Unmounting the scrollbar mid-drag closes the bracket with End;
+    // dropping the tree with a live drag clears it silently instead —
+    // and both controllers drive normally afterward.
+    use incular_core::PointerPhase;
+    use incular_scroll::ScrollNotificationType::End;
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        incular_widgets::ListView::new(rows(5))
+            .controller(controller.clone())
+            .into(),
+        100.,
+        100.,
+    );
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    assert!(tree.scrollbar_pointer(PointerPhase::Down, Offset::new(96., 10.)));
+    tree.update(
+        root,
+        incular_widgets::ListView::new(Vec::<Widget>::new()).into(),
+    )
+    .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert_eq!(ends.get(), 1, "unmount ends the open drag");
+    assert_eq!(controller.metric_owner(), None);
+    let second = ScrollController::new();
+    let second_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_second = second_ends.clone();
+    let _second_subscription = second.add_listener(move |notification| {
+        if notification.kind == End {
+            counted_second.set(counted_second.get() + 1);
+        }
+        false
+    });
+    let mut closed = WidgetTree::new();
+    mount_tight(
+        &mut closed,
+        incular_widgets::ListView::new(rows(5))
+            .controller(second.clone())
+            .into(),
+        100.,
+        100.,
+    );
+    assert!(closed.scrollbar_pointer(PointerPhase::Down, Offset::new(96., 10.)));
+    drop(closed);
+    assert_eq!(second.metric_owner(), None);
+    assert_eq!(second_ends.get(), 0, "tree close stays silent");
+    assert!(second.begin_activity());
+    assert!(second.end_activity());
+}
+
+#[test]
 fn overlay_scrollbar_cached_paint_updates_hit_geometry() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
@@ -1321,6 +1471,202 @@ fn two_dimensional_teardown_releases_both_axes() {
     assert!(vertical.begin_activity());
     assert!(horizontal.end_activity());
     assert!(vertical.end_activity());
+}
+
+#[test]
+fn raw_thumb_drag_brackets_one_activity() {
+    // One thumb press opens one activity: Start on down, plain Updates
+    // on moves (never duplicate starts), End on release — through
+    // production pointer dispatch with exact ordering.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    let thumb_center = Offset::new(116., 12.);
+    assert!(bar.pointer_down(size, thumb_center));
+    assert!(bar.is_dragging());
+    assert!(bar.pointer_move(size, Offset::new(116., 38.)));
+    let mid = controller.offset();
+    assert!(mid > 0. && mid < controller.max_offset());
+    assert!(bar.pointer_move(size, Offset::new(116., 76.)));
+    assert!(controller.offset() > mid);
+    bar.pointer_up();
+    assert!(!bar.is_dragging());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, End],
+        "one bracket around plain moves"
+    );
+}
+
+#[test]
+fn raw_pointer_down_without_movement() {
+    // Press and release with no movement still brackets honestly:
+    // Start then End, no Update, no offset change.
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    bar.pointer_up();
+    assert_eq!(events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(controller.offset(), 0.);
+}
+
+#[test]
+fn raw_track_click_stays_programmatic() {
+    // Track clicks page without any bracket; the stray release emits
+    // nothing either.
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 90.)));
+    assert!(!bar.is_dragging());
+    bar.pointer_up();
+    assert_eq!(controller.offset(), 100.);
+    assert!(
+        !events
+            .borrow()
+            .iter()
+            .any(|kind| matches!(kind, Start | End)),
+        "track clicks bracket nothing: {:?}",
+        events.borrow()
+    );
+}
+
+#[test]
+fn raw_replacement_mid_drag_ends_old_bracket() {
+    // The bracket belongs to the held controller: moves keep driving it
+    // after the viewport swaps away, and release ends its activity —
+    // never the replacement's.
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let replacement = ScrollController::new();
+    replacement
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let old_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let new_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_old = old_ends.clone();
+    let counted_new = new_ends.clone();
+    let _old_subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_old.set(counted_old.get() + 1);
+        }
+        false
+    });
+    let _new_subscription = replacement.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_new.set(counted_new.get() + 1);
+        }
+        false
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    // Viewport swaps to the replacement; the model still holds the old.
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    assert!(controller.offset() > 0.);
+    assert_eq!(replacement.offset(), 0.);
+    bar.pointer_up();
+    assert_eq!(old_ends.get(), 1);
+    assert_eq!(new_ends.get(), 0);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    assert!(replacement.begin_activity());
+    assert!(replacement.end_activity());
+}
+
+#[test]
+fn raw_style_change_ends_dropped_drag() {
+    // Restyling drops the drag rather than retargeting it — and the
+    // dropped bracket still closes exactly once; the later release is
+    // silent.
+    use incular_scroll::ScrollNotificationType::End;
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    bar.set_style(RawScrollbarStyle::default());
+    assert!(!bar.is_dragging());
+    assert_eq!(ends.get(), 1);
+    bar.pointer_up();
+    assert_eq!(ends.get(), 1, "no second End from the stray release");
+}
+
+#[test]
+fn raw_dropped_mid_drag_model_aborts_silently() {
+    // A dropped mid-drag model never delivers pointer-up: silent abort
+    // clears the bracket so the next gesture starts fresh.
+    use incular_scroll::ScrollNotificationType::End;
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    drop(bar);
+    assert_eq!(ends.get(), 0, "model drop stays silent");
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    assert_eq!(ends.get(), 1);
 }
 
 #[test]

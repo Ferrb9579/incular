@@ -154,6 +154,22 @@ impl RawScrollbar {
         }
     }
 
+    /// Begins the drag bracket on the held controller, idempotently: an
+    /// already-open activity (shared controllers) gains no duplicate
+    /// `Start`, and the matching release below still closes it.
+    fn begin_drag_activity(&self) {
+        let _ = self.controller.begin_activity();
+    }
+
+    /// Closes a drag bracket opened by [`pointer_down`](Self::pointer_down).
+    /// Runs only for a live drag, so track clicks and stray releases emit
+    /// nothing.
+    fn end_drag_activity(&mut self) {
+        if self.drag.take().is_some() {
+            self.controller.end_activity();
+        }
+    }
+
     /// Returns the attached controller.
     #[must_use]
     pub fn controller(&self) -> ScrollController {
@@ -166,10 +182,11 @@ impl RawScrollbar {
         self.style
     }
 
-    /// Replaces the style and drops an active pointer drag.
+    /// Replaces the style, ending an active pointer drag's bracket first:
+    /// a dropped drag can never strand its activity flag.
     pub fn set_style(&mut self, style: RawScrollbarStyle) {
+        self.end_drag_activity();
         self.style = style.normalized();
-        self.drag = None;
     }
 
     /// Computes track and thumb rectangles for `viewport_size`.
@@ -247,7 +264,10 @@ impl RawScrollbar {
         }
     }
 
-    /// Starts a thumb drag or performs a page step on the track.
+    /// Starts a thumb drag or performs a page step on the track. A thumb
+    /// press opens one drag activity (`Start`); moves only publish
+    /// offsets, never duplicate starts. A track click pages
+    /// programmatically with no bracket.
     pub fn pointer_down(&mut self, viewport_size: Size, point: Offset) -> bool {
         if !self.style.normalized().interactive {
             return false;
@@ -263,6 +283,7 @@ impl RawScrollbar {
             self.drag = Some(ThumbDrag {
                 grab_offset: main - thumb_main,
             });
+            self.begin_drag_activity();
             return true;
         }
         if geometry.track_contains(point) {
@@ -307,9 +328,17 @@ impl RawScrollbar {
             .jump_to(geometry.max_scroll_extent * fraction)
     }
 
-    /// Ends the active thumb drag.
+    /// Ends the active thumb drag, closing its activity with `End`. A
+    /// release with no live drag — track clicks, stray releases — emits
+    /// nothing.
     pub fn pointer_up(&mut self) {
-        self.drag = None;
+        self.end_drag_activity();
+    }
+
+    /// Cancels the active thumb drag. Cancellation ends the genuine user
+    /// interaction, so it closes the bracket exactly like a release.
+    pub fn pointer_cancel(&mut self) {
+        self.end_drag_activity();
     }
 
     /// Returns whether a thumb drag is active.
@@ -319,6 +348,9 @@ impl RawScrollbar {
     }
 
     /// Maps a track coordinate directly into a logical offset.
+    ///
+    /// One-shot programmatic move like a track click: unbracketed by
+    /// design, composable inside an activity the caller owns.
     pub fn scroll_to_thumb_position(&self, viewport_size: Size, main_position: f32) -> bool {
         let geometry = self.geometry(viewport_size);
         if !geometry.visible || geometry.thumb_travel <= 0.0 {
@@ -341,6 +373,19 @@ impl RawScrollbar {
     #[must_use]
     pub fn hit_test(&self, viewport_size: Size, point: Offset) -> bool {
         self.geometry(viewport_size).thumb_contains(point)
+    }
+}
+
+impl Drop for RawScrollbar {
+    /// A dropped mid-drag scrollbar never delivers its pointer-up:
+    /// silently clear the open bracket so the next gesture starts fresh
+    /// instead of bricking on a stuck flag. Silent rather than `End` —
+    /// there was no matching release, and notifying from `Drop` risks
+    /// panics during unwinding.
+    fn drop(&mut self) {
+        if self.drag.is_some() {
+            self.controller.abort_activity();
+        }
     }
 }
 

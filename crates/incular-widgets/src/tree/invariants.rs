@@ -788,7 +788,7 @@ impl WidgetTree {
                 None,
             ));
         }
-        if let Some(drag) = self.scrollbar_drag
+        if let Some(drag) = &self.scrollbar_drag
             && !self.renders.contains(drag.render.0)
         {
             return Err(Self::invariant_error(

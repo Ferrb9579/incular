@@ -760,9 +760,14 @@ pub struct SliverViewportDiagnostics {
     pub render_object_count: usize,
     pub picture_layer_count: usize,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ScrollbarDrag {
     render: RenderObjectId,
+    /// The controller bracketed by this drag, captured at press time. Moves
+    /// resolve the render's current controller (which a replacement may
+    /// have swapped), but the bracket always closes on this handle — stale
+    /// cleanup can never end a replacement controller's activity.
+    controller: ScrollController,
     /// Pointer position relative to the rendered thumb's top, fixed for this
     /// captured gesture. Keeping this anchor avoids snapping on a thumb press.
     grab_offset: f32,
@@ -1019,6 +1024,18 @@ impl WidgetTree {
     #[must_use]
     pub fn tree_id(&self) -> u64 {
         self.tree_id
+    }
+}
+
+impl Drop for WidgetTree {
+    /// An in-flight thumb drag dies with its tree: silently clear the
+    /// press-time bracket, consistent with the silent teardown policy
+    /// for torn-down context. Scroll attachments need nothing here —
+    /// each handle tears itself down on drop.
+    fn drop(&mut self) {
+        if let Some(drag) = self.scrollbar_drag.take() {
+            drag.controller.abort_activity();
+        }
     }
 }
 

@@ -1309,8 +1309,13 @@ impl WidgetTree {
                     .expect("invertible scrollbar");
                 if geometry.thumb.contains(point) {
                     let grab = point.y - geometry.thumb.origin.y;
+                    // One drag activity per thumb press: begin here, move
+                    // with plain jumps, close on release or cancellation.
+                    // Track clicks stay unbracketed programmatic pages.
+                    let _ = controller.begin_activity();
                     self.scrollbar_drag = Some(ScrollbarDrag {
                         render,
+                        controller,
                         grab_offset: grab.clamp(0., geometry.thumb.size.height),
                     });
                     self.scroll_state_live_mut(render).dragging = true;
@@ -1328,7 +1333,7 @@ impl WidgetTree {
                 true
             }
             incular_core::PointerPhase::Move => {
-                if let Some(drag) = self.scrollbar_drag {
+                if let Some(drag) = &self.scrollbar_drag {
                     let (controller, geometry) = self
                         .scrollbar_local_geometry(drag.render)
                         .expect("live drag");
@@ -1371,6 +1376,9 @@ impl WidgetTree {
                 let Some(drag) = self.scrollbar_drag.take() else {
                     return false;
                 };
+                // Close the press-time bracket: moves may have driven a
+                // replacement controller since, which this never touches.
+                drag.controller.end_activity();
                 self.scroll_state_live_mut(drag.render).dragging = false;
                 let node =
                     self.render_live_mut(drag.render, "scrollbar drag render must remain live");
@@ -1411,7 +1419,7 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn scrollbar_drag_diagnostics(&self) -> ScrollbarDragDiagnostics {
-        let Some(drag) = self.scrollbar_drag else {
+        let Some(drag) = &self.scrollbar_drag else {
             return ScrollbarDragDiagnostics::default();
         };
         let Some((controller, geometry)) = self.scrollbar_controller_and_geometry(drag.render)
