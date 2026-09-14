@@ -921,30 +921,55 @@ impl WidgetTree {
             .cloned()
             .zip(old_children.iter().copied())
             .collect::<HashMap<_, _>>();
+        // Sibling widget keys share the static path's uniqueness
+        // contract: duplicates fail here, before any mutation, rather
+        // than aliasing one element twice or mounting silently.
+        self.check_keys_borrowed(Some(owner), desired.iter().map(|child| &child.widget))?;
+        // Transaction-local keyed index over retained widget keys. Each
+        // old element is filed once and keyed moves pop, so an old
+        // element is handed out at most once without rescanning.
+        let mut keyed_index: HashMap<Key, Vec<ElementId>> = HashMap::new();
+        for id in old_children.iter().copied() {
+            if let Some(key) = self
+                .elements
+                .get(id.0)
+                .and_then(|element| element.widget.key().cloned())
+            {
+                keyed_index.entry(key).or_default().push(id);
+            }
+        }
+        if !keyed_index.is_empty() {
+            self.diagnostics.key_maps_built += 1;
+            self.diagnostics.key_map_entries +=
+                keyed_index.values().map(Vec::len).sum::<usize>() as u64;
+        }
         let mut retained = HashSet::with_capacity(desired.len());
         let mut next_keys = Vec::with_capacity(desired.len());
         let mut next_children = Vec::with_capacity(desired.len());
 
         for DesiredDynamicChild { key, widget } in desired {
-            let child = if let Some(existing) = existing
+            // Positional path: the generated key names exactly one old
+            // element, which must be unconsumed. Sibling keys are
+            // unique (checked above), so a consumed candidate here is
+            // unreachable; the filter still enforces one-element-once
+            // structurally, falling through instead of aliasing.
+            let child = if let Some(candidate) = existing
                 .get(&key)
                 .copied()
-                .filter(|existing| self.compatible(*existing, &widget))
+                .filter(|candidate| !retained.contains(candidate))
+                .filter(|candidate| self.compatible(*candidate, &widget))
             {
-                self.update_existing(existing, &widget).map_err(|source| {
+                self.update_existing(candidate, &widget).map_err(|source| {
                     TreeError::InvalidGeneratedChild {
                         owner,
                         child: identity(&key),
                         source: Box::new(source),
                     }
                 })?;
-                existing
-            } else if let Some(moved) = self.find_keyed_move(&old_children, &retained, &widget) {
+                candidate
+            } else if let Some(moved) = self.take_keyed_move(&mut keyed_index, &widget) {
                 // Same declarative identity at a new algorithm index: a
-                // reorder must move the element, not rebuild it. The
-                // index-key lookup above only vets position; without
-                // this fallback a keyed reorder would unmount and
-                // remount every visible child, losing state.
+                // reorder moves the element instead of rebuilding it.
                 self.update_existing(moved, &widget).map_err(|source| {
                     TreeError::InvalidGeneratedChild {
                         owner,
@@ -991,25 +1016,28 @@ impl WidgetTree {
         })
     }
 
-    /// Finds an unused old child carrying the desired widget's key, for
-    /// keyed moves across algorithm indices. Unkeyed widgets never match
-    /// (positional reconciliation already handled them); an element
-    /// already retained by an earlier desired child is never reused
-    /// twice, so duplicate keys degrade to a fresh mount instead of
-    /// aliasing one element.
-    fn find_keyed_move(
-        &self,
-        old_children: &[ElementId],
-        retained: &std::collections::HashSet<ElementId>,
+    /// Pops an unconsumed old element for a keyed desired widget from
+    /// the transaction-local index. Popping consumes structurally, so a
+    /// popped element is never handed out again; each pop probes at
+    /// most one candidate through [`compatible`](Self::compatible),
+    /// keeping lookup work proportional to consumed elements rather
+    /// than repeated scans. Same-key candidates of another type
+    /// pop-and-discard: sibling keys are unique, so a discarded
+    /// element has no other claimant and unmounts below.
+    fn take_keyed_move(
+        &mut self,
+        index: &mut HashMap<Key, Vec<ElementId>>,
         widget: &Widget,
     ) -> Option<ElementId> {
         let key = widget.key()?;
-        old_children.iter().copied().find(|id| {
-            !retained.contains(id)
-                && self.elements.get(id.0).is_some_and(|element| {
-                    element.widget.key() == Some(key) && element.widget.type_() == widget.type_()
-                })
-        })
+        self.diagnostics.key_lookups += 1;
+        let bucket = index.get_mut(key)?;
+        while let Some(candidate) = bucket.pop() {
+            if self.compatible(candidate, widget) {
+                return Some(candidate);
+            }
+        }
+        None
     }
 
     pub(super) fn materialize_layout_builder(

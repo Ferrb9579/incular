@@ -910,3 +910,257 @@ fn wheel_at_nested_scroll_transfers_child_boundary_remainder_to_parent_once() {
     assert_eq!(inner.offset(), 0.);
     assert_eq!(outer.offset(), 60.);
 }
+
+fn keyed_sliver_row(key: u64) -> Widget {
+    Widget::box_(Size::new(80., 40.), Color::WHITE).with_key(Key::Value(key))
+}
+
+fn keyed_sliver_view(controller: &ScrollController, keys: &[u64]) -> Widget {
+    let keys = keys.to_vec();
+    CustomScrollView::new(vec![
+        Box::new(SliverList::builder(keys.len(), move |index| {
+            keyed_sliver_row(keys[index])
+        })) as Box<dyn Sliver>,
+    ])
+    .controller(controller.clone())
+    .into()
+}
+
+#[test]
+fn dynamic_keyed_rotation_lookups_stay_linear() {
+    // An N-child rotation moves every element through the keyed path:
+    // compatibility work stays linear (at most one positional probe
+    // plus one keyed pop per child), the keyed index is built exactly
+    // once with one entry per keyed old child, and nothing mounts or
+    // unmounts. Repeated full scans would grow quadratically instead.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let keys: Vec<u64> = (0..8).collect();
+    let root = tree.mount(keyed_sliver_view(&controller, &keys)).unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 400.)))
+        .expect("layout");
+    let before_ids = tree.children(root).unwrap().to_vec();
+    assert_eq!(before_ids.len(), 8);
+    let before = tree.diagnostics();
+    tree.update(
+        root,
+        keyed_sliver_view(&controller, &[4, 5, 6, 7, 0, 1, 2, 3]),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 400.)))
+        .expect("layout");
+    let after_ids = tree.children(root).unwrap().to_vec();
+    assert_eq!(
+        after_ids,
+        [
+            before_ids[4],
+            before_ids[5],
+            before_ids[6],
+            before_ids[7],
+            before_ids[0],
+            before_ids[1],
+            before_ids[2],
+            before_ids[3]
+        ]
+    );
+    let after = tree.diagnostics();
+    assert_eq!(after.key_maps_built - before.key_maps_built, 1);
+    assert_eq!(after.key_map_entries - before.key_map_entries, 8);
+    assert_eq!(after.key_lookups - before.key_lookups, 8);
+    assert!(
+        after.key_comparisons - before.key_comparisons <= 16,
+        "compatibility work stays linear in moved children"
+    );
+    assert_eq!(after.mounts - before.mounts, 0);
+    assert_eq!(after.unmounts - before.unmounts, 0);
+    // No-op update: identical keys resolve positionally with no keyed
+    // probes at all.
+    let settled = tree.diagnostics();
+    tree.update(
+        root,
+        keyed_sliver_view(&controller, &[4, 5, 6, 7, 0, 1, 2, 3]),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 400.)))
+        .expect("layout");
+    assert_eq!(tree.children(root).unwrap(), &after_ids[..]);
+    let quiet = tree.diagnostics();
+    assert_eq!(quiet.key_lookups - settled.key_lookups, 0);
+    assert_eq!(quiet.mounts - settled.mounts, 0);
+    assert_eq!(quiet.unmounts - settled.unmounts, 0);
+}
+
+#[test]
+fn dynamic_duplicate_widget_keys_are_rejected_without_aliasing() {
+    // Old keyed children [7, 9], desired widget keys [9, 9]: the first
+    // desired child moves old 9, and the positional lookup for the
+    // second must not select old 9 again. The framework's duplicate-key
+    // policy applies — no aliased element, no silent second copy.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(keyed_sliver_view(&controller, &[7, 9])).unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let before = tree.children(root).unwrap().to_vec();
+    assert_eq!(before.len(), 2);
+    let mounts = tree.diagnostics().mounts;
+    let unmounts = tree.diagnostics().unmounts;
+    tree.update(root, keyed_sliver_view(&controller, &[9, 9]))
+        .expect("dynamic update defers to layout");
+    let error = tree
+        .layout(Constraints::tight(Size::new(100., 100.)))
+        .unwrap_err();
+    assert!(
+        matches!(error, TreeError::DuplicateKey { .. }),
+        "unexpected failure: {error:?}"
+    );
+    assert_eq!(tree.children(root).unwrap(), &before[..]);
+    for id in &before {
+        assert!(tree.element_exists(*id));
+    }
+    assert_eq!(tree.diagnostics().mounts, mounts);
+    assert_eq!(tree.diagnostics().unmounts, unmounts);
+}
+
+#[test]
+fn dynamic_keyed_reorder_moves_elements_without_rebuild() {
+    // Valid reorder: distinct element IDs follow their keys, nothing
+    // mounts or unmounts, and key lookup still resolves each key to
+    // its original element — retained state survives structurally,
+    // not just as repainted labels.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(keyed_sliver_view(&controller, &[7, 9, 11]))
+        .unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    let before = tree.children(root).unwrap().to_vec();
+    assert_eq!(before.len(), 3);
+    let mounts = tree.diagnostics().mounts;
+    let unmounts = tree.diagnostics().unmounts;
+    tree.update(root, keyed_sliver_view(&controller, &[11, 7, 9]))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    let after = tree.children(root).unwrap().to_vec();
+    assert_eq!(after, &[before[2], before[0], before[1]]);
+    assert_eq!(tree.element_with_key(&Key::Value(11)), Some(before[2]));
+    assert_eq!(tree.element_with_key(&Key::Value(7)), Some(before[0]));
+    assert_eq!(tree.element_with_key(&Key::Value(9)), Some(before[1]));
+    assert_eq!(tree.diagnostics().mounts, mounts);
+    assert_eq!(tree.diagnostics().unmounts, unmounts);
+}
+
+#[test]
+fn dynamic_mixed_keyed_unkeyed_children_reconcile() {
+    // Keyed children follow their keys while the unkeyed child takes
+    // the positional path: only the displaced unkeyed element turns
+    // over, and keyed identities never alias.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let rows = |keys: Vec<Option<u64>>| {
+        let count = keys.len();
+        CustomScrollView::new(vec![Box::new(SliverList::builder(count, move |index| {
+            let row = Widget::box_(Size::new(80., 40.), Color::WHITE);
+            match keys[index] {
+                Some(key) => row.with_key(Key::Value(key)),
+                None => row,
+            }
+        })) as Box<dyn Sliver>])
+        .controller(controller.clone())
+        .into()
+    };
+    let root = tree.mount(rows(vec![Some(7), None, Some(9)])).unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    let before = tree.children(root).unwrap().to_vec();
+    assert_eq!(before.len(), 3);
+    let mounts = tree.diagnostics().mounts;
+    let unmounts = tree.diagnostics().unmounts;
+    tree.update(root, rows(vec![None, Some(9), Some(7)]))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    let after = tree.children(root).unwrap().to_vec();
+    assert_eq!(after.len(), 3);
+    assert_ne!(after[0], before[0]);
+    assert_ne!(after[0], before[1]);
+    assert_ne!(after[0], before[2]);
+    assert_eq!(after[1], before[2]);
+    assert_eq!(after[2], before[0]);
+    assert!(!tree.element_exists(before[1]));
+    assert_eq!(tree.element_with_key(&Key::Value(9)), Some(before[2]));
+    assert_eq!(tree.element_with_key(&Key::Value(7)), Some(before[0]));
+    assert_eq!(tree.diagnostics().mounts, mounts + 1);
+    assert_eq!(tree.diagnostics().unmounts, unmounts + 1);
+}
+
+#[test]
+fn dynamic_keyed_type_change_remounts() {
+    // Same key but an incompatible type cannot reuse the element: the
+    // old element unmounts exactly once and a fresh one takes the key.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(keyed_sliver_view(&controller, &[7])).unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let before = tree.children(root).unwrap().to_vec();
+    assert_eq!(before.len(), 1);
+    let mounts = tree.diagnostics().mounts;
+    let unmounts = tree.diagnostics().unmounts;
+    tree.update(
+        root,
+        CustomScrollView::new(vec![Box::new(SliverList::builder(1, |_| {
+            Widget::from(incular_widgets::Text::new("seven")).with_key(Key::Value(7))
+        })) as Box<dyn Sliver>])
+        .controller(controller.clone())
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let after = tree.children(root).unwrap().to_vec();
+    assert_eq!(after.len(), 1);
+    assert_ne!(after[0], before[0]);
+    assert!(!tree.element_exists(before[0]));
+    assert_eq!(tree.element_with_key(&Key::Value(7)), Some(after[0]));
+    assert_eq!(tree.diagnostics().mounts, mounts + 1);
+    assert_eq!(tree.diagnostics().unmounts, unmounts + 1);
+}
+
+#[test]
+fn dynamic_removed_children_unmount_exactly_once() {
+    // Removal unmounts each dropped child once, and a later sibling
+    // set never resurrects the dead ids: the returning key mounts
+    // fresh instead of aliasing a corpse.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(keyed_sliver_view(&controller, &[7, 9, 11]))
+        .unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    let before = tree.children(root).unwrap().to_vec();
+    assert_eq!(before.len(), 3);
+    let mounts = tree.diagnostics().mounts;
+    let unmounts = tree.diagnostics().unmounts;
+    tree.update(root, keyed_sliver_view(&controller, &[7]))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    assert_eq!(tree.children(root).unwrap(), &[before[0]]);
+    assert!(!tree.element_exists(before[1]));
+    assert!(!tree.element_exists(before[2]));
+    assert_eq!(tree.diagnostics().unmounts, unmounts + 2);
+    tree.update(root, keyed_sliver_view(&controller, &[9]))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 200.)))
+        .expect("layout");
+    let revived = tree.children(root).unwrap().to_vec();
+    assert_eq!(revived.len(), 1);
+    assert_ne!(revived[0], before[1]);
+    assert_eq!(tree.element_with_key(&Key::Value(9)), Some(revived[0]));
+    assert_eq!(tree.diagnostics().mounts, mounts + 1);
+    assert_eq!(tree.diagnostics().unmounts, unmounts + 3);
+}
