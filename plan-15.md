@@ -2763,10 +2763,13 @@ per controller (reject a second live attachment before it overwrites
 geometry; deterministic release on unmount, replacement, and tree
 drop); clones are the same controller, never new attachments.
 
-Activity transition table, ordinary `ScrollController` (W5.2, actual
-code only — no ballistic driver exists in production:
-`apply_spring_step` has no production callers; sheet motion uses its
-own generation tokens, untouched):
+Activity transition table (W5.2, actual code only). Two ownerships
+stay separate throughout: metric-attachment tenure (who may publish
+geometry) and input/animation activity ownership (whose bracket a
+`Start`/`End` pair belongs to). They coincide on attached viewports;
+they differ on scrollbars (read-only coordinators that bracket drags
+they never publish for) and sheets (generation owners that never hold
+a metric attachment):
 
 | From → event → to | Notifications | Notes |
 | idle → begin → active | Start | duplicate begin: `false`, nothing |
@@ -2780,9 +2783,49 @@ own generation tokens, untouched):
 | * → controller replacement → * | `End` on the old controller | viewport-tenure policy: an open activity belongs to the viewport driving the controller. The new attachment commits first, then the replaced-away tenure detaches (release + `End`) instead of stranding its flag to brick the handle's next tenure; metrics survive for whoever drives it next. Failed replacement preserves lease, ownership, activity, and metrics exactly; the new tenure starts fresh and heals from the next input sample |
 | wheel sample | Start, UserScroll, Update?, End | each sample is a complete activity by adapter policy |
 | reentrant jump during Start | nested Update delivered immediately | pinned exactly (A sees Start,Update; B sees Update,Start) |
+| idle → thumb press → active | Start | scrollbar drag (model + retained): one bracket per press, opened on the press-time controller |
+| active → drag move → active | Update (or nothing if unmoved) | plain jumps only — never duplicate starts by construction |
+| active → release/cancel → idle | End | stray releases and track clicks (programmatic pages, never bracketed) emit nothing |
+| active → style-replace → idle | End | model drops the drag but still closes its bracket exactly once |
+| active → scrollbar unmount → idle | End | retained: the dragged render going away ends the press-time bracket; other drags untouched |
+| active → tree/window drop (drag) → idle | none (silent) | retained teardown and model drop abort the stored bracket silently |
+| drag across replacement | Update on new, End on old | moves resolve current geometry; release closes only the press-time handle — never the replacement's activity |
+| sheet animate_to → owns | per-commit sheet notifications | new generation stamped; older animations turn `Interrupted` |
+| sheet drag sample → owns | per-commit sheet notifications | each sample takes ownership; running animations interrupt |
+| sheet reset → cancelled | report covers the cancelled activity | running animations interrupt; extent/inner restore as documented |
+| sheet controller handoff → cancelled | none from the handoff | stale animations report `Interrupted` instead of writing on |
+| sheet detach/unmount → — | — | state drops with the render; orphaned ticks report `Interrupted` |
+| animation tick (current) | Active, then Completed at target | exact per-frame stepping, zero-duration completes at once |
+| animation tick (superseded) | Interrupted, no write | superseded, reset, detached, or state gone — never a silent boolean |
 
 Clocks: ordinary activity is fully synchronous (no timers), so
 determinism needs no clock control — sequences are exact.
+
+Ballistic support — reviewed against production drivers, never from
+spring-math tests alone:
+- Connected today: synchronous range policies inside every commit
+  (clamping/bouncing/range-maintaining); sheet snap-target selection
+  (velocity-aware) with caller-pumped ease-out animations under
+  generation ownership; wheel fixed-extent settle via synchronous
+  jumps; per-sample complete activities on wheel input.
+- Standalone helpers with no production pump: `apply_spring_step` /
+  `ScrollSpringStep`, `settle_physics`, and the `incular-animation`
+  crate — pure math, reachable from tests and app code, driving
+  nothing by themselves.
+- Unsupported: a clock-driven fling — velocity decay integrated over
+  frames under an activity bracket.
+- Original W5 exit criteria (deterministic transitions, no stuck or
+  duplicate brackets, single-writer geometry) are all pinned without a
+  fling driver; ballistic stays explicitly open work, not claimed.
+- Next bounded slice (recorded, not implemented): ordinary-viewport
+  fling driver. Integration point: gesture-end velocity opens a
+  controller-owned ballistic tenure (`begin`, per-frame spring/physics
+  steps, `end` on settle). Clock owner: the runtime frame scheduler's
+  existing frame callbacks. Cancellation: any new input sample,
+  detach, replacement, or drop ends the tenure through the existing
+  paths — no new mechanism. Expected tests: Start..Update*..End
+  exactness, cancellation-by-input mid-fling, detach-mid-fling
+  silence, settle-target exactness per physics.
 
 API audit — every public geometry-writing method and its authority
 check (no unchecked public writer remains):
@@ -2797,13 +2840,17 @@ check (no unchecked public writer remains):
 | `DraggableScrollableState::set_inner_extents` | free-only; the sheet never claims the shared inner controller |
 | Retained tree paths (ordinary, sliver, wheel, 2D) | lease-gated: claim first, publish through the stored handles; element-less renders attempt the checked write and skip when owned |
 | `commit_extent_state` / `finish_extent_publication` | private (`pub(crate)`): the single extent algorithm, unreachable except through the checked entries above |
+| `ViewportMetricsUpdate::with_axis` | the axis-carrying publication form: geometry and context commit together on every viewport path (ordinary, sliver, wheel retained + headless, 2D both axes) |
+| `ScrollController::try_set_metrics_context` | free-only standalone context declaration for headless hosts/tests; refused with `AttachedOwner` while owned, mutating nothing |
+| Viewport/wheel/2D descriptor setters (`new`, `set_axis_directions`, `set_physics`) | local configuration only — shared controller state untouched; context publishes at authorized layout |
 
 Deliberately open, not escape hatches: offset control (`jump_to`,
 `scroll_by`, deferred jumps, `apply_physics`, settle/spring steps,
 `adjust_for_content_change`) moves positions, never ownership or
 extents; activity `begin`/`end` brackets stay app-driven with tenure
-transitions owned by the detach paths; `set_metrics_context` routes
-notification payloads only; restoration binds/persists positions,
+transitions owned by the detach paths; the removed `set_metrics_context`
+has no successor — context travels inside publication or through the
+checked standalone entry; restoration binds/persists positions,
 never publishes geometry. Diagnostics (`metric_owner`,
 `attachment_id`, conflict owner trees,
 `MetricAttachment::controller`) are read-only: naming an owner grants
@@ -2829,10 +2876,24 @@ preserves; retry reuses — proven by a retained-tree panic/recovery
 test, not by handle-Drop tests alone); model-level axis pre-checks are
 early-outs only — the paired commit re-validates both authorities under
 the state locks, so prechecking two axes is never equated with
-committing them before callbacks. The sheet never claims its shared
-inner controller — `set_inner_extents` is checked-unattached. Host
-adapters and restoration never published geometry (offsets and persisted
-positions only) and needed no changes.
+committing them before callbacks. Axis context commits with geometry
+(`ViewportMetricsUpdate::with_axis`) on every viewport path; descriptor
+setters are local-only and the old `set_metrics_context` is removed —
+free controllers declare context through checked
+`try_set_metrics_context`. The sheet never claims its shared inner
+controller — `set_inner_extents` is checked-unattached. Thumb drags
+bracket one activity on the press-time controller (model and retained);
+track clicks stay programmatic. Sheet animation ownership is
+generational: `animate_to` and drag samples take ownership, reset and
+controller handoff cancel, and `tick` reports
+Active/Completed/Interrupted instead of a shared boolean. W5 decision
+on stale drivers (the old caller-owned limitation): a superseded,
+reset, replaced, or detached driver cannot write — generation checks at
+the tick boundary and explicit detach paths replace caller discipline;
+stale sheet-controller handles already fail explicitly via weak upgrade.
+Host adapters and restoration never published geometry (offsets and
+persisted positions only) and needed no changes. W5 stays open:
+ballistic fling is recorded above, unimplemented.
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on
@@ -2854,10 +2915,14 @@ entries, and sheet inner writes reject without mutation; element-less
 fallbacks skip when owned; combined all-routes-bypass regression
 (owner publishes afterward) alongside the
 headless→attach→reject→replace→wheel→detach/teardown→remount
-authority-boundary lifecycle. Remaining work, explicitly
-untouched: broader animation (ballistic driver) policy;
-scrollbar-thumb drags stay
-unbracketed programmatic moves by current design.
+authority-boundary lifecycle; axis context committed with geometry in
+one publication value (unchecked context setters removed; descriptor
+setters local-only); scrollbar thumb drags bracketed once on the
+press-time controller (model and retained, with replacement/unmount
+semantics pinned); sheet animation ownership generational with a typed
+Active/Completed/Interrupted outcome. Remaining work, explicitly
+untouched: the ballistic fling slice recorded above (W5 stays open);
+track clicks stay unbracketed programmatic moves by current design.
 
 ## W6 — Input, text and semantic consistency
 
