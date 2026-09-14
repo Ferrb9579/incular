@@ -125,11 +125,12 @@ impl RawScrollbarGeometry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 struct ThumbDrag {
     grab_offset: f32,
     /// The bracket this drag owns. Release closes exactly this activity;
     /// a newer takeover makes the token stale so cleanup stays silent.
+    /// Non-cloneable with the token: clones never inherit gestures.
     activity: OwnedActivity,
 }
 
@@ -142,11 +143,25 @@ struct ThumbDrag {
 ///
 /// Dropping a mid-drag scrollbar needs no manual cleanup: the drag
 /// state's activity token aborts silently when still current.
-#[derive(Clone, Debug)]
+///
+/// Cloneable configuration, never cloneable ownership: clones share the
+/// controller and style but start idle — an in-flight gesture is not
+/// inherited and cannot be cancelled through a copy.
+#[derive(Debug)]
 pub struct RawScrollbar {
     controller: ScrollController,
     style: RawScrollbarStyle,
     drag: Option<ThumbDrag>,
+}
+
+impl Clone for RawScrollbar {
+    fn clone(&self) -> Self {
+        Self {
+            controller: self.controller.clone(),
+            style: self.style,
+            drag: None,
+        }
+    }
 }
 
 impl RawScrollbar {

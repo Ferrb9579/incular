@@ -760,7 +760,7 @@ pub struct SliverViewportDiagnostics {
     pub render_object_count: usize,
     pub picture_layer_count: usize,
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 struct ScrollbarDrag {
     render: RenderObjectId,
     /// The bracket this drag owns, taken at press time. Moves resolve the

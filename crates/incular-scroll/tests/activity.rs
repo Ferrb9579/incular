@@ -106,7 +106,9 @@ fn finished_token_needs_no_further_cleanup() {
     let activity = controller.start_owned_activity(ActivityOrigin::Scrollbar);
     let generation = activity.generation();
     assert!(activity.is_current());
+    assert_eq!(controller.current_activity_id(), Some(activity.id()));
     assert!(activity.finish());
+    assert_eq!(controller.current_activity_id(), None);
     assert_eq!(
         log.borrow().as_slice(),
         &[ScrollNotificationType::Start, ScrollNotificationType::End,]

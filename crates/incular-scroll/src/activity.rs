@@ -41,6 +41,12 @@ impl ScrollController {
     /// whether `Start` was emitted cannot express this — the token's
     /// generation distinguishes a later activity on the same controller.
     pub fn start_owned_activity(&self, origin: ActivityOrigin) -> OwnedActivity {
+        // Commit the identity first, then notify: the token below owns
+        // the open bracket before any listener runs, so a panic
+        // unwinding through `Start` releases its claim instead of
+        // stranding an open flag no token owns. A reentrant takeover
+        // bumps past this generation, making this token stale — its
+        // eventual drop then cannot cancel the newer activity.
         let (started, generation) = {
             let mut state = self.state.borrow_mut();
             let started = !state.activity_active;
@@ -48,14 +54,26 @@ impl ScrollController {
             state.activity_generation = state.activity_generation.wrapping_add(1);
             (started, state.activity_generation)
         };
-        if started {
-            self.dispatch_notification(ScrollNotificationType::Start, 0., 0.);
-        }
-        OwnedActivity {
+        let token = OwnedActivity {
             controller: self.clone(),
             generation,
             origin,
+        };
+        if started {
+            self.dispatch_notification(ScrollNotificationType::Start, 0., 0.);
         }
+        token
+    }
+
+    /// The identity of the currently open bracket, if any. A read-only
+    /// handle for observers: comparing identities distinguishes a later
+    /// activity on the same controller without owning cleanup.
+    #[must_use]
+    pub fn current_activity_id(&self) -> Option<ActivityId> {
+        let state = self.state.borrow();
+        state.activity_active.then(|| ActivityId {
+            generation: state.activity_generation,
+        })
     }
 
     /// Ends a user-driven scroll activity and emits one `End` event.
@@ -97,7 +115,18 @@ impl ScrollController {
 /// touching the newer activity. Dropping a live token aborts its
 /// bracket silently when still current (teardown policy, never a
 /// notification from `Drop`); dropping a stale token changes nothing.
-#[derive(Clone, Debug, PartialEq)]
+/// Read-only identity of one activity ownership: comparable and
+/// copyable, owning no cleanup. Observers inspect activity identity
+/// through this value — never through another RAII owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ActivityId {
+    generation: u64,
+}
+
+/// Non-cloneable proof of activity ownership: exactly one driver owns
+/// the cleanup authority. Cloning is refused structurally so a copy can
+/// never become a second cleanup owner; observers use [`ActivityId`].
+#[derive(Debug, PartialEq)]
 pub struct OwnedActivity {
     controller: ScrollController,
     generation: u64,
@@ -116,6 +145,14 @@ impl OwnedActivity {
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// This token's read-only identity for observers.
+    #[must_use]
+    pub fn id(&self) -> ActivityId {
+        ActivityId {
+            generation: self.generation,
+        }
     }
 
     /// Which driver owns this token. Diagnostic only.

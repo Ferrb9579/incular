@@ -1933,6 +1933,71 @@ fn raw_reentrant_end_listener_begins_fresh() {
 }
 
 #[test]
+fn raw_clone_mid_drag_does_not_cancel_original_bracket() {
+    // Structural exclusivity: cloning a mid-drag scrollbar must not
+    // create a second cleanup owner — dropping the clone leaves the
+    // original bracket open and silent, and the drag still closes
+    // exactly once on release.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    let clone = bar.clone();
+    drop(clone);
+    assert!(
+        !controller.begin_activity(),
+        "cloned cleanup owns nothing: original bracket stays open"
+    );
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    bar.pointer_up();
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End]);
+}
+
+#[test]
+fn raw_start_panic_releases_claim_without_stranding() {
+    // The token commits before Start dispatches: a listener panicking
+    // through Start unwinds through the live token, which aborts the
+    // claimed bracket instead of stranding an open flag no token owns.
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let panicked = std::rc::Rc::new(std::cell::Cell::new(false));
+    let panicked_for_listener = panicked.clone();
+    let subscription = controller.add_listener(move |notification| {
+        use incular_scroll::ScrollNotificationType::Start;
+        if notification.kind == Start && !panicked_for_listener.get() {
+            panicked_for_listener.set(true);
+            panic!("listener unwinds through Start");
+        }
+        false
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bar.pointer_down(size, Offset::new(116., 12.))
+    }));
+    assert!(outcome.is_err(), "listener panic propagates");
+    assert!(panicked.get());
+    drop(subscription);
+    assert_eq!(controller.current_activity_id(), None);
+    assert!(controller.begin_activity(), "no stuck bracket after unwind");
+    assert!(controller.end_activity());
+}
+
+#[test]
 fn two_dimensional_delegate_and_constraints() {
     // from_rows derives counts from the grid shape.
     let delegate =
