@@ -72,6 +72,9 @@ pub(crate) struct ScrollState {
     pub(crate) next_notification_listener: u64,
     pub(crate) notification_context: Option<(incular_config::Axis, bool)>,
     pub(crate) activity_active: bool,
+    /// Latest activity generation. Bumped on every bracket start and
+    /// every takeover; tokens compare against it to prove currency.
+    pub(crate) activity_generation: u64,
 }
 
 impl ScrollController {

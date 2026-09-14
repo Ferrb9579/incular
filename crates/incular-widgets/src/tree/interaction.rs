@@ -1309,13 +1309,13 @@ impl WidgetTree {
                     .expect("invertible scrollbar");
                 if geometry.thumb.contains(point) {
                     let grab = point.y - geometry.thumb.origin.y;
-                    // One drag activity per thumb press: begin here, move
+                    // One owned bracket per thumb press: take ownership
+                    // (starting from idle or taking over open) here, move
                     // with plain jumps, close on release or cancellation.
                     // Track clicks stay unbracketed programmatic pages.
-                    let _ = controller.begin_activity();
                     self.scrollbar_drag = Some(ScrollbarDrag {
                         render,
-                        controller,
+                        activity: controller.start_owned_activity(ActivityOrigin::Scrollbar),
                         grab_offset: grab.clamp(0., geometry.thumb.size.height),
                     });
                     self.scroll_state_live_mut(render).dragging = true;
@@ -1376,9 +1376,12 @@ impl WidgetTree {
                 let Some(drag) = self.scrollbar_drag.take() else {
                     return false;
                 };
-                // Close the press-time bracket: moves may have driven a
-                // replacement controller since, which this never touches.
-                drag.controller.end_activity();
+                // Close the press-time bracket, and only it: moves may
+                // have driven a replacement controller since, and a
+                // takeover may have superseded this token — a stale
+                // finish stays silent instead of ending the newer
+                // activity.
+                drag.activity.finish();
                 self.scroll_state_live_mut(drag.render).dragging = false;
                 let node =
                     self.render_live_mut(drag.render, "scrollbar drag render must remain live");

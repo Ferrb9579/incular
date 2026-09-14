@@ -218,6 +218,99 @@ fn retained_thumb_drag_brackets_one_activity() {
 }
 
 #[test]
+fn retained_press_during_open_activity_takes_over_silently() {
+    // Through production input dispatch: an app-opened bracket taken
+    // over by a thumb press continues with a single Start and closes
+    // once on release.
+    use incular_core::PointerPhase;
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        incular_widgets::ListView::new(rows(5))
+            .controller(controller.clone())
+            .into(),
+        100.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    assert!(controller.begin_activity());
+    assert!(tree.scrollbar_pointer(PointerPhase::Down, Offset::new(96., 10.)));
+    assert!(tree.scrollbar_pointer(PointerPhase::Move, Offset::new(96., 60.)));
+    assert_eq!(controller.offset(), 100.);
+    assert!(tree.scrollbar_pointer(PointerPhase::Up, Offset::new(96., 60.)));
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End]);
+}
+
+#[test]
+fn retained_reentrant_end_starts_fresh_bracket() {
+    // An End listener opening a fresh owned bracket during a retained
+    // release observes the freed bracket and keeps the new one: the
+    // fresh Start follows the drag's End.
+    use incular_core::PointerPhase;
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        incular_widgets::ListView::new(rows(5))
+            .controller(controller.clone())
+            .into(),
+        100.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let controller_for_listener = controller.clone();
+    let taken_handle = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let taken_for_listener = taken_handle.clone();
+    let settled = std::rc::Rc::new(std::cell::Cell::new(false));
+    let settled_for_listener = settled.clone();
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == End
+                && !settled_for_listener.get()
+                && taken_for_listener.borrow().is_none()
+            {
+                *taken_for_listener.borrow_mut() = Some(
+                    controller_for_listener
+                        .start_owned_activity(incular_scroll::ActivityOrigin::Scrollbar),
+                );
+            }
+            false
+        }
+    });
+    assert!(tree.scrollbar_pointer(PointerPhase::Down, Offset::new(96., 10.)));
+    assert!(tree.scrollbar_pointer(PointerPhase::Move, Offset::new(96., 60.)));
+    assert!(tree.scrollbar_pointer(PointerPhase::Up, Offset::new(96., 60.)));
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End, Start],
+        "fresh bracket opens inside retained release"
+    );
+    let taken = taken_handle
+        .borrow_mut()
+        .take()
+        .expect("listener retained its fresh bracket");
+    assert!(!controller.begin_activity(), "fresh bracket survives");
+    settled.set(true);
+    assert!(taken.finish());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End, Start, End]
+    );
+}
+
+#[test]
 fn retained_replacement_mid_drag_ends_old_bracket() {
     // The press-time bracket survives a viewport controller swap: later
     // moves resolve the replacement for geometry, but release closes
@@ -1667,6 +1760,176 @@ fn raw_dropped_mid_drag_model_aborts_silently() {
     assert!(controller.begin_activity());
     assert!(controller.end_activity());
     assert_eq!(ends.get(), 1);
+}
+
+#[test]
+fn raw_press_during_open_activity_takes_over_silently() {
+    // A thumb press during an open bracket takes ownership without a
+    // duplicate Start; moves publish plain Updates and release closes
+    // the continued bracket exactly once.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    assert!(controller.begin_activity());
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    assert!(controller.offset() > 0.);
+    bar.pointer_up();
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End]);
+}
+
+#[test]
+fn raw_takeover_mid_drag_stays_silent_on_release() {
+    // Another bracket taking over mid-drag retires the drag's token: the
+    // stale release emits nothing and the newer activity stays open.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    assert!(controller.end_activity());
+    assert!(controller.begin_activity());
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    bar.pointer_up();
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, End, Start, Update],
+        "stale release adds no End"
+    );
+    assert!(!controller.begin_activity(), "newer bracket still open");
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn raw_reentrant_start_listener_takes_over_quietly() {
+    // A Start listener taking ownership mid-press bumps the generation
+    // without emitting: the press's moves and release still bracket
+    // exactly once around it.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let controller_for_listener = controller.clone();
+    let taken_handle = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let taken_for_listener = taken_handle.clone();
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == Start && taken_for_listener.borrow().is_none() {
+                // Retained: a dropped takeover would abort the bracket it
+                // just took. The drag's own release stays silent below.
+                *taken_for_listener.borrow_mut() = Some(
+                    controller_for_listener
+                        .start_owned_activity(incular_scroll::ActivityOrigin::Scrollbar),
+                );
+            }
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    bar.pointer_up();
+    // The press token went stale at takeover, so release stayed silent;
+    // the retained takeover token still owns the open bracket. (The
+    // subscription stays: it only takes over once, on Start.)
+    assert_eq!(events.borrow().as_slice(), &[Start, Update]);
+    let taken = taken_handle
+        .borrow_mut()
+        .take()
+        .expect("listener retained its takeover");
+    assert!(!controller.begin_activity());
+    assert!(taken.is_current(), "retained takeover is current");
+    assert!(taken.finish());
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End]);
+}
+
+#[test]
+fn raw_reentrant_end_listener_begins_fresh() {
+    // An End listener starting a fresh owned activity during release
+    // observes a free bracket and keeps it: the fresh Start follows the
+    // drag's End and stays open past cleanup.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let controller_for_listener = controller.clone();
+    let taken_handle = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let taken_for_listener = taken_handle.clone();
+    let settled = std::rc::Rc::new(std::cell::Cell::new(false));
+    let settled_for_listener = settled.clone();
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == End
+                && !settled_for_listener.get()
+                && taken_for_listener.borrow().is_none()
+            {
+                // Retained for the same reason: the fresh bracket must
+                // outlive the dispatch that opened it.
+                *taken_for_listener.borrow_mut() = Some(
+                    controller_for_listener
+                        .start_owned_activity(incular_scroll::ActivityOrigin::Scrollbar),
+                );
+            }
+            false
+        }
+    });
+    let size = Size::new(120., 100.);
+    let mut bar = RawScrollbar::new(controller.clone());
+    assert!(bar.pointer_down(size, Offset::new(116., 12.)));
+    assert!(bar.pointer_move(size, Offset::new(116., 50.)));
+    bar.pointer_up();
+    // The subscription stays to record the final End below; its
+    // once-guard prevents a second takeover.
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End, Start],
+        "fresh bracket opens inside release"
+    );
+    let taken = taken_handle
+        .borrow_mut()
+        .take()
+        .expect("listener retained its fresh bracket");
+    assert!(!controller.begin_activity(), "fresh bracket survives");
+    // Settle before finishing: the closing End must not re-arm the
+    // once-guard emptied by the take above.
+    settled.set(true);
+    assert!(taken.finish());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End, Start, End]
+    );
 }
 
 #[test]

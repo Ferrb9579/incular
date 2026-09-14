@@ -1,5 +1,15 @@
 use crate::{controller::ScrollController, notifications::ScrollNotificationType};
 
+/// Which driver owns an activity token. Metric-attachment ownership
+/// stays separate: this names the input/animation driver holding the
+/// bracket, never who may publish geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ActivityOrigin {
+    /// A scrollbar thumb drag owns the bracket.
+    Scrollbar,
+}
+
 impl ScrollController {
     /// Begins a user-driven scroll activity and emits one `Start` event.
     /// Repeated pointer/wheel samples in the same gesture do not emit
@@ -11,6 +21,7 @@ impl ScrollController {
                 false
             } else {
                 state.activity_active = true;
+                state.activity_generation = state.activity_generation.wrapping_add(1);
                 true
             }
         };
@@ -18,6 +29,33 @@ impl ScrollController {
             self.dispatch_notification(ScrollNotificationType::Start, 0., 0.);
         }
         started
+    }
+
+    /// Starts — or takes over — the activity bracket, returning a token
+    /// identifying exactly this ownership. From idle this behaves like
+    /// [`begin_activity`](Self::begin_activity) with one `Start`. When
+    /// another activity is already running, ownership passes to the new
+    /// token with no duplicate `Start`: the bracket continues under new
+    /// ownership, and only the current token's
+    /// [`finish`](OwnedActivity::finish) may close it. A boolean saying
+    /// whether `Start` was emitted cannot express this — the token's
+    /// generation distinguishes a later activity on the same controller.
+    pub fn start_owned_activity(&self, origin: ActivityOrigin) -> OwnedActivity {
+        let (started, generation) = {
+            let mut state = self.state.borrow_mut();
+            let started = !state.activity_active;
+            state.activity_active = true;
+            state.activity_generation = state.activity_generation.wrapping_add(1);
+            (started, state.activity_generation)
+        };
+        if started {
+            self.dispatch_notification(ScrollNotificationType::Start, 0., 0.);
+        }
+        OwnedActivity {
+            controller: self.clone(),
+            generation,
+            origin,
+        }
     }
 
     /// Ends a user-driven scroll activity and emits one `End` event.
@@ -47,6 +85,86 @@ impl ScrollController {
         self.begin_activity();
         self.dispatch_notification(ScrollNotificationType::UserScroll, delta, 0.);
         true
+    }
+}
+
+/// A token identifying one activity ownership on a controller.
+///
+/// Created only by
+/// [`ScrollController::start_owned_activity`]; only the still-current
+/// token may close the bracket. Stale tokens — a newer activity took
+/// over, or the bracket already closed — finish silently without
+/// touching the newer activity. Dropping a live token aborts its
+/// bracket silently when still current (teardown policy, never a
+/// notification from `Drop`); dropping a stale token changes nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OwnedActivity {
+    controller: ScrollController,
+    generation: u64,
+    origin: ActivityOrigin,
+}
+
+impl OwnedActivity {
+    /// The bracketed controller.
+    #[must_use]
+    pub fn controller(&self) -> &ScrollController {
+        &self.controller
+    }
+
+    /// This token's generation. Increasing generations mark takeovers;
+    /// only the latest generation on an open bracket is current.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Which driver owns this token. Diagnostic only.
+    #[must_use]
+    pub fn origin(&self) -> ActivityOrigin {
+        self.origin
+    }
+
+    /// Whether this token still owns the open bracket.
+    #[must_use]
+    pub fn is_current(&self) -> bool {
+        let state = self.controller.state.borrow();
+        state.activity_active && state.activity_generation == self.generation
+    }
+
+    /// Closes the bracket with one `End`, but only while this token is
+    /// still current. Returns whether the `End` was emitted; stale
+    /// tokens return `false` without touching a newer activity or an
+    /// already-closed bracket. Consuming: each token finishes at most
+    /// once by construction.
+    pub fn finish(self) -> bool {
+        let ended = {
+            let mut state = self.controller.state.borrow_mut();
+            if state.activity_active && state.activity_generation == self.generation {
+                state.activity_active = false;
+                true
+            } else {
+                false
+            }
+        };
+        // The implicit drop afterwards finds a closed bracket and changes
+        // nothing — explicit finish and silent teardown compose safely.
+        if ended {
+            self.controller
+                .dispatch_notification(ScrollNotificationType::End, 0., 0.);
+        }
+        ended
+    }
+}
+
+impl Drop for OwnedActivity {
+    /// Silent teardown for an unfinished token: clears the bracket
+    /// without notifying, but only while this token is still current —
+    /// a stale drop can never cancel a newer activity.
+    fn drop(&mut self) {
+        let mut state = self.controller.state.borrow_mut();
+        if state.activity_active && state.activity_generation == self.generation {
+            state.activity_active = false;
+        }
     }
 }
 

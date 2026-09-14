@@ -37,9 +37,9 @@ use incular_rendering::{
     PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma, resolve_follower_target,
 };
 use incular_scroll::{
-    AttachmentConflict, MetricAttachment, MetricOwner, ScrollController, ScrollNotification,
-    ScrollNotificationSubscription, ScrollPhysics, ScrollbarGeometry, SliverConstraints,
-    ViewportMetricsUpdate, scrollbar_geometry,
+    ActivityOrigin, AttachmentConflict, MetricAttachment, MetricOwner, OwnedActivity,
+    ScrollController, ScrollNotification, ScrollNotificationSubscription, ScrollPhysics,
+    ScrollbarGeometry, SliverConstraints, ViewportMetricsUpdate, scrollbar_geometry,
 };
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
@@ -763,11 +763,12 @@ pub struct SliverViewportDiagnostics {
 #[derive(Clone, Debug, PartialEq)]
 struct ScrollbarDrag {
     render: RenderObjectId,
-    /// The controller bracketed by this drag, captured at press time. Moves
-    /// resolve the render's current controller (which a replacement may
-    /// have swapped), but the bracket always closes on this handle — stale
-    /// cleanup can never end a replacement controller's activity.
-    controller: ScrollController,
+    /// The bracket this drag owns, taken at press time. Moves resolve the
+    /// render's current controller for geometry (which a replacement may
+    /// have swapped), but only the still-current token may close the
+    /// bracket — stale cleanup can never end a newer activity, on this
+    /// controller or a replacement's.
+    activity: OwnedActivity,
     /// Pointer position relative to the rendered thumb's top, fixed for this
     /// captured gesture. Keeping this anchor avoids snapping on a thumb press.
     grab_offset: f32,
@@ -1002,6 +1003,9 @@ pub struct WidgetTree {
     active_drags: HashMap<GestureArenaKey, ActiveDrag>,
     active_external_drop: Option<ActiveExternalDrop>,
     scale_gestures: HashMap<ElementId, ScaleGestureDetector>,
+    /// In-flight overlay thumb drag, if any. No manual `Drop` needed: the
+    /// drag's activity token aborts silently when still current, matching
+    /// the silent teardown policy for torn-down context.
     scrollbar_drag: Option<ScrollbarDrag>,
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
@@ -1024,18 +1028,6 @@ impl WidgetTree {
     #[must_use]
     pub fn tree_id(&self) -> u64 {
         self.tree_id
-    }
-}
-
-impl Drop for WidgetTree {
-    /// An in-flight thumb drag dies with its tree: silently clear the
-    /// press-time bracket, consistent with the silent teardown policy
-    /// for torn-down context. Scroll attachments need nothing here —
-    /// each handle tears itself down on drop.
-    fn drop(&mut self) {
-        if let Some(drag) = self.scrollbar_drag.take() {
-            drag.controller.abort_activity();
-        }
     }
 }
 

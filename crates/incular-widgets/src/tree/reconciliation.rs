@@ -1687,8 +1687,9 @@ impl WidgetTree {
                     // itself down silently on drop.
                     drop(self.scroll_attachments.remove(&id));
                     // An in-flight thumb drag dies with its scrollbar:
-                    // close the press-time bracket like a normal detach
-                    // so no flag strands. Unrelated drags (other
+                    // close the press-time token like a normal detach so
+                    // no flag strands — stale tokens stay silent instead
+                    // of ending a newer activity. Unrelated drags (other
                     // scrollbars) are untouched — only the removed
                     // render matches.
                     if self
@@ -1697,7 +1698,7 @@ impl WidgetTree {
                         .is_some_and(|drag| drag.render == render_id)
                         && let Some(drag) = self.scrollbar_drag.take()
                     {
-                        drag.controller.end_activity();
+                        drag.activity.finish();
                     }
                     self.unmounted.push(id);
                     self.diagnostics.unmounts += 1;

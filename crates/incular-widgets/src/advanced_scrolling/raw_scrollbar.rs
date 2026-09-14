@@ -7,7 +7,7 @@
 
 use incular_config::Axis;
 use incular_core::{Color, Offset, Rect, Size};
-use incular_scroll::ScrollController;
+use incular_scroll::{ActivityOrigin, OwnedActivity, ScrollController};
 
 /// Which edge receives the scrollbar overlay.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -125,9 +125,12 @@ impl RawScrollbarGeometry {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ThumbDrag {
     grab_offset: f32,
+    /// The bracket this drag owns. Release closes exactly this activity;
+    /// a newer takeover makes the token stale so cleanup stays silent.
+    activity: OwnedActivity,
 }
 
 /// A stateful raw scrollbar overlay attached to an existing scroll controller.
@@ -136,6 +139,9 @@ struct ThumbDrag {
 /// mapping: the pointer's grab point stays under the pointer and logical
 /// offset is reversed when the controller's physical axis direction is
 /// reversed.
+///
+/// Dropping a mid-drag scrollbar needs no manual cleanup: the drag
+/// state's activity token aborts silently when still current.
 #[derive(Clone, Debug)]
 pub struct RawScrollbar {
     controller: ScrollController,
@@ -154,19 +160,12 @@ impl RawScrollbar {
         }
     }
 
-    /// Begins the drag bracket on the held controller, idempotently: an
-    /// already-open activity (shared controllers) gains no duplicate
-    /// `Start`, and the matching release below still closes it.
-    fn begin_drag_activity(&self) {
-        let _ = self.controller.begin_activity();
-    }
-
-    /// Closes a drag bracket opened by [`pointer_down`](Self::pointer_down).
-    /// Runs only for a live drag, so track clicks and stray releases emit
-    /// nothing.
+    /// Closes the live drag's bracket, if any. Only the still-current
+    /// token emits `End`: track clicks, stray releases, and takeovers
+    /// stay silent. Shared with release, cancellation, and style drops.
     fn end_drag_activity(&mut self) {
-        if self.drag.take().is_some() {
-            self.controller.end_activity();
+        if let Some(drag) = self.drag.take() {
+            drag.activity.finish();
         }
     }
 
@@ -182,8 +181,9 @@ impl RawScrollbar {
         self.style
     }
 
-    /// Replaces the style, ending an active pointer drag's bracket first:
-    /// a dropped drag can never strand its activity flag.
+    /// Replaces the style, closing a live drag's bracket first: only the
+    /// still-current token emits `End`, so a taken-over bracket stays
+    /// silent here.
     pub fn set_style(&mut self, style: RawScrollbarStyle) {
         self.end_drag_activity();
         self.style = style.normalized();
@@ -265,9 +265,10 @@ impl RawScrollbar {
     }
 
     /// Starts a thumb drag or performs a page step on the track. A thumb
-    /// press opens one drag activity (`Start`); moves only publish
-    /// offsets, never duplicate starts. A track click pages
-    /// programmatically with no bracket.
+    /// press takes activity ownership — starting the bracket from idle
+    /// or taking over an open one without a duplicate `Start` — while
+    /// moves only publish offsets. A track click pages programmatically
+    /// with no bracket.
     pub fn pointer_down(&mut self, viewport_size: Size, point: Offset) -> bool {
         if !self.style.normalized().interactive {
             return false;
@@ -282,8 +283,10 @@ impl RawScrollbar {
                 .main_extent_of(geometry.thumb.origin);
             self.drag = Some(ThumbDrag {
                 grab_offset: main - thumb_main,
+                activity: self
+                    .controller
+                    .start_owned_activity(ActivityOrigin::Scrollbar),
             });
-            self.begin_drag_activity();
             return true;
         }
         if geometry.track_contains(point) {
@@ -308,7 +311,7 @@ impl RawScrollbar {
 
     /// Updates a thumb drag and returns whether it moved the controller.
     pub fn pointer_move(&mut self, viewport_size: Size, point: Offset) -> bool {
-        let Some(drag) = self.drag else {
+        let Some(drag) = &self.drag else {
             return false;
         };
         let geometry = self.geometry(viewport_size);
@@ -373,19 +376,6 @@ impl RawScrollbar {
     #[must_use]
     pub fn hit_test(&self, viewport_size: Size, point: Offset) -> bool {
         self.geometry(viewport_size).thumb_contains(point)
-    }
-}
-
-impl Drop for RawScrollbar {
-    /// A dropped mid-drag scrollbar never delivers its pointer-up:
-    /// silently clear the open bracket so the next gesture starts fresh
-    /// instead of bricking on a stuck flag. Silent rather than `End` —
-    /// there was no matching release, and notifying from `Drop` risks
-    /// panics during unwinding.
-    fn drop(&mut self) {
-        if self.drag.is_some() {
-            self.controller.abort_activity();
-        }
     }
 }
 

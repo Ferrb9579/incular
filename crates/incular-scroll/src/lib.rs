@@ -12,7 +12,9 @@ mod restoration;
 mod scrollbar;
 mod sliver;
 
-pub use activity::{DragStartBehavior, ScrollViewKeyboardDismissBehavior};
+pub use activity::{
+    ActivityOrigin, DragStartBehavior, OwnedActivity, ScrollViewKeyboardDismissBehavior,
+};
 pub use attachment::{
     AttachmentConflict, MetricAttachment, MetricOwner, MetricWriteError, ViewportMetricsUpdate,
 };
