@@ -2783,20 +2783,25 @@ a metric attachment):
 | * → controller replacement → * | `End` on the old controller | viewport-tenure policy: an open activity belongs to the viewport driving the controller. The new attachment commits first, then the replaced-away tenure detaches (release + `End`) instead of stranding its flag to brick the handle's next tenure; metrics survive for whoever drives it next. Failed replacement preserves lease, ownership, activity, and metrics exactly; the new tenure starts fresh and heals from the next input sample |
 | wheel sample | Start, UserScroll, Update?, End | each sample is a complete activity by adapter policy |
 | reentrant jump during Start | nested Update delivered immediately | pinned exactly (A sees Start,Update; B sees Update,Start) |
-| idle → thumb press → active | Start | scrollbar drag (model + retained): one bracket per press, opened on the press-time controller |
+| idle → thumb press → active | Start | scrollbar drag (model + retained): one owned token per press on the press-time controller |
+| active → thumb press (takeover) → active | none | press during an open bracket takes ownership with no duplicate `Start`; the continued bracket closes once |
 | active → drag move → active | Update (or nothing if unmoved) | plain jumps only — never duplicate starts by construction |
-| active → release/cancel → idle | End | stray releases and track clicks (programmatic pages, never bracketed) emit nothing |
-| active → style-replace → idle | End | model drops the drag but still closes its bracket exactly once |
-| active → scrollbar unmount → idle | End | retained: the dragged render going away ends the press-time bracket; other drags untouched |
-| active → tree/window drop (drag) → idle | none (silent) | retained teardown and model drop abort the stored bracket silently |
-| drag across replacement | Update on new, End on old | moves resolve current geometry; release closes only the press-time handle — never the replacement's activity |
+| active → release/cancel → idle | End | only the still-current token emits; stray releases, track clicks, and stale tokens stay silent |
+| active → style-replace → idle | End | model drops the drag but still closes its live token exactly once |
+| active → scrollbar unmount → idle | End | retained: the dragged render going away finishes the live token; other drags untouched |
+| active → tree/window drop (drag) → idle | none (silent) | token `Drop` aborts silently when still current; stale drops change nothing |
+| drag across replacement | Update on new, End on old | moves resolve current geometry; release finishes only the press-time token — never the replacement's activity |
+| reentrant owned start in dispatch | none extra | takeover bumps the generation silently; the newer token closes, the older stays silent |
+| reentrant owned start after End | Start | fresh bracket opens inside release and survives cleanup |
 | sheet animate_to → owns | per-commit sheet notifications | new generation stamped; older animations turn `Interrupted` |
 | sheet drag sample → owns | per-commit sheet notifications | each sample takes ownership; running animations interrupt |
+| sheet instantaneous command → invalidates | per-commit sheet notifications | `set_size`/`jump_to`/`snap_now` cancel first — even same-value jumps take over; ticks use the validating internal path |
 | sheet reset → cancelled | report covers the cancelled activity | running animations interrupt; extent/inner restore as documented |
 | sheet controller handoff → cancelled | none from the handoff | stale animations report `Interrupted` instead of writing on |
 | sheet detach/unmount → — | — | state drops with the render; orphaned ticks report `Interrupted` |
 | animation tick (current) | Active, then Completed at target | exact per-frame stepping, zero-duration completes at once |
 | animation tick (superseded) | Interrupted, no write | superseded, reset, detached, or state gone — never a silent boolean |
+| completing tick with newer driver | Completed (own trajectory) | reaching target reports completion even when the final notification started a newer tenure; the tick never clears another activity |
 
 Clocks: ordinary activity is fully synchronous (no timers), so
 determinism needs no clock control — sequences are exact.
@@ -2818,14 +2823,26 @@ spring-math tests alone:
   duplicate brackets, single-writer geometry) are all pinned without a
   fling driver; ballistic stays explicitly open work, not claimed.
 - Next bounded slice (recorded, not implemented): ordinary-viewport
-  fling driver. Integration point: gesture-end velocity opens a
-  controller-owned ballistic tenure (`begin`, per-frame spring/physics
-  steps, `end` on settle). Clock owner: the runtime frame scheduler's
-  existing frame callbacks. Cancellation: any new input sample,
-  detach, replacement, or drop ends the tenure through the existing
-  paths — no new mechanism. Expected tests: Start..Update*..End
-  exactness, cancellation-by-input mid-fling, detach-mid-fling
-  silence, settle-target exactness per physics.
+  fling driver. Velocity source: `DragEndDetails`-style release
+  velocity from the gesture layer (`Velocity` already exists there;
+  today nothing feeds it into scroll motion). Integration point:
+  gesture-end above the physics minimum opens a controller-owned
+  ballistic tenure via `start_owned_activity` (new origin), pumps
+  per-frame decay steps, and finishes on settle. Clock owner: the
+  runtime frame scheduler's existing frame callbacks with
+  `request_frame` wakeups; idle behavior: no scheduled frames once the
+  tenure finishes or interrupts (nothing polls). Bounds changes
+  mid-fling clamp through the normal commit path. User takeover: any
+  new input sample takes ownership (existing takeover rule — stale
+  fling ticks turn silent). Reduced motion: the existing ambient flag
+  short-circuits the driver to a synchronous settle instead of pumping
+  frames. Cancellation: detach, replacement, or drop end/abort the
+  tenure through the existing owned paths — no new mechanism. Expected
+  tests: Start..Update*..End exactness, cancellation-by-input
+  mid-fling, takeover silence of stale ticks, detach-mid-fling
+  silence, settle-target exactness per physics, reduced-motion
+  short-circuit. Not built until the ownership foundations above are
+  verified — W5 stays open.
 
 API audit — every public geometry-writing method and its authority
 check (no unchecked public writer remains):
@@ -2840,6 +2857,7 @@ check (no unchecked public writer remains):
 | `DraggableScrollableState::set_inner_extents` | free-only; the sheet never claims the shared inner controller |
 | Retained tree paths (ordinary, sliver, wheel, 2D) | lease-gated: claim first, publish through the stored handles; element-less renders attempt the checked write and skip when owned |
 | `commit_extent_state` / `finish_extent_publication` | private (`pub(crate)`): the single extent algorithm, unreachable except through the checked entries above |
+| `ScrollController::start_owned_activity` / `OwnedActivity::finish` | generation tokens: takeover bumps silently (no duplicate `Start`); only the current token's finish emits `End`; stale finishes and stale drops change nothing |
 | `ViewportMetricsUpdate::with_axis` | the axis-carrying publication form: geometry and context commit together on every viewport path (ordinary, sliver, wheel retained + headless, 2D both axes) |
 | `ScrollController::try_set_metrics_context` | free-only standalone context declaration for headless hosts/tests; refused with `AttachedOwner` while owned, mutating nothing |
 | Viewport/wheel/2D descriptor setters (`new`, `set_axis_directions`, `set_physics`) | local configuration only — shared controller state untouched; context publishes at authorized layout |
@@ -2892,8 +2910,13 @@ reset, replaced, or detached driver cannot write — generation checks at
 the tick boundary and explicit detach paths replace caller discipline;
 stale sheet-controller handles already fail explicitly via weak upgrade.
 Host adapters and restoration never published geometry (offsets and
-persisted positions only) and needed no changes. W5 stays open:
-ballistic fling is recorded above, unimplemented.
+persisted positions only) and needed no changes. Adapter audit: the
+wheel adapter's per-sample implicit-begin/end stays deliberate (one
+synchronous call, immune to takeover — no token needed); header-snap
+observers only read Start/End; touch-drag recognizers bracket nothing
+today — their brackets belong to the fling slice, which must take
+ownership instead of calling raw begin/end. W5 stays open: ballistic
+fling is recorded above, unimplemented.
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on
@@ -2917,10 +2940,13 @@ fallbacks skip when owned; combined all-routes-bypass regression
 headless→attach→reject→replace→wheel→detach/teardown→remount
 authority-boundary lifecycle; axis context committed with geometry in
 one publication value (unchecked context setters removed; descriptor
-setters local-only); scrollbar thumb drags bracketed once on the
-press-time controller (model and retained, with replacement/unmount
-semantics pinned); sheet animation ownership generational with a typed
-Active/Completed/Interrupted outcome. Remaining work, explicitly
+setters local-only); scrollbar thumb drags owned by generation tokens
+(model and retained, with takeover/reentrancy/replacement/unmount
+pinned — stale cleanup never ends a newer activity); instantaneous
+sheet commands invalidate stale drivers (even same-value jumps) while
+ticks validate without invalidating themselves; completion describes
+the handle's own trajectory (Completed at target despite mid-flight
+takeover; Interrupted when stopped early). Remaining work, explicitly
 untouched: the ballistic fling slice recorded above (W5 stays open);
 track clicks stay unbracketed programmatic moves by current design.
 
