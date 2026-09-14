@@ -185,7 +185,7 @@ pub mod prelude {
         CustomScrollView, DecoratedBox, DecoratedBoxTransition, DecoratedSliver, DecorationImage,
         DefaultSelectionStyle, DefaultTextStyle, DefaultTextStyleTransition, DiagonalDragBehavior,
         Directionality, DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable,
-        DraggableNotificationSubscription, DraggableScrollableActuator,
+        DraggableAnimationStep, DraggableNotificationSubscription, DraggableScrollableActuator,
         DraggableScrollableController, DraggableScrollableNotification, DraggableScrollableSheet,
         DraggableScrollableState, DraggableSheetDelta, DraggableSheetExtent,
         DraggableSizeAnimation, DraggableSnap, DraggableSnapTarget, DualTransitionBuilder,

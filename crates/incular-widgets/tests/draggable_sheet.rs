@@ -187,7 +187,10 @@ fn draggable_sheet_snap_animation_interruption_starts_from_current() {
         .animate_to(0.9, Duration::from_millis(80))
         .expect("attached animation");
     assert!(approx(first.target(), 0.9));
-    assert!(first.tick(Duration::from_millis(40)));
+    assert_eq!(
+        first.tick(Duration::from_millis(40)),
+        incular_widgets::DraggableAnimationStep::Active
+    );
     let mid = state.extent().current_size;
     assert!(mid > 0.5 && mid < 0.9);
 
@@ -197,15 +200,24 @@ fn draggable_sheet_snap_animation_interruption_starts_from_current() {
     let mut second = controller
         .animate_to(0.3, Duration::from_millis(80))
         .expect("replacement animation");
-    assert!(!second.tick(Duration::from_millis(80)));
-    assert!(!second.tick(Duration::from_millis(80)));
+    assert_eq!(
+        second.tick(Duration::from_millis(80)),
+        incular_widgets::DraggableAnimationStep::Completed
+    );
+    assert_eq!(
+        second.tick(Duration::from_millis(80)),
+        incular_widgets::DraggableAnimationStep::Completed
+    );
     assert!(approx(state.extent().current_size, 0.3));
 
     // A zero duration finishes on the first tick at its target.
     let mut instant = controller
         .animate_to(0.6, Duration::ZERO)
         .expect("instant animation");
-    assert!(!instant.tick(Duration::ZERO));
+    assert_eq!(
+        instant.tick(Duration::ZERO),
+        incular_widgets::DraggableAnimationStep::Completed
+    );
     assert!(approx(state.extent().current_size, 0.6));
 }
 
@@ -772,6 +784,129 @@ fn sheet_inner_extents_refused_while_inner_list_attached() {
         .set_inner_extents(500., 100.)
         .expect("freed inner publishes");
     assert_eq!(inner.max_offset(), 400.);
+}
+
+#[test]
+fn superseded_animation_stops_writing() {
+    // A newer driver takes ownership: after a second animation starts,
+    // ticks of the first one write nothing and report interruption —
+    // while the current animation still completes at its target.
+    use incular_widgets::DraggableAnimationStep::{Active, Completed, Interrupted};
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let mut first = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    assert_eq!(first.tick(Duration::from_millis(40)), Active);
+    let mid = state.extent().current_size;
+    assert!(mid > 0.5 && mid < 0.9);
+    let mut second = controller
+        .animate_to(0.3, Duration::from_millis(80))
+        .expect("replacement animation");
+    assert_eq!(first.tick(Duration::from_millis(40)), Interrupted);
+    assert!(approx(state.extent().current_size, mid));
+    assert_eq!(first.tick(Duration::from_millis(40)), Interrupted);
+    assert_eq!(second.tick(Duration::from_millis(80)), Completed);
+    assert!(approx(state.extent().current_size, 0.3));
+}
+
+#[test]
+fn new_drag_supersedes_running_animation() {
+    // A drag sample takes ownership too: the running animation turns
+    // interrupted on its next tick while the gesture drives on.
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    state.set_parent_height(400.0);
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    assert!(state.apply_user_offset(-40.0).sheet_consumed != 0.0);
+    let at_drag = state.extent().current_size;
+    assert_eq!(
+        animation.tick(Duration::from_millis(40)),
+        Interrupted,
+        "drag owns the activity now"
+    );
+    assert!(approx(state.extent().current_size, at_drag));
+}
+
+#[test]
+fn reset_cancels_running_animation() {
+    // Reset reports the cancelled activity and the running animation
+    // turns interrupted without further writes.
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    assert!(state.activity_generation().is_some());
+    assert!(state.reset());
+    assert_eq!(state.activity_generation(), None);
+    assert_eq!(animation.tick(Duration::from_millis(40)), Interrupted);
+    assert!(approx(state.extent().current_size, 0.5));
+}
+
+#[test]
+fn replaced_controller_animation_cannot_reach_new_state() {
+    // Controller replacement swaps state objects: ticks of an animation
+    // stamped on the old state never write the new one, whatever they
+    // report.
+    use incular_widgets::DraggableAnimationStep;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5).expand(true);
+    let first = sheet.controller();
+    let mut tree = WidgetTree::new();
+    let root = mount_tree(&mut tree, wrap(sheet.into()));
+    let mut stale = first
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    assert_eq!(
+        stale.tick(Duration::from_millis(40)),
+        DraggableAnimationStep::Active
+    );
+    // The live size sits inside the new range, so replacement inherits
+    // it as-is (clamping is covered by the retained replacement test).
+    let live = first.size().expect("attached size");
+    let replacing = text_sheet("v1").extents(0.75, 1.0, 0.75).expand(true);
+    let second = replacing.controller();
+    tree.update(root, wrap(replacing.into())).expect("update");
+    tree.layout(Constraints::tight(Size::new(200.0, 400.0)))
+        .expect("layout");
+    assert!(approx(second.size().expect("inherited size"), live));
+    assert_eq!(
+        stale.tick(Duration::from_millis(80)),
+        DraggableAnimationStep::Interrupted,
+        "handoff cancels the old tenure"
+    );
+    assert!(approx(second.size().expect("isolated size"), live));
+    assert!(!first.is_attached());
+}
+
+#[test]
+fn unmounted_sheet_animation_turns_interrupted() {
+    // Detach drops the state with the render: the orphaned animation
+    // reports interrupted without writing anywhere.
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5).expand(true);
+    let controller = sheet.controller();
+    let mut tree = WidgetTree::new();
+    let root = mount_tree(&mut tree, wrap(sheet.into()));
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    tree.update(
+        root,
+        wrap(Widget::box_(Size::new(10.0, 10.0), Color::WHITE)),
+    )
+    .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200.0, 400.0)))
+        .expect("layout");
+    assert!(!controller.is_attached());
+    assert_eq!(animation.tick(Duration::from_millis(80)), Interrupted);
 }
 
 fn mount_tree(tree: &mut WidgetTree, widget: Widget) -> ElementId {

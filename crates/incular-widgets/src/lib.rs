@@ -73,15 +73,15 @@ mod utilities;
 // sibling implementation crates.
 pub use advanced_scrolling::{
     CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, DiagonalDragBehavior,
-    DraggableNotificationSubscription, DraggableScrollableActuator, DraggableScrollableController,
-    DraggableScrollableNotification, DraggableScrollableSheet, DraggableScrollableState,
-    DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation, DraggableSnap,
-    DraggableSnapTarget, FixedExtentScrollController, ListWheelScrollView, ListWheelViewport,
-    RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation, RawScrollbarStyle,
-    TwoDimensionalChildDelegate, TwoDimensionalChildLayout, TwoDimensionalConstraints,
-    TwoDimensionalScrollDelta, TwoDimensionalScrollView, TwoDimensionalScrollable,
-    TwoDimensionalViewport, TwoDimensionalViewportLayout, WheelChildDelegate, WheelChildLayout,
-    WheelLayout, WheelMatrix, WheelProjection,
+    DraggableAnimationStep, DraggableNotificationSubscription, DraggableScrollableActuator,
+    DraggableScrollableController, DraggableScrollableNotification, DraggableScrollableSheet,
+    DraggableScrollableState, DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation,
+    DraggableSnap, DraggableSnapTarget, FixedExtentScrollController, ListWheelScrollView,
+    ListWheelViewport, RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation,
+    RawScrollbarStyle, TwoDimensionalChildDelegate, TwoDimensionalChildLayout,
+    TwoDimensionalConstraints, TwoDimensionalScrollDelta, TwoDimensionalScrollView,
+    TwoDimensionalScrollable, TwoDimensionalViewport, TwoDimensionalViewportLayout,
+    WheelChildDelegate, WheelChildLayout, WheelLayout, WheelMatrix, WheelProjection,
 };
 pub use advanced_slivers::{
     AnimatedGrid, AnimatedGridController, AnimatedItem, AnimatedItemBuilder, AnimatedItemPhase,

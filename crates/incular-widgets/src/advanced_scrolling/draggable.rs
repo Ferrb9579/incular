@@ -340,18 +340,25 @@ impl DraggableScrollableController {
     }
 
     /// Starts a deterministic extent animation. Call [`DraggableSizeAnimation::tick`]
-    /// once per frame.
+    /// once per frame. Starting takes activity ownership: any running
+    /// animation from an earlier driver turns interrupted on its next
+    /// tick instead of writing stale extents.
     pub fn animate_to(&self, size: f32, duration: Duration) -> Option<DraggableSizeAnimation> {
         let sheet = self.upgrade_sheet()?;
         let from = sheet.borrow().extent.current_size;
         let target = sheet.borrow().extent.with_current_size(size).current_size;
+        let generation = DraggableScrollableState {
+            state: sheet.clone(),
+        }
+        .start_activity();
         Some(DraggableSizeAnimation {
             state: Rc::downgrade(&sheet),
             from,
             target,
             duration,
             elapsed: Duration::ZERO,
-            finished: false,
+            generation,
+            outcome: None,
         })
     }
 
@@ -380,22 +387,52 @@ impl DraggableScrollableController {
     }
 }
 
-/// A frame-driven sheet extent animation with an ease-out curve.
+/// Narrow outcome of one animation tick: completion and interruption
+/// are distinct results, never a shared boolean.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DraggableAnimationStep {
+    /// Still running; tick again for the next frame.
+    Active,
+    /// Reached its target naturally.
+    Completed,
+    /// Stopped early — superseded by a newer driver, cancelled by reset,
+    /// detached, or state gone — without writing.
+    Interrupted,
+}
+
+/// A frame-driven sheet extent animation with an ease-out curve. Each
+/// animation owns the activity generation stamped at creation: only the
+/// current generation's ticks write, so a superseded driver stops
+/// instead of fighting newer state.
 pub struct DraggableSizeAnimation {
     state: Weak<RefCell<SheetState>>,
     from: f32,
     target: f32,
     duration: Duration,
     elapsed: Duration,
-    finished: bool,
+    generation: u64,
+    outcome: Option<DraggableAnimationStep>,
 }
 
 impl DraggableSizeAnimation {
-    /// Advances the animation and returns whether it is still active.
-    pub fn tick(&mut self, delta: Duration) -> bool {
-        if self.finished {
-            return false;
+    /// Advances the animation one frame. A tick whose generation no
+    /// longer owns the sheet — newer animation, new drag, reset,
+    /// detach, or dropped state — reports interrupted without writing.
+    pub fn tick(&mut self, delta: Duration) -> DraggableAnimationStep {
+        if let Some(outcome) = self.outcome {
+            return outcome;
         }
+        let current = self.state.upgrade().and_then(|state| {
+            let owned = state
+                .borrow()
+                .activity
+                .is_some_and(|activity| activity.generation == self.generation);
+            owned.then_some(state)
+        });
+        let Some(state) = current else {
+            self.outcome = Some(DraggableAnimationStep::Interrupted);
+            return DraggableAnimationStep::Interrupted;
+        };
         self.elapsed = self.elapsed.saturating_add(delta);
         let progress = if self.duration.is_zero() {
             1.0
@@ -404,15 +441,12 @@ impl DraggableSizeAnimation {
         };
         let eased = 1.0 - (1.0 - progress).powi(3);
         let value = self.from + (self.target - self.from) * eased;
-        let Some(state) = self.state.upgrade() else {
-            self.finished = true;
-            return false;
-        };
         DraggableScrollableState { state }.set_size(value, false);
         if progress >= 1.0 {
-            self.finished = true;
+            self.outcome = Some(DraggableAnimationStep::Completed);
+            return DraggableAnimationStep::Completed;
         }
-        !self.finished
+        DraggableAnimationStep::Active
     }
 
     /// Returns the target fractional extent.
@@ -641,6 +675,10 @@ impl<T> DraggableSheetConfig<T> {
             && !previous.controller.same_handle(&self.controller)
         {
             previous.controller.detach_from(&state.state);
+            // A controller handoff orphans running drivers: cancel the
+            // activity so stale animations report interrupted instead of
+            // writing onto the new controller's tenure.
+            state.cancel_activity();
         }
         let mut mounted = state.state.borrow_mut();
         let current_size = mounted.extent.current_size;
@@ -812,8 +850,11 @@ impl DraggableScrollableState {
     }
 
     /// Applies a content-offset delta, resizing first and handing leftover
-    /// movement to the inner list and then parents.
+    /// movement to the inner list and then parents. A new drag sample
+    /// takes activity ownership first, so a running animation from an
+    /// earlier driver turns interrupted instead of fighting the gesture.
     pub fn apply_user_offset(&self, delta: f32) -> DraggableSheetDelta {
+        let _ = self.start_activity();
         let before = self.extent();
         let list_should_scroll = self.inner_controller().offset() > 0.0;
         let resize = !list_should_scroll

@@ -14,10 +14,10 @@ pub mod wheel;
 
 #[allow(unused_imports)]
 pub use draggable::{
-    DraggableNotificationSubscription, DraggableScrollableActuator, DraggableScrollableController,
-    DraggableScrollableNotification, DraggableScrollableSheet, DraggableScrollableState,
-    DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation, DraggableSnap,
-    DraggableSnapTarget,
+    DraggableAnimationStep, DraggableNotificationSubscription, DraggableScrollableActuator,
+    DraggableScrollableController, DraggableScrollableNotification, DraggableScrollableSheet,
+    DraggableScrollableState, DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation,
+    DraggableSnap, DraggableSnapTarget,
 };
 #[allow(unused_imports)]
 pub use raw_scrollbar::{

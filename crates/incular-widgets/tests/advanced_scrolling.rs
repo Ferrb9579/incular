@@ -164,9 +164,15 @@ fn draggable_sheet_resizes_hands_off_and_actuator_resets() {
     let mut animation = controller
         .animate_to(0.75, Duration::from_millis(100))
         .expect("attached animation");
-    assert!(animation.tick(Duration::from_millis(50)));
+    assert_eq!(
+        animation.tick(Duration::from_millis(50)),
+        incular_widgets::DraggableAnimationStep::Active
+    );
     assert!(state.extent().current_size > 0.5);
-    assert!(!animation.tick(Duration::from_millis(50)));
+    assert_eq!(
+        animation.tick(Duration::from_millis(50)),
+        incular_widgets::DraggableAnimationStep::Completed
+    );
     assert_eq!(state.extent().current_size, 0.75);
 
     let actuator = DraggableScrollableActuator::new();

@@ -56,15 +56,15 @@ pub use incular_text::{TextEditingController, TextEditingValue, TextRange, TextS
 // public Widgets API.
 pub use crate::advanced_scrolling::{
     CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, DiagonalDragBehavior,
-    DraggableNotificationSubscription, DraggableScrollableActuator, DraggableScrollableController,
-    DraggableScrollableNotification, DraggableScrollableSheet, DraggableScrollableState,
-    DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation, DraggableSnap,
-    DraggableSnapTarget, FixedExtentScrollController, ListWheelScrollView, ListWheelViewport,
-    RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation, RawScrollbarStyle,
-    TwoDimensionalChildDelegate, TwoDimensionalChildLayout, TwoDimensionalConstraints,
-    TwoDimensionalScrollDelta, TwoDimensionalScrollView, TwoDimensionalScrollable,
-    TwoDimensionalViewport, TwoDimensionalViewportLayout, WheelChildDelegate, WheelChildLayout,
-    WheelLayout, WheelMatrix, WheelProjection,
+    DraggableAnimationStep, DraggableNotificationSubscription, DraggableScrollableActuator,
+    DraggableScrollableController, DraggableScrollableNotification, DraggableScrollableSheet,
+    DraggableScrollableState, DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation,
+    DraggableSnap, DraggableSnapTarget, FixedExtentScrollController, ListWheelScrollView,
+    ListWheelViewport, RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation,
+    RawScrollbarStyle, TwoDimensionalChildDelegate, TwoDimensionalChildLayout,
+    TwoDimensionalConstraints, TwoDimensionalScrollDelta, TwoDimensionalScrollView,
+    TwoDimensionalScrollable, TwoDimensionalViewport, TwoDimensionalViewportLayout,
+    WheelChildDelegate, WheelChildLayout, WheelLayout, WheelMatrix, WheelProjection,
 };
 pub use crate::advanced_slivers::{
     AnimatedGrid, AnimatedGridController, AnimatedItem, AnimatedItemBuilder, AnimatedItemPhase,
