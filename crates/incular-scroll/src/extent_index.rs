@@ -364,6 +364,17 @@ impl MeasuredExtentIndex {
         start..end.max(start)
     }
 
+    /// Returns the recorded measurement for `index, or `None` when the
+    /// row still uses an estimate (or the index is out of range).
+    /// Framework-internal: compatible-state transfer reads this to carry
+    /// measurements across delegate replacements.
+    #[doc(hidden)]
+    pub fn measured_extent(&self, index: usize) -> Option<f32> {
+        let state = self.state.borrow();
+        let (chunk_index, local) = state.locate(index)?;
+        state.chunks[chunk_index].values[local]
+    }
+
     /// Records an exact post-layout extent. Returns whether it changed.
     pub fn set_measured_extent(&self, index: usize, extent: f32) -> bool {
         if !extent.is_finite() || extent < 0. {

@@ -384,6 +384,10 @@ impl RenderSliver for VariableExtentRenderSliver {
     fn revision(&self) -> u64 {
         self.index.revision()
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
 }
 
 pub(super) struct HeaderRenderSliver {
@@ -1984,6 +1988,7 @@ pub(crate) fn transfer_retained_sliver_state(
     if adopt_natural_header_state(fresh, retained)
         || adopt_box_extent(fresh, retained)
         || adopt_floating_header_state(fresh, retained)
+        || adopt_variable_extent_measurements(fresh, retained)
     {
         return;
     }
@@ -2022,6 +2027,48 @@ fn adopt_natural_header_state(
         return false;
     };
     fresh.adopt_compatible_state(retained)
+}
+
+/// Carries retained per-row measurements into a fresh variable-extent
+/// sliver — but only where the fresh index holds a bare fallback
+/// estimate. A fresh seed embodies new builder knowledge (including a
+/// changed extent builder) and always wins; a bare fallback embodies
+/// nothing, so the retained measurement is strictly more informed.
+/// This keeps the first post-replacement layout measured-accurate, so
+/// the scroll anchor never corrects for estimate noise on identical
+/// content, while changed builders still flow through seeds and
+/// re-measurement. Adopted entries count as measured and self-heal on
+/// the next measure pass if the content truly changed.
+fn adopt_variable_extent_measurements(
+    fresh: &mut dyn RenderSliver,
+    retained: &mut dyn RenderSliver,
+) -> bool {
+    let (Some(fresh), Some(retained)) = (
+        fresh
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<VariableExtentRenderSliver>()),
+        retained
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<VariableExtentRenderSliver>()),
+    ) else {
+        return false;
+    };
+    if retained.index.measured_count() == 0 {
+        return false;
+    }
+    let len = fresh.index.len().min(retained.index.len());
+    let mut adopted = false;
+    for index in 0..len {
+        // Fresh seeds (Some) always win; only bare fallbacks (None)
+        // accept a carried measurement.
+        if fresh.index.measured_extent(index).is_some() {
+            continue;
+        }
+        if let Some(extent) = retained.index.measured_extent(index) {
+            adopted |= fresh.index.set_measured_extent(index, extent);
+        }
+    }
+    adopted
 }
 
 /// Adopts a measured box extent so replacing a viewport descriptor does not

@@ -2990,10 +2990,28 @@ per-axis winners, app-wins ties, innermost-only nesting); frame demand
 survives the end-of-frame reset (fling liveness ORed into the single
 recomputation — proven by demand-only runtime loops, never fixed
 loops); navigation ledger repaired with accurate ownership/evidence.
+This round further: fling tenures finish on the arrival step itself
+when a hard-clamped step reaches a boundary with movement (no extra
+demanded frame), and between-tick interference is specified per cause
+(jump, bounds clamp, and replacement close the owned tenure; takeover
+drops silently; same-value commands never interrupt) with the
+committed offset/revision pair retained to enforce it — including the
+jump-away-and-back case offset-equality alone would miss. Nested
+touch-drag remainder routes outward along the accepted axis through
+the press-time chain with per-controller Drag activities, axis-exact
+sign conversion, transparent incompatible axes, and dead-link
+cleanup. Extent mutation during interaction holds through the
+retained sliver paths: insert/remove/reorder/resize mid-drag and
+shrink mid-fling keep model-exact offset/range with coherent
+paint/hit/semantics and exact activity completion; keyed sliver
+reorders move elements instead of rebuilding them; variable-extent
+replacements carry retained measurements only into bare-estimate
+slots (fresh seeds always win) so same-content updates never shift
+the offset on estimate noise.
 Remaining work, explicitly untouched (W5 stays open): fling axes
 beyond ordinary/sliver (2D, wheel, draggable sheet), nested remainder
-transfer during drags and flings, spring bounce-back, and advanced
-families sharing the same tenure rules; track clicks stay unbracketed
+routing during flings, spring bounce-back, and advanced families
+sharing the same tenure rules; track clicks stay unbracketed
 programmatic moves by current design.
 
 ## W6 — Input, text and semantic consistency

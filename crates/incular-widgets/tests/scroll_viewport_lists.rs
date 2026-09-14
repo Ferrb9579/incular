@@ -3089,6 +3089,433 @@ fn nested_drag_outer_replacement_stops_routing() {
     assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
 }
 
+/// Independent extent arithmetic for mutation tests: plain sums and
+/// clamps over an explicit extent list — no production code paths,
+/// just the definitions of total content, scroll range, and a clamped
+/// offset. Tests compare controller state against this model after
+/// each retained mutation.
+struct ExtentModel {
+    extents: Vec<f32>,
+    viewport: f32,
+}
+
+impl ExtentModel {
+    fn total(&self) -> f32 {
+        self.extents.iter().sum()
+    }
+    fn max(&self) -> f32 {
+        (self.total() - self.viewport).max(0.)
+    }
+    fn clamp(&self, offset: f32) -> f32 {
+        offset.clamp(0., self.max())
+    }
+}
+
+fn forty_px_rows(count: usize) -> ListView {
+    ListView::builder(count, |_| Widget::box_(Size::new(200., 40.), Color::WHITE)).item_extent(40.)
+}
+
+#[test]
+fn list_insert_during_drag_keeps_offset_and_continues() {
+    // Growing the content mid-drag preserves the offset (still in
+    // range), widens the range per the model, and the same stream
+    // keeps driving afterward — one bracket throughout.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        forty_px_rows(5).controller(controller.clone()).into(),
+        200.,
+        100.,
+    );
+    let model = ExtentModel {
+        extents: vec![40.; 5],
+        viewport: 100.,
+    };
+    assert_eq!(controller.max_offset(), model.max());
+    assert!(controller.jump_to(56.));
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(controller.offset(), 78.);
+    let grown = ExtentModel {
+        extents: vec![40.; 8],
+        viewport: 100.,
+    };
+    tree.update(root, forty_px_rows(8).controller(controller.clone()).into())
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(controller.max_offset(), grown.max());
+    assert_eq!(controller.offset(), grown.clamp(78.));
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(controller.offset(), 100.);
+    assert_eq!(controller.max_offset(), grown.max());
+    assert_eq!(events.borrow().as_slice(), &[Update, End]);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn list_remove_visible_head_during_drag_clamps_coherently() {
+    // Removing rows above the viewport mid-drag clamps the offset
+    // into the new range through layout, keeps paint/hit coherent
+    // with the clamped position, and the release still closes the
+    // one bracket.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        forty_px_rows(8).controller(controller.clone()).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(controller.offset(), 122.);
+    // Drop the first three rows (120 px): content 320 -> 200.
+    let shrunk = ExtentModel {
+        extents: vec![40.; 5],
+        viewport: 100.,
+    };
+    tree.update(root, forty_px_rows(5).controller(controller.clone()).into())
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(controller.max_offset(), shrunk.max());
+    assert_eq!(controller.offset(), shrunk.clamp(122.));
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    // +22 against a 100 max clamps: no further movement, clean close.
+    assert_eq!(controller.offset(), 100.);
+    assert_eq!(events.borrow().as_slice(), &[End]);
+    // Paint and hit agree with the clamped offset: the first row sits
+    // exactly one viewport above the visible origin, and the middle
+    // of the viewport hits content.
+    let kids = tree.children(root).expect("items").to_vec();
+    assert!(!kids.is_empty());
+    assert_eq!(
+        tree.element_bounds(kids[0]).expect("bounds").origin.y,
+        -100.
+    );
+    assert!(tree.hit_test(Offset::new(50., 50.)).is_some());
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn sliver_reorder_during_drag_reuses_identities() {
+    // Reversing keyed rows mid-drag keeps every element (identity
+    // reuse, no rebuild), the same total keeps the offset, and the
+    // stream drives on afterward.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Update};
+    use incular_widgets::internal::ElementId;
+    fn keyed_slivers(order: Vec<usize>) -> Vec<Box<dyn Sliver>> {
+        vec![Box::new(SliverList::builder(order.len(), move |position| {
+            Widget::box_(Size::new(80., 40.), Color::WHITE).with_key(order[position] as u64)
+        })) as Box<dyn Sliver>]
+    }
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        CustomScrollView::new(keyed_slivers(vec![0, 1, 2, 3, 4]))
+            .controller(controller.clone())
+            .into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(40.));
+    let before: std::collections::BTreeSet<ElementId> = tree
+        .children(root)
+        .expect("items")
+        .iter()
+        .copied()
+        .collect();
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(controller.offset(), 62.);
+    tree.update(
+        root,
+        CustomScrollView::new(keyed_slivers(vec![4, 3, 2, 1, 0]))
+            .controller(controller.clone())
+            .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    let after: std::collections::BTreeSet<ElementId> = tree
+        .children(root)
+        .expect("items")
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(before, after, "reorder reuses identities");
+    assert_eq!(controller.offset(), 62.);
+    assert_eq!(controller.max_offset(), 100.);
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(controller.offset(), 84.);
+    assert_eq!(events.borrow().as_slice(), &[Update, End]);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn viewport_resize_during_drag_re_ranges_coherently() {
+    // Shrinking the viewport mid-drag widens the range around a kept
+    // offset with every retained child alive, and driving continues
+    // into the new range.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        forty_px_rows(5).controller(controller.clone()).into(),
+        200.,
+        100.,
+    );
+    let kids = tree.children(root).expect("items").to_vec();
+    assert!(controller.jump_to(60.));
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(controller.offset(), 82.);
+    tree.layout(Constraints::tight(Size::new(200., 60.)))
+        .expect("layout");
+    assert_eq!(controller.offset(), 82.);
+    assert_eq!(controller.max_offset(), 140.);
+    for kid in &kids {
+        assert!(tree.element_exists(*kid), "resize retains children");
+    }
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(controller.offset(), 104.);
+    assert_eq!(events.borrow().as_slice(), &[Update, End]);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn range_maintaining_growth_at_edge_tracks_max_during_drag() {
+    // With range-maintaining physics, content appended below a pinned
+    // trailing edge carries the offset to the new max mid-drag; the
+    // bracket never closes and the release ends it exactly once.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        forty_px_rows(5)
+            .controller(controller.clone())
+            .physics(ScrollPhysics::clamping().range_maintaining())
+            .into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    // Upward finger at the max clamps: bracket open, offset pinned.
+    assert_eq!(controller.offset(), 100.);
+    tree.update(
+        root,
+        forty_px_rows(7)
+            .controller(controller.clone())
+            .physics(ScrollPhysics::clamping().range_maintaining())
+            .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(controller.max_offset(), 180.);
+    assert_eq!(controller.offset(), 180., "trailing edge anchors");
+    assert!(
+        !controller.begin_activity(),
+        "bracket still open after anchoring"
+    );
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 92.), Up, 2_000);
+    assert_eq!(events.borrow().as_slice(), &[End]);
+    assert_eq!(controller.offset(), 180.);
+}
+
+#[test]
+fn variable_extent_change_during_drag_updates_metrics() {
+    // Measurements win over seeds: widening item zero's real widget
+    // mid-drag re-measures it, updating total and max per the model
+    // while the offset and the open bracket survive. The seed tracks
+    // the same shared heights so unmeasured content stays consistent.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Update};
+    let heights = std::rc::Rc::new(std::cell::RefCell::new(vec![30., 50., 30., 50., 30., 50.]));
+    let build_list = |heights: std::rc::Rc<std::cell::RefCell<Vec<f32>>>| {
+        let widget_heights = heights.clone();
+        let seed_heights = heights.clone();
+        ListView::builder(6, move |index| {
+            Widget::box_(
+                Size::new(200., widget_heights.borrow()[index]),
+                Color::WHITE,
+            )
+        })
+        .item_extent_builder(move |index| seed_heights.borrow()[index])
+    };
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        build_list(heights.clone())
+            .controller(controller.clone())
+            .into(),
+        200.,
+        100.,
+    );
+    let model = ExtentModel {
+        extents: vec![30., 50., 30., 50., 30., 50.],
+        viewport: 100.,
+    };
+    assert_eq!(controller.max_offset(), model.max());
+    assert!(controller.jump_to(60.));
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(controller.offset(), 82.);
+    heights.borrow_mut()[0] = 70.;
+    let grown = ExtentModel {
+        extents: vec![70., 50., 30., 50., 30., 50.],
+        viewport: 100.,
+    };
+    tree.update(
+        root,
+        build_list(heights.clone())
+            .controller(controller.clone())
+            .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(controller.max_offset(), grown.max());
+    assert_eq!(controller.offset(), grown.clamp(82.));
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(controller.offset(), 104.);
+    assert_eq!(events.borrow().as_slice(), &[Update, End]);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn lazy_head_removal_during_drag_stays_lazy_and_coherent() {
+    // One hundred rows materialize lazily; removing forty head rows
+    // mid-drag keeps the offset, keeps materialization lazy (no full
+    // build as a workaround), and the stream closes exactly once.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        forty_px_rows(100).controller(controller.clone()).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(2000.));
+    let materialized_before = tree.children(root).expect("items").len();
+    assert!(
+        materialized_before < 100,
+        "lazy before mutation: {materialized_before}"
+    );
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(controller.offset(), 2022.);
+    tree.update(
+        root,
+        forty_px_rows(60).controller(controller.clone()).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    let model = ExtentModel {
+        extents: vec![40.; 60],
+        viewport: 100.,
+    };
+    assert_eq!(controller.max_offset(), model.max());
+    assert_eq!(controller.offset(), model.clamp(2022.));
+    let materialized_after = tree.children(root).expect("items").len();
+    assert!(
+        materialized_after < 60,
+        "lazy after mutation: {materialized_after}"
+    );
+    let (events, _guard) = listen(&controller);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(controller.offset(), 2044.);
+    assert_eq!(events.borrow().as_slice(), &[Update, End]);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn list_shrink_during_fling_ends_tenure_coherently() {
+    // A fling in flight over slivers meets a shrink: layout clamps the
+    // offset, the next pump sees the mismatch and closes the tenure
+    // without overwriting, and paint/hit stay coherent at the clamp.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        forty_px_rows(10).controller(controller.clone()).into(),
+        200.,
+        100.,
+    );
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let flung = controller.offset();
+    assert!(flung > 40.);
+    tree.update(root, forty_px_rows(4).controller(controller.clone()).into())
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(controller.offset(), 60., "layout clamps to the new range");
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "interrupted tenure retains nothing"
+    );
+    assert_eq!(controller.offset(), 60.);
+    assert_eq!(ends.get(), 1);
+    let kids = tree.children(root).expect("items").to_vec();
+    assert!(!kids.is_empty());
+    assert!(tree.hit_test(Offset::new(50., 50.)).is_some());
+    tree.update_semantics();
+    let _ = tree.semantics_debug_dump();
+}
+
 #[test]
 fn programmatic_jump_during_fling_ends_it() {
     // An external position change takes visual control: the next pump

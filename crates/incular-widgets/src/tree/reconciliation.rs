@@ -939,6 +939,20 @@ impl WidgetTree {
                     }
                 })?;
                 existing
+            } else if let Some(moved) = self.find_keyed_move(&old_children, &retained, &widget) {
+                // Same declarative identity at a new algorithm index: a
+                // reorder must move the element, not rebuild it. The
+                // index-key lookup above only vets position; without
+                // this fallback a keyed reorder would unmount and
+                // remount every visible child, losing state.
+                self.update_existing(moved, &widget).map_err(|source| {
+                    TreeError::InvalidGeneratedChild {
+                        owner,
+                        child: identity(&key),
+                        source: Box::new(source),
+                    }
+                })?;
+                moved
             } else {
                 if account_items {
                     self.diagnostics.items_built += 1;
@@ -974,6 +988,27 @@ impl WidgetTree {
         Ok(DynamicChildResult {
             keys: next_keys,
             children: next_children,
+        })
+    }
+
+    /// Finds an unused old child carrying the desired widget's key, for
+    /// keyed moves across algorithm indices. Unkeyed widgets never match
+    /// (positional reconciliation already handled them); an element
+    /// already retained by an earlier desired child is never reused
+    /// twice, so duplicate keys degrade to a fresh mount instead of
+    /// aliasing one element.
+    fn find_keyed_move(
+        &self,
+        old_children: &[ElementId],
+        retained: &std::collections::HashSet<ElementId>,
+        widget: &Widget,
+    ) -> Option<ElementId> {
+        let key = widget.key()?;
+        old_children.iter().copied().find(|id| {
+            !retained.contains(id)
+                && self.elements.get(id.0).is_some_and(|element| {
+                    element.widget.key() == Some(key) && element.widget.type_() == widget.type_()
+                })
         })
     }
 
