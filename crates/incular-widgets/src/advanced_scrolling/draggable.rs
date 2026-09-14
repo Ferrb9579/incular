@@ -441,7 +441,10 @@ impl DraggableSizeAnimation {
         };
         let eased = 1.0 - (1.0 - progress).powi(3);
         let value = self.from + (self.target - self.from) * eased;
-        DraggableScrollableState { state }.set_size(value, false);
+        // Owner-checked, never invalidating: the entry currency check
+        // above is this tick's validation, so it must not cancel its own
+        // generation on the way through.
+        DraggableScrollableState { state }.set_size_internal(value, false);
         if progress >= 1.0 {
             self.outcome = Some(DraggableAnimationStep::Completed);
             return DraggableAnimationStep::Completed;
@@ -905,7 +908,15 @@ impl DraggableScrollableState {
     }
 
     /// Sets the current size and emits a notification if it changed.
+    ///
+    /// Instantaneous commands supersede animation drivers: any running
+    /// animation is invalidated before the requested position commits
+    /// and listeners run — even when the geometry ends up unchanged,
+    /// since a same-value jump is still a takeover. Animation ticks use
+    /// the internal path below so they validate without invalidating
+    /// themselves.
     pub fn set_size(&self, size: f32, user_drag: bool) -> bool {
+        self.cancel_activity();
         self.set_size_internal(size, user_drag)
     }
 

@@ -909,6 +909,104 @@ fn unmounted_sheet_animation_turns_interrupted() {
     assert_eq!(animation.tick(Duration::from_millis(80)), Interrupted);
 }
 
+#[test]
+fn jump_supersedes_running_animation() {
+    // Public jump invalidates the previous driver before committing:
+    // the old animation turns interrupted on its next tick without
+    // writing, and the jumped position stands.
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    let _ = animation.tick(Duration::from_millis(40));
+    let mid = state.extent().current_size;
+    assert!(mid > 0.5 && mid < 0.9);
+    assert!(controller.jump_to(0.4));
+    assert_eq!(animation.tick(Duration::from_millis(40)), Interrupted);
+    assert!(approx(state.extent().current_size, 0.4));
+}
+
+#[test]
+fn same_value_jump_still_takes_over() {
+    // Takeover is ownership, not geometry: jumping to the current size
+    // changes nothing visible yet still invalidates the old driver.
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    let _ = animation.tick(Duration::from_millis(40));
+    let mid = state.extent().current_size;
+    assert!(!controller.jump_to(mid), "same value moves nothing");
+    assert_eq!(
+        animation.tick(Duration::from_millis(40)),
+        Interrupted,
+        "unchanged geometry still takes over"
+    );
+    assert!(approx(state.extent().current_size, mid));
+    assert_eq!(
+        animation.tick(Duration::from_millis(40)),
+        Interrupted,
+        "interruption is stable"
+    );
+}
+
+#[test]
+fn snap_supersedes_running_animation() {
+    // Snap teleports through the invalidating path: the old animation
+    // turns interrupted and the snap target stands.
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1")
+        .extents(0.25, 1.0, 0.5)
+        .snap(vec![0.3, 0.7], Duration::from_millis(60));
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    let _ = animation.tick(Duration::from_millis(40));
+    let snapped = state.snap_now(0.0).expect("snap target");
+    assert_eq!(animation.tick(Duration::from_millis(40)), Interrupted);
+    assert!(approx(state.extent().current_size, snapped.size));
+}
+
+#[test]
+fn reentrant_newer_command_preserved_with_stable_interruption() {
+    // A listener issuing a newer command during a tick's notification
+    // wins: its position stands, and the old animation reports
+    // interruption stably on every later tick.
+    use incular_widgets::DraggableAnimationStep::{Active, Interrupted};
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let controller_for_listener = controller.clone();
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let fired_for_listener = fired.clone();
+    let _subscription = state.add_notification_listener(move |notification| {
+        if !fired_for_listener.get() {
+            fired_for_listener.set(true);
+            // Newer driver from inside the tick's own notification.
+            let _ = controller_for_listener.jump_to(0.3);
+        }
+        let _ = notification;
+        false
+    });
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(200))
+        .expect("attached animation");
+    assert_eq!(animation.tick(Duration::from_millis(40)), Active);
+    assert!(fired.get(), "listener ran inside the tick");
+    assert!(approx(state.extent().current_size, 0.3));
+    assert_eq!(animation.tick(Duration::from_millis(40)), Interrupted);
+    assert_eq!(animation.tick(Duration::from_millis(40)), Interrupted);
+    assert!(approx(state.extent().current_size, 0.3));
+}
+
 fn mount_tree(tree: &mut WidgetTree, widget: Widget) -> ElementId {
     let root = tree.mount(widget).expect("mount");
     tree.layout(Constraints::tight(Size::new(200.0, 400.0)))
