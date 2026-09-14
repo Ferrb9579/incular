@@ -1,4 +1,4 @@
-use incular_config::Constraints;
+use incular_config::{Constraints, RuntimeEnvironment};
 use incular_core::{
     InputEvent, Offset, PRIMARY_POINTER_BUTTON, PointerDeviceKind, PointerPhase,
     SECONDARY_POINTER_BUTTON, Size,
@@ -336,25 +336,217 @@ fn touch_fling_pumps_through_production_frames() {
     );
     let released = controller.offset();
     assert!(released > 0., "drag moved before release");
+    // Demand-driven, never a fixed loop: an unconditional fixed loop
+    // would keep pumping after lost scheduling and hide the defect, so
+    // this loop runs only while the host reports demand (bounded
+    // against a stuck scheduler). Every demanded frame must advance
+    // the fling until the edge, and settlement must stop demand.
+    assert!(application.frame_requested(id), "release schedules frames");
     let mut now = Instant::now();
-    for _ in 0..8 {
+    let mut frames = 0usize;
+    let mut previous = released;
+    while application.frame_requested(id) {
+        assert!(frames < 600, "fling settles");
         now += Duration::from_millis(16);
         application
             .run_window_frame_at(id, constraints, now)
             .expect("frame pumps fling");
+        frames += 1;
+        let current = controller.offset();
+        assert!(current >= previous, "demanded frames never regress");
+        assert!(
+            current > previous || current == controller.max_offset(),
+            "demanded frames advance until the edge"
+        );
+        previous = current;
     }
-    assert!(
-        controller.offset() > released,
-        "fling advances past the release point"
-    );
-    for _ in 0..300 {
-        now += Duration::from_millis(16);
-        application
-            .run_window_frame_at(id, constraints, now)
-            .expect("frame pumps fling");
-    }
+    assert!(frames > 0, "the fling owned the clock");
     assert_eq!(controller.offset(), controller.max_offset());
     assert_eq!(ends.get(), 1, "one bracket from press to settle");
     assert!(controller.begin_activity());
     assert!(controller.end_activity());
+}
+
+#[test]
+fn touch_fling_interruption_stops_demand() {
+    // A fresh drag mid-fling drives under the old tenure until the
+    // next pump sees the mismatch and closes it; the slow release
+    // keeps no driver, so demand stops after the drain.
+    use std::time::Duration;
+    let controller = ScrollController::new();
+    let rows: Vec<Widget> = (0..5)
+        .map(|_| Widget::box_(Size::new(100., 40.), Color::WHITE))
+        .collect();
+    let mut application = app(ListView::new(rows).controller(controller.clone()).into());
+    let id = application.primary_window();
+    let constraints = Constraints::tight(Size::new(100., 40.));
+    let ends = Rc::new(Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    pointer(
+        &mut application,
+        PointerPhase::Down,
+        PRIMARY_POINTER_BUTTON,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 30.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 20.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 10.),
+    );
+    std::thread::sleep(Duration::from_millis(3));
+    pointer(
+        &mut application,
+        PointerPhase::Up,
+        0,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 5.),
+    );
+    let released = controller.offset();
+    assert!(released > 0., "drag moved before release");
+    let mut now = Instant::now() + Duration::from_millis(16);
+    application
+        .run_window_frame_at(id, constraints, now)
+        .expect("first fling frame");
+    let flung = controller.offset();
+    assert!(flung > released, "fling advanced before takeover");
+    // A fresh pointer grabs mid-fling and keeps driving upward; it
+    // never opens its own bracket while the fling owns the tenure.
+    pointer(
+        &mut application,
+        PointerPhase::Down,
+        PRIMARY_POINTER_BUTTON,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 30.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 20.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 10.),
+    );
+    std::thread::sleep(Duration::from_millis(3));
+    pointer(
+        &mut application,
+        PointerPhase::Up,
+        0,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 10.),
+    );
+    let taken = controller.offset();
+    assert!(taken > flung, "motion continues under takeover");
+    let mut frames = 0usize;
+    while application.frame_requested(id) {
+        assert!(frames < 30, "takeover drains promptly");
+        now += Duration::from_millis(16);
+        application
+            .run_window_frame_at(id, constraints, now)
+            .expect("drain");
+        frames += 1;
+    }
+    assert_eq!(controller.offset(), taken, "no driver resumes");
+    assert_eq!(ends.get(), 1, "only the taken-over tenure closes");
+    assert!(!application.frame_requested(id));
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn touch_fling_reduced_motion_settles_without_demand() {
+    // Reduced motion settles the transferred tenure in place on the
+    // next frame: zero travel, one End, and no retained driver — so no
+    // further demand.
+    use std::time::Duration;
+    let controller = ScrollController::new();
+    let rows: Vec<Widget> = (0..5)
+        .map(|_| Widget::box_(Size::new(100., 40.), Color::WHITE))
+        .collect();
+    let mut application = app(ListView::new(rows).controller(controller.clone()).into());
+    let id = application.primary_window();
+    let constraints = Constraints::tight(Size::new(100., 40.));
+    let ends = Rc::new(Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    pointer(
+        &mut application,
+        PointerPhase::Down,
+        PRIMARY_POINTER_BUTTON,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 30.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 20.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 10.),
+    );
+    std::thread::sleep(Duration::from_millis(3));
+    pointer(
+        &mut application,
+        PointerPhase::Up,
+        0,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 5.),
+    );
+    let released = controller.offset();
+    assert!(released > 0., "drag moved before release");
+    // Flip only the motion preference, preserving the window's live
+    // metric-derived fields so no unrelated rebuild churn follows.
+    application.set_window_environment(
+        id,
+        RuntimeEnvironment {
+            viewport: Size::new(100., 40.),
+            physical_width: 100,
+            physical_height: 40,
+            scale_factor: 1.0,
+            reduced_motion: true,
+            ..RuntimeEnvironment::default()
+        },
+    );
+    let now = Instant::now() + Duration::from_millis(16);
+    application
+        .run_window_frame_at(id, constraints, now)
+        .expect("reduced-motion frame");
+    assert_eq!(controller.offset(), released, "settles in place");
+    assert_eq!(ends.get(), 1);
+    assert!(
+        !application.frame_requested(id),
+        "no driver retained, no further demand"
+    );
 }

@@ -1873,12 +1873,12 @@ impl Runtime {
         drop(build_guard);
         // Ballistic tenures pump on the frame clock before layout, so
         // pumped offsets lay out and paint in the same frame. The pump
-        // reports live drivers; the scheduler stays awake while true
-        // and idles otherwise — no timer loop, just frame demand.
+        // reports live drivers; that liveness is captured here and
+        // ORed into the end-of-frame demand below, so the reset point
+        // cannot discard it — the scheduler stays awake while a driver
+        // lives and idles otherwise. No timer loop, just frame demand.
         let reduced_motion = self.environment.borrow().reduced_motion;
-        if self.tree.pump_scroll_flings(now, reduced_motion) {
-            self.frame_requested = true;
-        }
+        let fling_live = self.tree.pump_scroll_flings(now, reduced_motion);
         let _layout_guard = tracing::info_span!("incular.layout").entered();
         let layout_span = profiling::PhaseSpan::start();
         self.tree.layout(constraints)?;
@@ -1921,8 +1921,15 @@ impl Runtime {
         let paint = paint_span.elapsed_us();
         drop(_paint_guard);
         self.sync_text_input_client();
-        self.frame_requested =
-            !self.pending.is_empty() || self.reactive.borrow().has_work() || animations_active;
+        // End-of-frame reset: recomputed from every demand source, not
+        // blindly cleared. `fling_live` above is one source — a write
+        // before layout alone would not survive this assignment, so it
+        // is ORed back in. Nothing else in this frame clears the flag:
+        // intermediate paths only ever set it.
+        self.frame_requested = fling_live
+            || !self.pending.is_empty()
+            || self.reactive.borrow().has_work()
+            || animations_active;
         let after = self.tree.diagnostics();
         let timings = FrameTimings {
             event_processing: std::mem::take(&mut self.pending_event_processing_us),

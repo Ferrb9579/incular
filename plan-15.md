@@ -2958,9 +2958,23 @@ pinned — stale cleanup never ends a newer activity); instantaneous
 sheet commands invalidate stale drivers (even same-value jumps) while
 ticks validate without invalidating themselves; completion describes
 the handle's own trajectory (Completed at target despite mid-flight
-takeover; Interrupted when stopped early). Remaining work, explicitly
-untouched: the ballistic fling slice recorded above (W5 stays open);
-track clicks stay unbracketed programmatic moves by current design.
+takeover; Interrupted when stopped early). This round's guarantees:
+fling steps drive through the owned token with the commit snapshotted
+before `Update` delivery and verified after (listener jumps/bounds
+close the driver's own tenure, takeovers drop silently, same-value
+jumps disturb nothing); analytic decay integration independent of
+frame partitioning with settle-crossing final displacement applied and
+prompt stop at hard outward boundaries; ordinary touch-drag arbitrated
+against application gestures in the single arena (tap coexistence,
+per-axis winners, app-wins ties, innermost-only nesting); frame demand
+survives the end-of-frame reset (fling liveness ORed into the single
+recomputation — proven by demand-only runtime loops, never fixed
+loops); navigation ledger repaired with accurate ownership/evidence.
+Remaining work, explicitly untouched (W5 stays open): fling axes
+beyond ordinary/sliver (2D, wheel, draggable sheet), nested remainder
+transfer during drags and flings, spring bounce-back, and advanced
+families sharing the same tenure rules; track clicks stay unbracketed
+programmatic moves by current design.
 
 ## W6 — Input, text and semantic consistency
 

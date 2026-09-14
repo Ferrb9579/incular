@@ -551,6 +551,20 @@ fn animated_modal_barrier_options() {
         dump.contains("front"),
         "later siblings stay visible:\n{dump}"
     );
+
+    // The flat-color constructor carries its constant color into the
+    // same animated path: sampling reports it verbatim, dismissal
+    // stays enabled by default, and the value converts into a Widget
+    // like every other construction form.
+    let flat = Color::rgba(10, 20, 30, 40);
+    let fires = Rc::new(RefCell::new(0));
+    let observed = fires.clone();
+    let barrier =
+        AnimatedModalBarrier::with_flat_color(flat).on_dismiss(move || *observed.borrow_mut() += 1);
+    assert_eq!(barrier.current_color(), flat);
+    assert!(barrier.dismiss());
+    assert_eq!(*fires.borrow(), 1);
+    let _: Widget = barrier.into();
 }
 
 #[test]

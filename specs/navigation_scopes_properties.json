@@ -481,6 +481,48 @@
     },
     {
       "symbol": "AnimatedModalBarrier",
+      "option": "with_flat_color",
+      "default": "n/a, constructor with a constant color (no animated transition)",
+      "validation": "constant color carried into a constant color animation, sampled verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/navigation/barrier.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedModalBarrier"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand over the color option for route veils without a per-route animation controller; route outlets veil modal content through it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/navigation/barrier.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedModalBarrier"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "animated_modal_barrier_options"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedModalBarrier",
       "option": "color_animation",
       "default": "n/a, constructor with an explicit color animation",
       "validation": "delegates verbatim to the same construction",
