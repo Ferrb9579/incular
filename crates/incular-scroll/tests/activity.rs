@@ -8,7 +8,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use incular_scroll::{
-    ActivityOrigin, ScrollController, ScrollNotification, ScrollNotificationType,
+    ActivityOrigin, OwnedDrive, ScrollController, ScrollNotification, ScrollNotificationType,
 };
 
 fn event_log(
@@ -94,6 +94,83 @@ fn dropped_live_token_aborts_silently() {
     assert!(controller.end_activity());
     drop(stale);
     assert_eq!(ends.get(), 2, "stale drop adds no abort");
+}
+
+#[test]
+fn drive_snapshots_before_notification_delivery() {
+    // The owner-checked drive commits under the lock and snapshots the
+    // committed offset/revision before `Update` listeners run: a
+    // listener that shrinks the bounds mid-drive is visible afterwards
+    // as a post-callback difference against the snapshot — the driver
+    // then closes its own tenure without resuming from the new
+    // position. A pre-tick offset comparison alone could never see
+    // this: the interference happens inside the step.
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
+    assert!(controller.jump_to(100.));
+    let (log, _guard) = event_log(&controller);
+    let activity = controller.start_owned_activity(ActivityOrigin::Scrollbar);
+    let shrunk = Rc::new(std::cell::Cell::new(false));
+    let _shrink = controller.add_listener({
+        let controller = controller.clone();
+        let shrunk = shrunk.clone();
+        move |notification: ScrollNotification| {
+            if notification.kind == Update && !shrunk.get() {
+                shrunk.set(true);
+                controller
+                    .update_extents(120., 100.)
+                    .expect("listener changes bounds");
+            }
+            false
+        }
+    });
+    let committed: OwnedDrive = activity.drive(30.).expect("current token drives");
+    assert_eq!(committed.offset, 130.);
+    assert!(shrunk.get(), "listener ran inside the drive");
+    assert_eq!(controller.offset(), 20., "bounds clamp applied after");
+    assert_ne!(
+        controller.revision(),
+        committed.revision,
+        "snapshot predates the listener write"
+    );
+    assert!(activity.is_current(), "bounds change takes nothing over");
+    assert!(activity.finish(), "driver closes its own tenure");
+    assert_eq!(controller.offset(), 20., "close writes nothing");
+    assert_eq!(
+        log.borrow().as_slice(),
+        &[Start, Update, ScrollNotificationType::Metrics, Update, End]
+    );
+}
+
+#[test]
+fn stale_token_drives_nothing() {
+    // A taken-over token refuses the drive outright: no write, no
+    // revision bump, no notification — the newer activity is intact.
+    let controller = ScrollController::new();
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
+    assert!(controller.jump_to(100.));
+    let (log, _guard) = event_log(&controller);
+    let old = controller.start_owned_activity(ActivityOrigin::Scrollbar);
+    let new = controller.start_owned_activity(ActivityOrigin::Drag);
+    let revision = controller.revision();
+    assert!(old.drive(30.).is_none(), "stale drive refused");
+    assert_eq!(controller.offset(), 100.);
+    assert_eq!(controller.revision(), revision);
+    assert_eq!(
+        log.borrow().as_slice(),
+        &[ScrollNotificationType::Start],
+        "takeover and refused drive stay silent"
+    );
+    assert!(new.finish());
+    assert_eq!(
+        log.borrow().as_slice(),
+        &[ScrollNotificationType::Start, ScrollNotificationType::End]
+    );
 }
 
 #[test]

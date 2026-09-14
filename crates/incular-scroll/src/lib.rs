@@ -13,7 +13,8 @@ mod scrollbar;
 mod sliver;
 
 pub use activity::{
-    ActivityId, ActivityOrigin, DragStartBehavior, OwnedActivity, ScrollViewKeyboardDismissBehavior,
+    ActivityId, ActivityOrigin, DragStartBehavior, OwnedActivity, OwnedDrive,
+    ScrollViewKeyboardDismissBehavior,
 };
 pub use attachment::{
     AttachmentConflict, MetricAttachment, MetricOwner, MetricWriteError, ViewportMetricsUpdate,

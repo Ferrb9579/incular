@@ -783,8 +783,11 @@ struct ScrollFlingDriver {
     velocity: f32,
     /// Last frame time the driver integrated.
     last_tick: Instant,
-    /// Offset the driver itself wrote last; any deviation means an
-    /// external move (programmatic jump, bounds clamp) took over.
+    /// Offset the driver's own last [`OwnedActivity::drive`] committed.
+    /// A pre-tick deviation means an external move (programmatic jump,
+    /// bounds clamp) took over between frames; mid-drive interference
+    /// is detected against the drive snapshot instead, so listener
+    /// writes are never absorbed here.
     expected_offset: f32,
     physics: ScrollPhysics,
 }

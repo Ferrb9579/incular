@@ -1,6 +1,7 @@
 use crate::{
     controller::{ScrollController, ScrollState},
     notifications::ScrollNotificationType,
+    restoration::persist_scroll_offset,
 };
 
 /// Advances the activity identity without reuse: exhaustion panics
@@ -147,6 +148,19 @@ pub struct ActivityId {
     generation: u64,
 }
 
+/// Snapshot of one owner-checked drive: the offset and revision the
+/// driver itself committed, captured under the state lock before any
+/// notification ran. Drivers record this — never a post-callback read —
+/// as the expected position, so application changes made by `Update`
+/// listeners cannot be mistaken for driver motion on the next step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OwnedDrive {
+    /// Committed offset immediately after this drive's own write.
+    pub offset: f32,
+    /// State revision immediately after this drive's own write.
+    pub revision: u64,
+}
+
 /// Non-cloneable proof of activity ownership: exactly one driver owns
 /// the cleanup authority. Cloning is refused structurally so a copy can
 /// never become a second cleanup owner; observers use [`ActivityId`].
@@ -190,6 +204,61 @@ impl OwnedActivity {
     pub fn is_current(&self) -> bool {
         let state = self.controller.state.borrow();
         state.activity_active && state.activity_generation == self.generation
+    }
+
+    /// Applies `delta` to the bracketed controller's offset — clamped to
+    /// the current content bounds with the same commit semantics as
+    /// [`ScrollController::jump_to`] — but only while this token still
+    /// owns the open bracket.
+    ///
+    /// The commit (offset plus revision) is captured under the state
+    /// lock and returned as an [`OwnedDrive`] snapshot before the
+    /// `Update` notification runs. Callers verify tenure after the
+    /// callbacks return: the token still current, and offset plus
+    /// revision still equal to the snapshot. A listener jump, bounds
+    /// change, or takeover is then visible as a post-callback
+    /// difference — never absorbed into the driver's expected position.
+    ///
+    /// Returns `None` without touching anything when this token is
+    /// stale (a newer activity took over, or the bracket closed). A
+    /// same-value drive is a no-op like [`ScrollController::jump_to`]:
+    /// the unchanged snapshot, no revision bump, no notification — so a
+    /// listener jumping to the already-current position never disturbs
+    /// the tenure. Non-finite deltas likewise drive nothing.
+    pub fn drive(&self, delta: f32) -> Option<OwnedDrive> {
+        let (committed, persistence, applied) = {
+            let mut state = self.controller.state.borrow_mut();
+            if !(state.activity_active && state.activity_generation == self.generation) {
+                return None;
+            }
+            let snapshot = || OwnedDrive {
+                offset: state.offset,
+                revision: state.revision,
+            };
+            if !delta.is_finite() {
+                return Some(snapshot());
+            }
+            let value = (state.offset + delta).clamp(0., state.max_offset);
+            if value == state.offset {
+                return Some(snapshot());
+            }
+            let previous = state.offset;
+            state.offset = value;
+            state.pending_restored_offset = None;
+            state.revision += 1;
+            (
+                OwnedDrive {
+                    offset: value,
+                    revision: state.revision,
+                },
+                state.restoration.clone(),
+                value - previous,
+            )
+        };
+        persist_scroll_offset(persistence, committed.offset);
+        self.controller
+            .dispatch_notification(ScrollNotificationType::Update, applied, 0.);
+        Some(committed)
     }
 
     /// Closes the bracket with one `End`, but only while this token is

@@ -1951,6 +1951,186 @@ fn programmatic_jump_during_fling_ends_it() {
 }
 
 #[test]
+fn fling_update_listener_jump_away_never_resumes() {
+    // Interference *during* the fling step's own `Update` callbacks —
+    // not a between-frames mismatch — must not become the driver's new
+    // baseline: the driver committed ~71, the listener jumped to 150,
+    // and the tenure closes without writing over 150 or resuming.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let jumped = std::rc::Rc::new(std::cell::Cell::new(false));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        let armed = armed.clone();
+        let jumped = jumped.clone();
+        let controller = controller.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == Update && armed.get() {
+                armed.set(false);
+                jumped.set(controller.jump_to(150.));
+            }
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    assert_eq!(controller.offset(), 40.);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    armed.set(true);
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    assert!(jumped.get(), "listener jump ran inside the step");
+    assert_eq!(controller.offset(), 150.);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, Update, End],
+        "driver step, listener jump, then close — no resume"
+    );
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(62), false));
+    assert_eq!(controller.offset(), 150., "stale driver writes nothing");
+    assert_eq!(
+        events.borrow().iter().filter(|kind| **kind == End).count(),
+        1
+    );
+}
+
+#[test]
+fn fling_update_listener_same_value_jump_continues() {
+    // A listener jumping to the already-current position is a no-op
+    // command (same revision, no notification): the tenure survives it
+    // and settles normally with one Start and one End.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let noop = std::rc::Rc::new(std::cell::Cell::new(true));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        let armed = armed.clone();
+        let noop = noop.clone();
+        let controller = controller.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == Update && armed.get() {
+                armed.set(false);
+                noop.set(controller.jump_to(controller.offset()));
+            }
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    armed.set(true);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    assert!(!noop.get(), "same-value jump is a no-op command");
+    let mut frames = 1;
+    while tree.pump_scroll_flings(base + Duration::from_millis(46 + 16 * frames), false) {
+        frames += 1;
+        assert!(frames < 600, "fling settles");
+    }
+    assert_eq!(controller.offset(), controller.max_offset());
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|kind| **kind == Start)
+            .count(),
+        1
+    );
+    assert_eq!(
+        events.borrow().iter().filter(|kind| **kind == End).count(),
+        1
+    );
+}
+
+#[test]
+fn fling_update_listener_takeover_leaves_new_activity_intact() {
+    // A listener starting another activity mid-drive takes ownership:
+    // the fling driver goes stale and drops silently at the same pump
+    // — no End for the old tenure, no touch of the new one — and the
+    // retained token still closes its bracket exactly once.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::{
+        ActivityOrigin,
+        ScrollNotificationType::{End, Start, Update},
+    };
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let taken = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        let armed = armed.clone();
+        let taken = taken.clone();
+        let controller = controller.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == Update && armed.get() {
+                armed.set(false);
+                *taken.borrow_mut() = Some(controller.start_owned_activity(ActivityOrigin::Drag));
+            }
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    armed.set(true);
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(46), false),
+        "stale driver retains nothing"
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update],
+        "no End from the stale driver"
+    );
+    assert!(!controller.begin_activity(), "newer bracket still open");
+    let owned = taken.borrow_mut().take().expect("listener took over");
+    assert!(owned.is_current());
+    assert!(owned.finish());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End]
+    );
+}
+
+#[test]
 fn unmount_mid_fling_cancels_silently() {
     // Tearing the viewport down mid-fling ends the tenure through the
     // normal detach; the orphaned driver drops silently at the next

@@ -656,10 +656,21 @@ impl WidgetTree {
 
     /// Pumps live ballistic tenures once per frame. Returns whether any
     /// driver remains (the runtime requests another frame while true and
-    /// idles otherwise). Each driver integrates one decay step and jumps;
-    /// takeover, external moves, and teardown drop it silently, while a
-    /// decayed driver finishes its bracket with `End`. Reduced motion
-    /// settles every driver in place with no motion.
+    /// idles otherwise). Each driver integrates one decay step and
+    /// drives it through its owned token; a decayed driver finishes its
+    /// bracket with `End`. Reduced motion settles every driver in place
+    /// with no motion.
+    ///
+    /// Ownership is verified twice per step, never inferred from a
+    /// post-callback offset read. The pre-tick comparison below catches
+    /// jumps between frames; the drive itself commits through the token
+    /// and snapshots the committed offset/revision before its `Update`
+    /// listeners run, and the post-callback check distinguishes what
+    /// those listeners did. A listener jump or bounds change closes the
+    /// driver's own tenure without overwriting the new position; a
+    /// listener takeover leaves the driver stale, so it drops silently
+    /// with the newer activity intact. A same-value listener jump is a
+    /// no-op command and disturbs nothing.
     pub fn pump_scroll_flings(&mut self, now: Instant, reduced_motion: bool) -> bool {
         if self.scroll_flings.is_empty() {
             return false;
@@ -679,7 +690,8 @@ impl WidgetTree {
             }
             if driver.controller.offset() != driver.expected_offset {
                 // Programmatic jump, bounds clamp, or layout-applied
-                // position took visual control: close the tenure.
+                // position took visual control between frames: close the
+                // tenure this driver still owns.
                 driver.activity.finish();
                 continue;
             }
@@ -693,17 +705,40 @@ impl WidgetTree {
             let step = driver.physics.fling_step(driver.velocity, seconds);
             driver.velocity = step.velocity;
             driver.last_tick = now;
+            if step.settled && step.offset_delta == 0. {
+                driver.activity.finish();
+                continue;
+            }
+            let previous = driver.controller.offset();
+            let Some(committed) = driver.activity.drive(step.offset_delta) else {
+                // Ownership passed to a newer activity before the drive:
+                // the stale driver drops with the new bracket intact.
+                continue;
+            };
+            if !driver.activity.is_current() {
+                // An `Update` listener took over mid-drive: stay silent,
+                // never finish another activity's bracket.
+                continue;
+            }
+            if driver.controller.offset() != committed.offset
+                || driver.controller.revision() != committed.revision
+            {
+                // An `Update` listener jumped or changed bounds mid-drive:
+                // close this driver's own tenure without writing over the
+                // application's position.
+                driver.activity.finish();
+                continue;
+            }
             if step.settled {
                 driver.activity.finish();
                 continue;
             }
-            if step.offset_delta != 0. {
-                driver
-                    .controller
-                    .jump_to(driver.controller.offset() + step.offset_delta);
+            if committed.offset != previous {
                 moved += 1;
             }
-            driver.expected_offset = driver.controller.offset();
+            // The driver's own committed write — not a post-callback
+            // read — is the next step's expectation.
+            driver.expected_offset = committed.offset;
             self.scroll_flings.push(driver);
         }
         self.diagnostics.scroll_events += moved;
