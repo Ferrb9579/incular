@@ -1133,13 +1133,13 @@ W3 scope: every family row below is inventoried and complete.
 | Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
 | Sizing / constraints (11 types) | 35/35 | none known | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | complete |
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
-| Scrolling — viewport configuration and ordinary lists | 26/26 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_viewport_lists_properties.json`, `tests/scroll_viewport_lists_ledger.rs` | complete |
-| Scrolling — grids/single-child/animated lists | 43/43 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_grid_single_properties.json`, `tests/scroll_grid_single_ledger.rs` | complete |
-| Scrolling — pages/sliver animated+reorderable | 32/32 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_pages_reorder_properties.json`, `tests/scroll_pages_reorder_ledger.rs` | complete |
-| Scrolling — scrollbar/2D engine | 20/20 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_scrollbar_2d_properties.json`, `tests/scroll_scrollbar_2d_ledger.rs` | complete |
-| Scrolling — wheel fixed-extent engine | 22/22 | no looping delegate by design (bounds clamp); retained scroll actions absent (callback-only selection, locked as contract); controller multi-attachment unenforced (W5 gap) | `specs/wheel_scrolling_properties.json`, `tests/wheel_scrolling_ledger.rs` | complete |
-| Scrolling — draggable sheet | 15/15 | snap animations are caller-driven (dropping supersedes); controller multi-attachment unenforced (W5 gap) | `specs/draggable_sheet_properties.json`, `tests/draggable_sheet_ledger.rs` | complete |
-| Scrolling — physics policy | 11/11 | snap velocity rule corrected in docs (fling strength above 120 rounds directionally; exact multiples stay); controller multi-attachment unenforced (W5 gap) | `specs/scroll_physics_properties.json`, `tests/scroll_physics_ledger.rs` | complete |
+| Scrolling — viewport configuration and ordinary lists | 26/26 | controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/scroll_viewport_lists_properties.json`, `tests/scroll_viewport_lists_ledger.rs` | complete |
+| Scrolling — grids/single-child/animated lists | 43/43 | controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/scroll_grid_single_properties.json`, `tests/scroll_grid_single_ledger.rs` | complete |
+| Scrolling — pages/sliver animated+reorderable | 32/32 | controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/scroll_pages_reorder_properties.json`, `tests/scroll_pages_reorder_ledger.rs` | complete |
+| Scrolling — scrollbar/2D engine | 20/20 | controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/scroll_scrollbar_2d_properties.json`, `tests/scroll_scrollbar_2d_ledger.rs` | complete |
+| Scrolling — wheel fixed-extent engine | 22/22 | no looping delegate by design (bounds clamp); retained scroll actions absent (callback-only selection, locked as contract); controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/wheel_scrolling_properties.json`, `tests/wheel_scrolling_ledger.rs` | complete |
+| Scrolling — draggable sheet | 15/15 | snap animations are caller-driven (dropping supersedes); controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/draggable_sheet_properties.json`, `tests/draggable_sheet_ledger.rs` | complete |
+| Scrolling — physics policy | 11/11 | snap velocity rule corrected in docs (fling strength above 120 rounds directionally; exact multiples stay); controller multi-attachment enforced (W5 closed — see reconciliation) | `specs/scroll_physics_properties.json`, `tests/scroll_physics_ledger.rs` | complete |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
@@ -1398,7 +1398,8 @@ W3 scope: every family row below is inventoried and complete.
   existing reverse/cache/restoration sliver regressions) plus
   `specs/scroll_viewport_lists_properties.json` /
   `tests/scroll_viewport_lists_ledger.rs`. W5 gaps recorded: one
-  controller across unrelated viewports is unenforced, and variable-
+  controller across unrelated viewports was unenforced until the W5
+  reconciliation below closed it, and variable-
   extent estimates converge only through measurement.
 
 ## W3 — Scrolling grids, single-child, and animated lists (same workstream, still open)
@@ -1482,7 +1483,8 @@ W3 scope: every family row below is inventoried and complete.
   plain clamping, fraction floors, and unmount cleanup. Drag-path
   reorder callbacks stay covered by the existing `reorderable` suite
   and are referenced, not duplicated. No second scroll engine or
-  attachment model; the W5 multi-attachment gap stands.
+  attachment model; the W5 multi-attachment gap stood until the
+  reconciliation below closed it.
 - Evidence: 18 tests in
   `crates/incular-widgets/tests/scroll_pages_reorder.rs` plus
   `specs/scroll_pages_reorder_properties.json` /
@@ -1621,7 +1623,7 @@ W3 scope: every family row below is inventoried and complete.
     selection callback-only (no retained scroll actions), draggable
     snap handles caller-owned (dropping supersedes), bouncing
     positions transient in memory, multi-viewport attachment
-    unenforced (W5).
+    enforced (W5 closed — see reconciliation).
   - Change fan-out reduced, not moved: reset commits then notifies
     exactly once through the existing listener mechanism; wheel
     prepares acknowledge the consumed stamp so quiet layouts rebuild
@@ -2866,10 +2868,11 @@ spring-math tests alone:
   flings (release always closes propagated tenures; only the
   gesture's own viewport goes ballistic), and spring bounce-back
   (flings hard-clamp; overscroll bounce stays a standalone helper).
+  These are transferred out of W5 below — not defects in supported
+  paths.
 - Original W5 exit criteria (deterministic transitions, no stuck or
   duplicate brackets, single-writer geometry) hold with the fling
-  driver pinned — but W5 stays open until its full transition
-  criteria, including the remaining fling axes above, are satisfied.
+  driver pinned; the reconciliation below closes W5 on that basis.
 
 API audit — every public geometry-writing method and its authority
 check (no unchecked public writer remains):
@@ -2947,8 +2950,7 @@ gesture arena — no second recognizer system: the scroll member joins
 pending alongside application members, acceptance decides per axis,
 same-axis ties go to the innermost application member, and nested
 touch-drag remainder routes outward per the table above (fling
-remainder stays a separate unbuilt policy). W5 stays open: fling axes
-beyond ordinary/sliver remain, per above.
+remainder stays a separate unbuilt policy, transferred out below).
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on
@@ -3008,11 +3010,59 @@ reorders move elements instead of rebuilding them; variable-extent
 replacements carry retained measurements only into bare-estimate
 slots (fresh seeds always win) so same-content updates never shift
 the offset on estimate noise.
-Remaining work, explicitly untouched (W5 stays open): fling axes
-beyond ordinary/sliver (2D, wheel, draggable sheet), nested remainder
+
+## W5 reconciliation — requirements review and close
+
+Reviewed requirement by requirement against the table and inventory
+above; every cited behavior is pinned by a named regression, and the
+probing this round (boundary arrival, revision tracking, nested
+routing, keyed moves, estimate-noise adoption) fixed each defect it
+demonstrated at its existing owner — no rebuild-the-viewport
+workarounds, no second algorithms.
+
+- W5.1 (single attachment per controller, all families): enforced —
+  occupied rejects every newcomer, acquire-before-release replacement
+  with tenure detach, unmount/tree-drop teardown, lease-authorized
+  publication on every path including 2D pairs, wheel aliases, and
+  sheet inner writes. No known unenforced route remains.
+- W5.2 (idle/drag/driven/ballistic/suspended transitions with owned
+  origin, cancellation, and notification ordering): specified and
+  pinned for every supported driver — touch drag incl. nested
+  remainder, wheel per-sample activities, scrollbar thumb drags,
+  sheet generations with Active/Completed/Interrupted, and the
+  bounded ordinary/sliver fling with analytic integration, arrival
+  finishing, and per-cause interruption. Ballistic policies beyond
+  that are separate unbuilt work (transferred below), not unspecified
+  behavior: every built driver has an exact transition row.
+- W5.3 (completion/interruption for animate, jump, takeover, bounds,
+  detach, close, reduced motion): each outcome pinned — takeover and
+  same-value rules, jump/bounds/replacement/takeover between ticks,
+  detach with `End`, drop/teardown silent, reduced-motion settle,
+  route/window close through the same detach/teardown paths.
+- W5.4 (variable-extent insert/remove/reorder, nested handoff, lazy
+  deep jumps; index reuse and keep-alive identity): insert, removal
+  (incl. visible head), keyed reorder with element moves, resize,
+  trailing-edge anchoring, variable-extent changes, and lazy head
+  removal during live drags/flings hold model-exact offset/range
+  with coherent paint/hit/semantics; nested drag handoff routes with
+  the input=sum(consumed)+remainder invariant; lazy deep jumps hold
+  through deferred/restoration requests; keep-alive identity lives in
+  its tested subsystem; the sliver index preserves measurements
+  across structural operations and compatible replacements.
+- Exit criteria: deterministic transition-table tests (the table
+  above, every row pinned); no stuck activity or duplicate start/end
+  (takeover, replacement, unmount, drop, and reentrant paths all
+  pinned silent-or-once); one view cannot silently overwrite
+  another's geometry (attachment enforcement plus the
+  all-routes-bypass regression).
+
+Remaining work is not W5 debt — these are unbuilt advanced policies,
+each with its own future entry criteria, none a defect in a
+supported path: 2D ballistic fling, wheel ballistic fling beyond the
+specified per-sample settle, sheet ballistic fling, nested remainder
 routing during flings, spring bounce-back, and advanced families
-sharing the same tenure rules; track clicks stay unbracketed
-programmatic moves by current design.
+adopting the same tenure rules. Track clicks stay unbracketed
+programmatic moves by current design. W5 is closed.
 
 ## W6 — Input, text and semantic consistency
 

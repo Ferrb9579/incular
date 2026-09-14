@@ -320,5 +320,14 @@
     "reason": "Text input hints and snapshots expose editor configuration without exposing retained WidgetKind.",
     "decision": "B08 / existing Incular surface",
     "evidence": "crates/incular-widgets/tests/tree_editing_semantics_gestures.rs"
+  },
+  {
+    "symbols": [
+      "DraggableAnimationStep"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Frame drivers pumping sheet animations need per-tick completion reporting that a shared boolean cannot express: Active keeps pumping, Completed describes the handle's own trajectory even when a listener started a newer driver during the final notification, and Interrupted covers supersede, reset, detach, and dropped state without writing.",
+    "decision": "B08 / generation-owned animation steps",
+    "evidence": "crates/incular-widgets/tests/draggable_sheet.rs"
   }
 ]
