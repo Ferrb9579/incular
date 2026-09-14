@@ -2802,6 +2802,14 @@ a metric attachment):
 | animation tick (current) | Active, then Completed at target | exact per-frame stepping, zero-duration completes at once |
 | animation tick (superseded) | Interrupted, no write | superseded, reset, detached, or state gone — never a silent boolean |
 | completing tick with newer driver | Completed (own trajectory) | reaching target reports completion even when the final notification started a newer tenure; the tick never clears another activity |
+| accepted touch drag | Start, then Update per move | bracket opens at acceptance (pending presses claim nothing); moves drive captured controller increments |
+| fast release → fling | (silence at handoff) | token transfers with no End/Start churn; frames pump decayed motion with Updates until settle |
+| fling settle | End | decay under the minimum velocity closes the transferred bracket exactly once |
+| slow release / cancel | End | below threshold or cancelled: normal release semantics, no driver retained |
+| new drag mid-fling | (takeover, silent) | fresh stream takes ownership; stale driver drops silently at next pump; motion continues |
+| jump mid-fling | End | external position mismatch closes the tenure without overwriting the jump |
+| unmount mid-fling | End, then silence | tenure detach closes; orphaned driver drops silently at next pump |
+| reduced-motion pump | End, no motion | settles transferred tenures in place immediately |
 
 Clocks: ordinary activity is fully synchronous (no timers), so
 determinism needs no clock control — sequences are exact.
@@ -2817,32 +2825,23 @@ spring-math tests alone:
   `ScrollSpringStep`, `settle_physics`, and the `incular-animation`
   crate — pure math, reachable from tests and app code, driving
   nothing by themselves.
-- Unsupported: a clock-driven fling — velocity decay integrated over
-  frames under an activity bracket.
+- Implemented (bounded ordinary fling, single-axis ordinary/sliver
+  viewports): release velocity from the recognizer's release details
+  (offset-space px/sec) transfers the drag token past the physics
+  minimum — no End/Start churn; `ScrollPhysics::fling_step` integrates
+  exponential decay (pure math in the physics owner); the runtime frame
+  clock pumps drivers before layout and requests frames while any
+  remain; settle, takeover, external-move mismatch, unmount, and
+  reduced motion close as tabulated above. Proven through the
+  production frame path with deterministic tree-level steps plus one
+  time-tolerant runtime integration test.
+- Still unsupported: 2D/wheel/draggable-sheet fling, nested remainder
+  routing during flings, and spring bounce-back (flings hard-clamp;
+  overscroll bounce stays a standalone helper).
 - Original W5 exit criteria (deterministic transitions, no stuck or
-  duplicate brackets, single-writer geometry) are all pinned without a
-  fling driver; ballistic stays explicitly open work, not claimed.
-- Next bounded slice (recorded, not implemented): ordinary-viewport
-  fling driver. Velocity source: `DragEndDetails`-style release
-  velocity from the gesture layer (`Velocity` already exists there;
-  today nothing feeds it into scroll motion). Integration point:
-  gesture-end above the physics minimum opens a controller-owned
-  ballistic tenure via `start_owned_activity` (new origin), pumps
-  per-frame decay steps, and finishes on settle. Clock owner: the
-  runtime frame scheduler's existing frame callbacks with
-  `request_frame` wakeups; idle behavior: no scheduled frames once the
-  tenure finishes or interrupts (nothing polls). Bounds changes
-  mid-fling clamp through the normal commit path. User takeover: any
-  new input sample takes ownership (existing takeover rule — stale
-  fling ticks turn silent). Reduced motion: the existing ambient flag
-  short-circuits the driver to a synchronous settle instead of pumping
-  frames. Cancellation: detach, replacement, or drop end/abort the
-  tenure through the existing owned paths — no new mechanism. Expected
-  tests: Start..Update*..End exactness, cancellation-by-input
-  mid-fling, takeover silence of stale ticks, detach-mid-fling
-  silence, settle-target exactness per physics, reduced-motion
-  short-circuit. Not built until the ownership foundations above are
-  verified — W5 stays open.
+  duplicate brackets, single-writer geometry) hold with the fling
+  driver pinned — but W5 stays open until its full transition
+  criteria, including the remaining fling axes above, are satisfied.
 
 API audit — every public geometry-writing method and its authority
 check (no unchecked public writer remains):
@@ -2859,6 +2858,7 @@ check (no unchecked public writer remains):
 | `commit_extent_state` / `finish_extent_publication` | private (`pub(crate)`): the single extent algorithm, unreachable except through the checked entries above |
 | `ScrollController::start_owned_activity` / `OwnedActivity::finish` | generation tokens: takeover bumps silently (no duplicate `Start`); only the current token's finish emits `End`; stale finishes and stale drops change nothing |
 | `ViewportMetricsUpdate::with_axis` | the axis-carrying publication form: geometry and context commit together on every viewport path (ordinary, sliver, wheel retained + headless, 2D both axes) |
+| `ScrollPhysics::fling_step` | pure ballistic integration (decay + settle) used only by retained fling drivers; never schedules or notifies by itself |
 | `ScrollController::try_set_metrics_context` | free-only standalone context declaration for headless hosts/tests; refused with `AttachedOwner` while owned, mutating nothing |
 | Viewport/wheel/2D descriptor setters (`new`, `set_axis_directions`, `set_physics`) | local configuration only — shared controller state untouched; context publishes at authorized layout |
 
@@ -2911,12 +2911,11 @@ the tick boundary and explicit detach paths replace caller discipline;
 stale sheet-controller handles already fail explicitly via weak upgrade.
 Host adapters and restoration never published geometry (offsets and
 persisted positions only) and needed no changes. Adapter audit: the
-wheel adapter's per-sample implicit-begin/end stays deliberate (one
-synchronous call, immune to takeover — no token needed); header-snap
-observers only read Start/End; touch-drag recognizers bracket nothing
-today — their brackets belong to the fling slice, which must take
-ownership instead of calling raw begin/end. W5 stays open: ballistic
-fling is recorded above, unimplemented.
+wheel adapter owns one token per sample (reentrant takeovers survive
+completion); header-snap observers only read Start/End; touch-drag
+streams bracket through retained entries with copied callbacks driving
+offsets only. W5 stays open: fling axes beyond ordinary/sliver remain,
+per above.
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on

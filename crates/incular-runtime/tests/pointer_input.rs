@@ -9,7 +9,9 @@ use incular_platform::{
 };
 use incular_runtime::{Application, NativeOperationCompletionStatus, NativeWindowCommand};
 use incular_widgets::internal::ActionSurface;
-use incular_widgets::{Color, Listener, MouseCursor, MouseRegion, Widget};
+use incular_widgets::{
+    Color, ListView, Listener, MouseCursor, MouseRegion, ScrollController, Widget,
+};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -273,4 +275,86 @@ fn cursor_grab_uses_result_bearing_native_operation_contract() {
             incular_platform::PlatformOperationErrorKind::Unsupported
         ))
     );
+}
+
+#[test]
+fn touch_fling_pumps_through_production_frames() {
+    // End to end through the production frame path: a fast touch release
+    // transfers into a fling tenure, and explicit frame clocks pump it
+    // from the drag-end offset to the edge, closing with exactly one
+    // End. Wall-clock input times make exact offsets approximate, so
+    // this asserts direction, settling, and bracket accounting — exact
+    // steps are pinned deterministically at the tree level.
+    use std::time::Duration;
+    let controller = ScrollController::new();
+    let rows: Vec<Widget> = (0..5)
+        .map(|_| Widget::box_(Size::new(100., 40.), Color::WHITE))
+        .collect();
+    let mut application = app(ListView::new(rows).controller(controller.clone()).into());
+    let id = application.primary_window();
+    let constraints = Constraints::tight(Size::new(100., 40.));
+    let ends = Rc::new(Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let point = Offset::new(50., 30.);
+    pointer(
+        &mut application,
+        PointerPhase::Down,
+        PRIMARY_POINTER_BUTTON,
+        Some(PRIMARY_POINTER_BUTTON),
+        point,
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 20.),
+    );
+    pointer(
+        &mut application,
+        PointerPhase::Move,
+        PRIMARY_POINTER_BUTTON,
+        None,
+        Offset::new(50., 10.),
+    );
+    // Guarantee nonzero release velocity: the release must both move and
+    // postdate the previous sample on the wall clock the release details
+    // read.
+    std::thread::sleep(Duration::from_millis(3));
+    pointer(
+        &mut application,
+        PointerPhase::Up,
+        0,
+        Some(PRIMARY_POINTER_BUTTON),
+        Offset::new(50., 5.),
+    );
+    let released = controller.offset();
+    assert!(released > 0., "drag moved before release");
+    let mut now = Instant::now();
+    for _ in 0..8 {
+        now += Duration::from_millis(16);
+        application
+            .run_window_frame_at(id, constraints, now)
+            .expect("frame pumps fling");
+    }
+    assert!(
+        controller.offset() > released,
+        "fling advances past the release point"
+    );
+    for _ in 0..300 {
+        now += Duration::from_millis(16);
+        application
+            .run_window_frame_at(id, constraints, now)
+            .expect("frame pumps fling");
+    }
+    assert_eq!(controller.offset(), controller.max_offset());
+    assert_eq!(ends.get(), 1, "one bracket from press to settle");
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
 }

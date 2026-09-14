@@ -252,17 +252,18 @@ impl WidgetTree {
     }
 
     /// Synthetic drag callbacks driving one scrollable viewport. Only the
-    /// viewport-axis update is installed, so cross-axis movement never
-    /// accepts through this member — the arena keeps it pending for
-    /// whoever else wants the stream. The callbacks move offsets only;
-    /// bracketing lives in the retained stream entry, never in these
-    /// copied closures.
+    /// viewport-axis update/end pair is installed, so cross-axis movement
+    /// never accepts through this member — the arena keeps it pending for
+    /// whoever else wants the stream. The callbacks move offsets and
+    /// record release velocity only; bracketing lives in the retained
+    /// stream entry, never in these copied closures. Returns the shared
+    /// release-velocity cell alongside the callbacks.
     fn scroll_drag_callbacks(
         controller: &ScrollController,
         axis: Axis,
         reverse: bool,
         physics: ScrollPhysics,
-    ) -> GestureCallbacks {
+    ) -> (GestureCallbacks, Rc<std::cell::Cell<Option<f32>>>) {
         let controller = controller.clone();
         // The recognizer reports total displacement from press time, so
         // each sample drives only its increment. Shared through the
@@ -280,16 +281,30 @@ impl WidgetTree {
             let logical = if reverse { step } else { -step };
             let _ = controller.apply_physics(physics, logical);
         });
-        match axis {
+        // Release velocity in offset space, recorded for a fling handoff.
+        // Same sign convention as the drive above.
+        let end_velocity = Rc::new(std::cell::Cell::new(None));
+        let end_velocity_for_callback = end_velocity.clone();
+        let record = Rc::new(move |details: DragEndDetails| {
+            let main = match axis {
+                Axis::Horizontal => details.velocity.x,
+                Axis::Vertical => details.velocity.y,
+            };
+            end_velocity_for_callback.set(Some(if reverse { main } else { -main }));
+        });
+        let callbacks = match axis {
             Axis::Horizontal => GestureCallbacks {
                 on_horizontal_drag_update: Some(drive),
+                on_horizontal_drag_end: Some(record),
                 ..GestureCallbacks::default()
             },
             Axis::Vertical => GestureCallbacks {
                 on_vertical_drag_update: Some(drive),
+                on_vertical_drag_end: Some(record),
                 ..GestureCallbacks::default()
             },
-        }
+        };
+        (callbacks, end_velocity)
     }
 
     /// Innermost scrollable viewport above `element`, if any: the element
@@ -453,7 +468,8 @@ impl WidgetTree {
                 && let Some((viewport, controller, axis, reverse, physics)) =
                     self.innermost_scrollable_viewport(element)
             {
-                let callbacks = Self::scroll_drag_callbacks(&controller, axis, reverse, physics);
+                let (callbacks, end_velocity) =
+                    Self::scroll_drag_callbacks(&controller, axis, reverse, physics);
                 let member = self.gesture_arena.add(key, false);
                 let mut recognizer = PointerGestureRecognizer::new(callbacks);
                 let _ = recognizer.observe(event);
@@ -469,6 +485,8 @@ impl WidgetTree {
                     ScrollBracket {
                         member,
                         controller,
+                        physics,
+                        end_velocity,
                         activity: None,
                     },
                 );
@@ -583,6 +601,12 @@ impl WidgetTree {
             None => handled,
         };
         if matches!(event.phase, PointerPhase::Up | PointerPhase::Cancel) {
+            // A fast release transfers the live bracket into a ballistic
+            // tenure instead of finishing it; anything else ends here.
+            // Cancellation never flings.
+            if matches!(event.phase, PointerPhase::Up) {
+                self.maybe_begin_fling(key, event.time);
+            }
             self.finish_drag(
                 key,
                 matches!(event.phase, PointerPhase::Cancel),
@@ -593,6 +617,97 @@ impl WidgetTree {
             self.remove_scale_recognizers_when_idle();
         }
         claimed.then_some(element)
+    }
+
+    /// Transfers a live drag bracket into a ballistic tenure when the
+    /// release was fast enough to fling. The token moves, not copies —
+    /// no `End`/`Start` churn at handoff — and later frames pump it
+    /// through [`pump_scroll_flings`](Self::pump_scroll_flings). Slow
+    /// releases, unaccepted presses, and stale brackets finish or drop
+    /// silently exactly as before.
+    fn maybe_begin_fling(&mut self, key: GestureArenaKey, now: Instant) {
+        let Some(bracket) = self.scroll_brackets.remove(&key) else {
+            return;
+        };
+        let Some(activity) = bracket.activity else {
+            return;
+        };
+        if !activity.is_current() {
+            return;
+        }
+        let Some(velocity) = bracket.end_velocity.get() else {
+            activity.finish();
+            return;
+        };
+        if velocity.abs() < bracket.physics.min_fling_velocity() {
+            activity.finish();
+            return;
+        }
+        let expected_offset = bracket.controller.offset();
+        self.scroll_flings.push(ScrollFlingDriver {
+            controller: bracket.controller,
+            activity,
+            velocity,
+            last_tick: now,
+            expected_offset,
+            physics: bracket.physics,
+        });
+    }
+
+    /// Pumps live ballistic tenures once per frame. Returns whether any
+    /// driver remains (the runtime requests another frame while true and
+    /// idles otherwise). Each driver integrates one decay step and jumps;
+    /// takeover, external moves, and teardown drop it silently, while a
+    /// decayed driver finishes its bracket with `End`. Reduced motion
+    /// settles every driver in place with no motion.
+    pub fn pump_scroll_flings(&mut self, now: Instant, reduced_motion: bool) -> bool {
+        if self.scroll_flings.is_empty() {
+            return false;
+        }
+        // Drain first so every fate below owns its driver: finishing
+        // takes the token by value, and dropped drivers tear down
+        // silently through it.
+        let drivers = std::mem::take(&mut self.scroll_flings);
+        let mut moved = 0u64;
+        for mut driver in drivers {
+            if reduced_motion {
+                driver.activity.finish();
+                continue;
+            }
+            if !driver.activity.is_current() {
+                continue;
+            }
+            if driver.controller.offset() != driver.expected_offset {
+                // Programmatic jump, bounds clamp, or layout-applied
+                // position took visual control: close the tenure.
+                driver.activity.finish();
+                continue;
+            }
+            let seconds = now
+                .saturating_duration_since(driver.last_tick)
+                .as_secs_f32();
+            if seconds <= 0. {
+                self.scroll_flings.push(driver);
+                continue;
+            }
+            let step = driver.physics.fling_step(driver.velocity, seconds);
+            driver.velocity = step.velocity;
+            driver.last_tick = now;
+            if step.settled {
+                driver.activity.finish();
+                continue;
+            }
+            if step.offset_delta != 0. {
+                driver
+                    .controller
+                    .jump_to(driver.controller.offset() + step.offset_delta);
+                moved += 1;
+            }
+            driver.expected_offset = driver.controller.offset();
+            self.scroll_flings.push(driver);
+        }
+        self.diagnostics.scroll_events += moved;
+        !self.scroll_flings.is_empty()
     }
 
     pub(super) fn gesture_callbacks(&self, element: ElementId) -> Option<GestureCallbacks> {

@@ -26,8 +26,8 @@ pub use notifications::{
     ScrollNotification, ScrollNotificationSubscription, ScrollNotificationType,
 };
 pub use physics::{
-    BoundaryPhysics, ClampingScrollPhysics, ScrollDelta, ScrollPhysics, ScrollSpringStep,
-    Scrollability, SnapPhysics,
+    BoundaryPhysics, ClampingScrollPhysics, FlingStep, ScrollDelta, ScrollPhysics,
+    ScrollSpringStep, Scrollability, SnapPhysics,
 };
 pub use scrollbar::{ScrollbarGeometry, ScrollbarStyle, scrollbar_geometry};
 pub use sliver::{SliverConstraints, SliverGeometry};

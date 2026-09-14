@@ -95,6 +95,18 @@ pub struct ScrollSpringStep {
     pub settled: bool,
 }
 
+/// One ballistic integration step, as returned by
+/// [`ScrollPhysics::fling_step`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlingStep {
+    /// Offset delta to apply this step, in logical pixels.
+    pub offset_delta: f32,
+    /// Carry-forward velocity for the next step, in logical px/sec.
+    pub velocity: f32,
+    /// Whether motion is complete (no further steps needed).
+    pub settled: bool,
+}
+
 /// Rust-native composable scroll policy. It replaces a hierarchy of widget
 /// subclasses with independent scrollability, boundary, and snap choices.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -368,6 +380,51 @@ impl ScrollPhysics {
     #[must_use]
     pub const fn min_fling_velocity(&self) -> f32 {
         50.0
+    }
+
+    /// Exponential velocity decay for ballistic motion, per second.
+    /// A fling starting at 2,000 px/s travels ~500 px over ~1 s before
+    /// settling under the default minimum — calm enough to read, quick
+    /// enough to feel thrown. Shared by every fling driver so decay
+    /// never drifts between call sites.
+    const FLING_FRICTION: f32 = 4.0;
+
+    /// Integrates one ballistic step: decays `velocity` over `dt_seconds`
+    /// and reports the offset delta to apply. Pure math in the physics
+    /// owner — drivers schedule it, never reimplement it. Settles when
+    /// the decayed velocity drops under
+    /// [`min_fling_velocity`](Self::min_fling_velocity); non-finite
+    /// inputs settle immediately, and non-positive time advances
+    /// nothing while staying active.
+    #[must_use]
+    pub fn fling_step(&self, velocity: f32, dt_seconds: f32) -> FlingStep {
+        if !velocity.is_finite() {
+            return FlingStep {
+                offset_delta: 0.,
+                velocity: 0.,
+                settled: true,
+            };
+        }
+        if !dt_seconds.is_finite() || dt_seconds <= 0. {
+            return FlingStep {
+                offset_delta: 0.,
+                velocity,
+                settled: false,
+            };
+        }
+        let decayed = velocity * (-dt_seconds * Self::FLING_FRICTION).exp();
+        if decayed.abs() < self.min_fling_velocity() {
+            return FlingStep {
+                offset_delta: 0.,
+                velocity: 0.,
+                settled: true,
+            };
+        }
+        FlingStep {
+            offset_delta: (velocity + decayed) * 0.5 * dt_seconds,
+            velocity: decayed,
+            settled: false,
+        }
     }
 
     #[must_use]

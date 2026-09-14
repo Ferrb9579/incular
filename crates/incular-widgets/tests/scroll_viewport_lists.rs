@@ -1433,6 +1433,24 @@ fn touch(
     });
 }
 
+fn fling_touch(
+    tree: &mut WidgetTree,
+    base: std::time::Instant,
+    pointer: u64,
+    point: Offset,
+    phase: incular_core::PointerPhase,
+    millis: u64,
+) {
+    // Same dispatch with a caller-owned clock, so pump times share the
+    // exact origin the release velocity was measured against.
+    tree.dispatch_gesture(incular_gestures::PointerEvent {
+        pointer,
+        position: point,
+        phase,
+        time: base + std::time::Duration::from_millis(millis),
+    });
+}
+
 #[test]
 fn touch_down_without_accepted_drag_brackets_nothing() {
     // Down followed by release with no slop never accepts: no bracket,
@@ -1698,6 +1716,310 @@ fn touch_drag_takeover_survives_release() {
     assert!(!controller.begin_activity(), "newer bracket still open");
     assert!(taken.finish());
     assert_eq!(events.borrow().as_slice(), &[Start, Update, Update, End]);
+}
+
+#[test]
+fn touch_fling_moves_then_settles() {
+    // A fast release transfers the live bracket into a ballistic tenure
+    // with no End/Start churn; pumped frames move the offset in the
+    // fling direction until decay settles, closing with exactly one End.
+    // All clocks are explicit, so every offset below is deterministic.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    assert_eq!(controller.offset(), 40.);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    // Transferred, not finished: still open, nothing emitted at release.
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, Update]);
+    assert!(!controller.begin_activity());
+    // First pumped frame moves deterministically: 2,000 px/s decaying
+    // over 16 ms advances ~31 px from 40.
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(30), false));
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let after_first = controller.offset();
+    assert!(
+        (after_first - 71.).abs() < 0.5,
+        "deterministic first step, got {after_first}"
+    );
+    // Keep pumping: strictly increasing until the clamp, then idle with
+    // exactly one End closing the transferred bracket.
+    let mut frames = 1;
+    while tree.pump_scroll_flings(base + Duration::from_millis(46 + 16 * frames), false) {
+        frames += 1;
+        assert!(frames < 600, "fling settles");
+        assert!(
+            controller.offset() <= controller.max_offset(),
+            "never past the edge"
+        );
+    }
+    assert_eq!(controller.offset(), 200.);
+    let kinds = events.borrow();
+    assert_eq!(&kinds[..3], &[Start, Update, Update]);
+    assert_eq!(kinds[kinds.len() - 1], End, "one close at settle");
+    assert_eq!(kinds.iter().filter(|kind| **kind == Start).count(), 1);
+    assert_eq!(kinds.iter().filter(|kind| **kind == End).count(), 1);
+    drop(kinds);
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(10_000), false));
+}
+
+#[test]
+fn slow_release_settles_without_fling() {
+    // Below the fling threshold the release finishes normally: End at
+    // release, no driver retained, later pumps idle and motionless.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::Instant;
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 1_010);
+    // 20 px over 1,000 ms: far below threshold.
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Up, 2_010);
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, Update, End]);
+    assert!(!tree.pump_scroll_flings(base + std::time::Duration::from_millis(2_010), false));
+    assert_eq!(controller.offset(), 40.);
+}
+
+#[test]
+fn fling_interrupted_by_new_drag_continues() {
+    // A new drag taking over mid-fling keeps motion continuous under the
+    // new bracket: the stale driver drops silently at the next pump, and
+    // release closes only the new tenure.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let flung = controller.offset();
+    assert!(flung > 40.);
+    // A fresh pointer grabs mid-fling and keeps driving upward.
+    fling_touch(&mut tree, base, 8, Offset::new(50., 70.), Down, 50);
+    fling_touch(&mut tree, base, 8, Offset::new(50., 50.), Move, 60);
+    assert!(
+        controller.offset() > flung,
+        "motion continues under takeover"
+    );
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(70), false));
+    fling_touch(&mut tree, base, 8, Offset::new(50., 50.), Up, 80);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, Update, End]
+    );
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|kind| **kind == Start)
+            .count(),
+        1
+    );
+    assert_eq!(
+        events.borrow().iter().filter(|kind| **kind == End).count(),
+        1
+    );
+}
+
+#[test]
+fn fling_into_bounds_clamps_and_settles() {
+    // A fling aimed past the edge never overshoots: clamped jumps hold
+    // the bound while decay runs out, then one End closes.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(190.));
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    let mut frames = 0;
+    while tree.pump_scroll_flings(base + Duration::from_millis(30 + 16 * frames), false) {
+        frames += 1;
+        assert!(frames < 600, "clamped fling settles");
+        assert_eq!(controller.offset(), 200.);
+    }
+    assert_eq!(ends.get(), 1);
+}
+
+#[test]
+fn programmatic_jump_during_fling_ends_it() {
+    // An external position change takes visual control: the next pump
+    // sees the mismatch, closes the tenure with End, and never writes
+    // over the jumped position.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    assert!(controller.jump_to(150.));
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(62), false));
+    assert_eq!(ends.get(), 1);
+    assert_eq!(controller.offset(), 150.);
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(78), false));
+}
+
+#[test]
+fn unmount_mid_fling_cancels_silently() {
+    // Tearing the viewport down mid-fling ends the tenure through the
+    // normal detach; the orphaned driver drops silently at the next
+    // pump with no second End.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(ends.get(), 1);
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    assert_eq!(ends.get(), 1, "orphaned driver stays silent");
+}
+
+#[test]
+fn reduced_motion_settles_without_motion() {
+    // Reduced motion finishes the transferred tenure in place: one End,
+    // zero travel, pump idle immediately.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert_eq!(controller.offset(), 40.);
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(46), true));
+    assert_eq!(ends.get(), 1);
+    assert_eq!(controller.offset(), 40.);
 }
 
 #[test]

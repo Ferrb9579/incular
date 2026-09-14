@@ -1871,6 +1871,14 @@ impl Runtime {
         self.prune_handlers();
         let build = build_span.elapsed_us();
         drop(build_guard);
+        // Ballistic tenures pump on the frame clock before layout, so
+        // pumped offsets lay out and paint in the same frame. The pump
+        // reports live drivers; the scheduler stays awake while true
+        // and idles otherwise — no timer loop, just frame demand.
+        let reduced_motion = self.environment.borrow().reduced_motion;
+        if self.tree.pump_scroll_flings(now, reduced_motion) {
+            self.frame_requested = true;
+        }
         let _layout_guard = tracing::info_span!("incular.layout").entered();
         let layout_span = profiling::PhaseSpan::start();
         self.tree.layout(constraints)?;

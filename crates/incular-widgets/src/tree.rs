@@ -68,9 +68,9 @@ use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
 use crate::external_drop::{ExternalDropTargetBinding, ExternalDropTargetMarker};
 use crate::focus_keyboard::FocusTraversalPolicyKind;
 use crate::gestures::{
-    GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
-    GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent, PointerGestureRecognizer,
-    ScaleGestureDetector,
+    DragEndDetails, GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey,
+    GestureArenaMember, GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent,
+    PointerGestureRecognizer, ScaleGestureDetector,
 };
 use crate::painting_effects::BoxShadow;
 use crate::raw_input::{GestureRecognizer, RawInputKind};
@@ -762,12 +762,31 @@ pub struct SliverViewportDiagnostics {
 }
 /// Retained touch-drag scroll state for one gesture stream: the arena
 /// member carrying its slop mechanics, the controller captured at press
-/// time, and the activity token — owned here, never in the copied
-/// recognizer callbacks.
+/// time, the physics captured with it, the release velocity observed by
+/// the end callback, and the activity token — owned here, never in the
+/// copied recognizer callbacks (which share only plain drive data).
 struct ScrollBracket {
     member: GestureArenaMember,
     controller: ScrollController,
+    physics: ScrollPhysics,
+    end_velocity: Rc<Cell<Option<f32>>>,
     activity: Option<OwnedActivity>,
+}
+
+/// Retained ballistic tenure transferred from a drag release: the same
+/// activity token continues (no `End`/`Start` churn at handoff), pumped
+/// by the runtime clock until settle, takeover, or teardown.
+struct ScrollFlingDriver {
+    controller: ScrollController,
+    activity: OwnedActivity,
+    /// Signed offset-space velocity in logical px/sec.
+    velocity: f32,
+    /// Last frame time the driver integrated.
+    last_tick: Instant,
+    /// Offset the driver itself wrote last; any deviation means an
+    /// external move (programmatic jump, bounds clamp) took over.
+    expected_offset: f32,
+    physics: ScrollPhysics,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1020,9 +1039,13 @@ pub struct WidgetTree {
     /// Touch-drag scroll brackets by gesture stream. At most one scroll
     /// member exists per stream (innermost scrollable, only when no app
     /// recognizer competes), so at most one entry per key. Entries leave
-    /// on stream teardown, member loss, and unmount; tree drop aborts
-    /// any remainder silently through the tokens.
+    /// on stream teardown, member loss, fling transfer, and unmount;
+    /// tree drop aborts any remainder silently through the tokens.
     scroll_brackets: HashMap<GestureArenaKey, ScrollBracket>,
+    /// Live ballistic tenures pumped once per frame by the runtime
+    /// clock. Drivers leave on settle, takeover, external moves, and
+    /// teardown; drops abort silently through the tokens.
+    scroll_flings: Vec<ScrollFlingDriver>,
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selections: HashMap<ElementId, StaticSelection>,
