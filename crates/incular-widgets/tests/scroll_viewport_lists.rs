@@ -1413,6 +1413,293 @@ fn wheel_sample_completion_preserves_reentrant_activity() {
     );
 }
 
+fn touch(
+    tree: &mut WidgetTree,
+    pointer: u64,
+    point: Offset,
+    phase: incular_core::PointerPhase,
+    millis: u64,
+) {
+    use std::time::{Duration, Instant};
+    // Deterministic clock: tests advance a fixed origin instead of
+    // sampling the wall clock per event.
+    static ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let base = *ORIGIN.get_or_init(Instant::now);
+    tree.dispatch_gesture(incular_gestures::PointerEvent {
+        pointer,
+        position: point,
+        phase,
+        time: base + Duration::from_millis(millis),
+    });
+}
+
+#[test]
+fn touch_down_without_accepted_drag_brackets_nothing() {
+    // Down followed by release with no slop never accepts: no bracket,
+    // no notifications, no offset change.
+    use incular_core::PointerPhase::{Down, Up};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 50.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 50.), Up, 10);
+    assert!(events.borrow().is_empty());
+    assert_eq!(controller.offset(), 100.);
+}
+
+#[test]
+fn accepted_touch_drag_brackets_moves() {
+    // An accepted touch drag opens one bracket at acceptance: the
+    // accepting move already drives inside it, later moves publish
+    // plain Updates, and release closes exactly once. A second drag
+    // afterwards brackets fresh — no orphaned entries.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 74.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 96.), Move, 30);
+    touch(&mut tree, 1, Offset::new(50., 96.), Up, 40);
+    assert_eq!(controller.offset(), 34.);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End]
+    );
+    touch(&mut tree, 2, Offset::new(50., 30.), Down, 50);
+    touch(&mut tree, 2, Offset::new(50., 52.), Move, 60);
+    touch(&mut tree, 2, Offset::new(50., 52.), Up, 70);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End, Start, Update, End]
+    );
+}
+
+#[test]
+fn touch_drag_cancel_closes_bracket() {
+    // Cancellation ends the open bracket exactly like release.
+    use incular_core::PointerPhase::{Cancel, Down, Move};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 52.), Cancel, 20);
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End]);
+}
+
+#[test]
+fn touch_drag_replacement_rebrackets_stale_token() {
+    // Controller replacement mid-drag ends the open bracket through the
+    // tenure path; the next accepted move re-brackets the still-live
+    // gesture on the old controller, and release closes that — the
+    // replacement never gains activity from this stream.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let replacement = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(replacement.clone(), 200., 100., 300.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    touch(&mut tree, 1, Offset::new(50., 74.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 74.), Up, 30);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End, Start, Update, End]
+    );
+    assert_eq!(replacement.offset(), 0.);
+    assert!(replacement.begin_activity());
+    assert!(replacement.end_activity());
+}
+
+#[test]
+fn touch_drag_unmount_ends_bracket() {
+    // Unmounting mid-drag ends the open bracket; the dead stream's
+    // release afterwards is silent and panic-free.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End]);
+    assert_eq!(controller.metric_owner(), None);
+    touch(&mut tree, 1, Offset::new(50., 74.), Up, 20);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, End],
+        "dead-stream release stays silent"
+    );
+}
+
+#[test]
+fn touch_drag_close_aborts_silently() {
+    // Dropping the tree mid-drag aborts the bracket silently; the
+    // retained controller drives fresh afterward.
+    use incular_core::PointerPhase::{Down, Move};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    drop(tree);
+    assert_eq!(ends.get(), 0);
+    assert_eq!(controller.metric_owner(), None);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
+#[test]
+fn touch_drag_takeover_survives_release() {
+    // A newer activity started mid-drag retires the drag's token: moves
+    // keep driving, release stays silent, and the newer bracket stays
+    // open.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let controller_for_listener = controller.clone();
+    let taken_handle = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let taken_for_listener = taken_handle.clone();
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            if notification.kind == Update && taken_for_listener.borrow().is_none() {
+                *taken_for_listener.borrow_mut() = Some(
+                    controller_for_listener
+                        .start_owned_activity(incular_scroll::ActivityOrigin::Drag),
+                );
+            }
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 74.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 74.), Up, 30);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update],
+        "stale release adds no End"
+    );
+    let taken = taken_handle
+        .borrow_mut()
+        .take()
+        .expect("listener retained its takeover");
+    assert!(!controller.begin_activity(), "newer bracket still open");
+    assert!(taken.finish());
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, Update, End]);
+}
+
 #[test]
 fn dropping_tree_with_open_activity_stays_silent_and_reusable() {
     // Teardown policy: dropping the tree releases ownership and clears

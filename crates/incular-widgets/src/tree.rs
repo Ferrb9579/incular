@@ -760,6 +760,16 @@ pub struct SliverViewportDiagnostics {
     pub render_object_count: usize,
     pub picture_layer_count: usize,
 }
+/// Retained touch-drag scroll state for one gesture stream: the arena
+/// member carrying its slop mechanics, the controller captured at press
+/// time, and the activity token — owned here, never in the copied
+/// recognizer callbacks.
+struct ScrollBracket {
+    member: GestureArenaMember,
+    controller: ScrollController,
+    activity: Option<OwnedActivity>,
+}
+
 #[derive(Debug, PartialEq)]
 struct ScrollbarDrag {
     render: RenderObjectId,
@@ -1007,6 +1017,12 @@ pub struct WidgetTree {
     /// drag's activity token aborts silently when still current, matching
     /// the silent teardown policy for torn-down context.
     scrollbar_drag: Option<ScrollbarDrag>,
+    /// Touch-drag scroll brackets by gesture stream. At most one scroll
+    /// member exists per stream (innermost scrollable, only when no app
+    /// recognizer competes), so at most one entry per key. Entries leave
+    /// on stream teardown, member loss, and unmount; tree drop aborts
+    /// any remainder silently through the tokens.
+    scroll_brackets: HashMap<GestureArenaKey, ScrollBracket>,
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selections: HashMap<ElementId, StaticSelection>,

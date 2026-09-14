@@ -51,6 +51,7 @@ impl WidgetTree {
             active_external_drop: None,
             scale_gestures: HashMap::new(),
             scrollbar_drag: None,
+            scroll_brackets: HashMap::new(),
             semantics: SemanticsTree::new(),
             semantic_ids: HashMap::new(),
             static_selections: HashMap::new(),

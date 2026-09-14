@@ -1655,6 +1655,23 @@ impl WidgetTree {
                         }
                         _ => {}
                     }
+                    // Streams pruned here take their scroll brackets with
+                    // them: finish with `End` like a normal detach before
+                    // the members disappear.
+                    let pruned: Vec<GestureArenaKey> = self
+                        .active_gestures
+                        .iter()
+                        .filter_map(|(stream, active)| {
+                            active
+                                .members
+                                .iter()
+                                .any(|candidate| candidate.element == id)
+                                .then_some(*stream)
+                        })
+                        .collect();
+                    for stream in pruned {
+                        self.finish_scroll_bracket(stream);
+                    }
                     self.active_gestures.retain(|_, active| {
                         active
                             .members

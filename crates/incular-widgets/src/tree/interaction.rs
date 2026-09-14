@@ -250,6 +250,119 @@ impl WidgetTree {
     pub fn dispatch_gesture(&mut self, event: PointerEvent) -> Option<ElementId> {
         self.dispatch_gesture_in_window(0, event)
     }
+
+    /// Synthetic drag callbacks driving one scrollable viewport. Only the
+    /// viewport-axis update is installed, so cross-axis movement never
+    /// accepts through this member — the arena keeps it pending for
+    /// whoever else wants the stream. The callbacks move offsets only;
+    /// bracketing lives in the retained stream entry, never in these
+    /// copied closures.
+    fn scroll_drag_callbacks(
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+        physics: ScrollPhysics,
+    ) -> GestureCallbacks {
+        let controller = controller.clone();
+        // The recognizer reports total displacement from press time, so
+        // each sample drives only its increment. Shared through the
+        // callback clones like any drive state — cleanup ownership stays
+        // in the retained stream entry, never here.
+        let applied = Rc::new(std::cell::Cell::new(0.0f32));
+        let drive = Rc::new(move |delta: Offset| {
+            let main = match axis {
+                Axis::Horizontal => delta.x,
+                Axis::Vertical => delta.y,
+            };
+            let step = main - applied.get();
+            applied.set(main);
+            // Content follows the finger.
+            let logical = if reverse { step } else { -step };
+            let _ = controller.apply_physics(physics, logical);
+        });
+        match axis {
+            Axis::Horizontal => GestureCallbacks {
+                on_horizontal_drag_update: Some(drive),
+                ..GestureCallbacks::default()
+            },
+            Axis::Vertical => GestureCallbacks {
+                on_vertical_drag_update: Some(drive),
+                ..GestureCallbacks::default()
+            },
+        }
+    }
+
+    /// Innermost scrollable viewport above `element`, if any: the element
+    /// itself when it renders one, else the nearest ancestor that does.
+    /// Returns the viewport element with the controller, axis, reversal,
+    /// and physics captured for the stream.
+    fn innermost_scrollable_viewport(
+        &self,
+        mut element: ElementId,
+    ) -> Option<(ElementId, ScrollController, Axis, bool, ScrollPhysics)> {
+        loop {
+            let render = self.elements.get(element.0)?.render;
+            match &self.renders.get(render.0)?.object.kind {
+                RenderKind::Scroll {
+                    controller,
+                    axis,
+                    reverse,
+                    physics,
+                } => {
+                    return Some((element, controller.clone(), *axis, *reverse, *physics));
+                }
+                RenderKind::SliverViewport { config } => {
+                    return Some((
+                        element,
+                        config.controller.clone(),
+                        config.axis,
+                        config.reverse,
+                        config.physics,
+                    ));
+                }
+                _ => {}
+            }
+            element = self.parent(element)?;
+        }
+    }
+
+    /// Opens the scroll bracket for an accepted motion action on this
+    /// stream's scroll member — unless a live token already owns it.
+    /// Takeover by another driver simply leaves a stale token behind;
+    /// its finish stays silent while the newer activity survives. Only
+    /// a closed bracket re-opens here: when someone else owns an open
+    /// bracket, moves drive under it and this stream takes nothing.
+    fn open_scroll_bracket(&mut self, key: GestureArenaKey, member: GestureArenaMember) {
+        let Some(bracket) = self.scroll_brackets.get_mut(&key) else {
+            return;
+        };
+        if bracket.member != member {
+            return;
+        }
+        let live = bracket
+            .activity
+            .as_ref()
+            .is_some_and(|activity| activity.is_current());
+        if live || bracket.controller.current_activity_id().is_some() {
+            return;
+        }
+        bracket.activity = Some(
+            bracket
+                .controller
+                .start_owned_activity(ActivityOrigin::Drag),
+        );
+    }
+
+    /// Closes and forgets the scroll bracket for a dying stream. Only a
+    /// still-current token emits `End`; anything else stays silent.
+    /// Idempotent: missing entries are simply clean already.
+    pub(super) fn finish_scroll_bracket(&mut self, key: GestureArenaKey) {
+        if let Some(bracket) = self.scroll_brackets.remove(&key)
+            && let Some(activity) = bracket.activity
+        {
+            activity.finish();
+        }
+    }
     /// Dispatches a pointer event through the retained gesture arena for one
     /// window. Every hit-tested gesture ancestor joins the stream pending;
     /// callbacks run only after its recognizer wins (or is explicitly
@@ -279,7 +392,10 @@ impl WidgetTree {
                 .hit_test(event.position)
                 .and_then(|render| self.element_for_render(render))?;
             let elements = self.gesture_ancestors(hit);
-            let element = *elements.first()?;
+            // Fall back to the hit element itself when no gesture
+            // ancestor participates: touch-drag scrolling below claims
+            // otherwise-unclaimed presses on scrollable viewports.
+            let element = elements.first().copied().unwrap_or(hit);
             let mut active = ActiveGesture {
                 element,
                 members: Vec::new(),
@@ -327,7 +443,36 @@ impl WidgetTree {
             // A plain hit-tested label must continue through the runtime's
             // ordinary pointer route (for buttons, editable fields, and
             // read-only text selection). Only actual recognizers create an
-            // arena stream or retain pointer capture.
+            // arena stream or retain pointer capture — except a scrollable
+            // viewport with no competing app recognizer, which claims the
+            // otherwise-unclaimed stream for touch dragging. App gestures
+            // always win outright here; competing arbitration is future
+            // work, so nested and wrapped scrollables route to the
+            // innermost viewport only.
+            if active.members.is_empty()
+                && let Some((viewport, controller, axis, reverse, physics)) =
+                    self.innermost_scrollable_viewport(element)
+            {
+                let callbacks = Self::scroll_drag_callbacks(&controller, axis, reverse, physics);
+                let member = self.gesture_arena.add(key, false);
+                let mut recognizer = PointerGestureRecognizer::new(callbacks);
+                let _ = recognizer.observe(event);
+                active.members.push(ActiveGestureMember {
+                    element: viewport,
+                    member,
+                    kind: RetainedGestureKind::Pointer,
+                    recognizer: Some(recognizer),
+                    on_cancel: None,
+                });
+                self.scroll_brackets.insert(
+                    key,
+                    ScrollBracket {
+                        member,
+                        controller,
+                        activity: None,
+                    },
+                );
+            }
             if active.members.is_empty() {
                 return None;
             }
@@ -346,6 +491,13 @@ impl WidgetTree {
                 })
                 .unwrap_or_default();
             self.activate_scale_pairs(key.window, scale_elements);
+            if self.scroll_brackets.contains_key(&key) {
+                // A pending scroll press claims nothing yet: buttons,
+                // fields, and hover keep working until the drag actually
+                // accepts and drives. The stream and capture above still
+                // stand, so later moves reach slop evaluation.
+                return None;
+            }
             return Some(element);
         }
 
@@ -420,6 +572,16 @@ impl WidgetTree {
             }
         }
         let handled = !self.gesture_arena.entries(key).is_empty();
+        // Scroll-claimed streams consume only while actually driving:
+        // a pending press still belongs to buttons and hover, while a
+        // live bracket suppresses them like any active gesture.
+        let claimed = match self.scroll_brackets.get(&key) {
+            Some(bracket) => bracket
+                .activity
+                .as_ref()
+                .is_some_and(|activity| activity.is_current()),
+            None => handled,
+        };
         if matches!(event.phase, PointerPhase::Up | PointerPhase::Cancel) {
             self.finish_drag(
                 key,
@@ -430,7 +592,7 @@ impl WidgetTree {
         } else {
             self.remove_scale_recognizers_when_idle();
         }
-        handled.then_some(element)
+        claimed.then_some(element)
     }
 
     pub(super) fn gesture_callbacks(&self, element: ElementId) -> Option<GestureCallbacks> {
@@ -492,6 +654,27 @@ impl WidgetTree {
         entries: Vec<GestureArenaEntry>,
     ) {
         let mut callbacks = Vec::new();
+        // A rejected or cancelled scroll member ends that stream's
+        // bracket with `End` — the gesture is over for scrolling even
+        // when the stream continues for others. Matched by member so
+        // unrelated losses never touch it. The entry itself stays: a
+        // finished token reads as pending (claimed rule below), and only
+        // stream teardown forgets the stream entirely.
+        let scroll_lost = self.scroll_brackets.get(&key).is_some_and(|bracket| {
+            entries.iter().any(|entry| {
+                entry.member == bracket.member
+                    && matches!(
+                        entry.disposition,
+                        GestureDisposition::Rejected | GestureDisposition::Cancelled
+                    )
+            })
+        });
+        if scroll_lost
+            && let Some(bracket) = self.scroll_brackets.get_mut(&key)
+            && let Some(activity) = bracket.activity.take()
+        {
+            activity.finish();
+        }
         if let Some(active) = self.active_gestures.get_mut(&key) {
             for entry in entries {
                 if !matches!(
@@ -525,6 +708,20 @@ impl WidgetTree {
         action: GestureAction,
     ) {
         self.update_drag_from_action(key, member, action);
+        // Every accepted motion action re-checks the scroll bracket
+        // before driving: the first opens it so the accepting move
+        // already drives inside, and later moves re-bracket when stale
+        // (or skip when live). End actions never open one. Already-won
+        // members bypass the accepts loop above, so this dispatch hook
+        // — not that loop — is the single liveness point.
+        if matches!(
+            action,
+            GestureAction::Pan(_)
+                | GestureAction::HorizontalDrag(_)
+                | GestureAction::VerticalDrag(_)
+        ) {
+            self.open_scroll_bracket(key, member);
+        }
         if let Some(recognizer) = self.active_gestures.get_mut(&key).and_then(|active| {
             active
                 .members
@@ -638,6 +835,9 @@ impl WidgetTree {
         }
     }
     pub(super) fn cancel_gesture_stream(&mut self, key: GestureArenaKey, notify: bool) {
+        // A dying stream closes its scroll bracket with `End` when open;
+        // never-accepted streams hold no token and stay silent.
+        self.finish_scroll_bracket(key);
         let position = self
             .active_drags
             .get(&key)

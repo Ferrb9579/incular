@@ -30,6 +30,8 @@ pub enum ActivityOrigin {
     Scrollbar,
     /// One wheel/trackpad sample owns its complete bracket.
     Wheel,
+    /// An accepted touch drag owns the bracket for its stream.
+    Drag,
 }
 
 impl ScrollController {
