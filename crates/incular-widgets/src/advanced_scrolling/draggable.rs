@@ -388,12 +388,16 @@ impl DraggableScrollableController {
 }
 
 /// Narrow outcome of one animation tick: completion and interruption
-/// are distinct results, never a shared boolean.
+/// are distinct results, never a shared boolean. Completion describes
+/// this handle's trajectory only — reaching its target — even when a
+/// listener started a newer driver during the final notification. The
+/// tick path reads generations but never writes them, so completing
+/// here can neither clear nor complete another activity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DraggableAnimationStep {
     /// Still running; tick again for the next frame.
     Active,
-    /// Reached its target naturally.
+    /// Reached its target naturally (see above for the reentrancy rule).
     Completed,
     /// Stopped early — superseded by a newer driver, cancelled by reset,
     /// detached, or state gone — without writing.
@@ -446,6 +450,10 @@ impl DraggableSizeAnimation {
         // generation on the way through.
         DraggableScrollableState { state }.set_size_internal(value, false);
         if progress >= 1.0 {
+            // Token-conditional completion: report this handle's outcome
+            // without touching ownership state. A listener may have
+            // started a newer driver inside the notification above — that
+            // tenure stands on its own generation, unaffected here.
             self.outcome = Some(DraggableAnimationStep::Completed);
             return DraggableAnimationStep::Completed;
         }

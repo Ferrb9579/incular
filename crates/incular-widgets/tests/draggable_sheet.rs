@@ -1007,6 +1007,206 @@ fn reentrant_newer_command_preserved_with_stable_interruption() {
     assert!(approx(state.extent().current_size, 0.3));
 }
 
+#[test]
+fn listener_starts_animation_during_intermediate_tick() {
+    // A newer driver started inside an intermediate tick's notification
+    // takes ownership from there: the old handle reports interruption
+    // on its next tick without writing, and the new animation completes
+    // at its own target.
+    use incular_widgets::DraggableAnimationStep::{Active, Completed, Interrupted};
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let controller_for_listener = controller.clone();
+    let newer = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let newer_for_listener = newer.clone();
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let fired_for_listener = fired.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        if !fired_for_listener.get() {
+            fired_for_listener.set(true);
+            *newer_for_listener.borrow_mut() =
+                controller_for_listener.animate_to(0.3, Duration::from_millis(80));
+        }
+        false
+    });
+    let mut old = controller
+        .animate_to(0.9, Duration::from_millis(200))
+        .expect("attached animation");
+    assert_eq!(old.tick(Duration::from_millis(40)), Active);
+    assert!(fired.get(), "listener ran inside the tick");
+    assert_eq!(old.tick(Duration::from_millis(40)), Interrupted);
+    assert_eq!(old.tick(Duration::from_millis(40)), Interrupted);
+    let mut current = newer
+        .borrow_mut()
+        .take()
+        .expect("listener started its animation");
+    assert_eq!(current.tick(Duration::from_millis(80)), Completed);
+    assert!(approx(state.extent().current_size, 0.3));
+}
+
+#[test]
+fn listener_starts_animation_during_completing_tick() {
+    // Completion describes the handle's own trajectory: a tick that
+    // reaches its target reports Completed even when its final
+    // notification started a newer driver — and the newer tenure,
+    // untouched here, proceeds on its own generation.
+    use incular_widgets::DraggableAnimationStep::Completed;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let controller_for_listener = controller.clone();
+    let newer = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let newer_for_listener = newer.clone();
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let fired_for_listener = fired.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        if !fired_for_listener.get() {
+            fired_for_listener.set(true);
+            *newer_for_listener.borrow_mut() =
+                controller_for_listener.animate_to(0.3, Duration::from_millis(80));
+        }
+        false
+    });
+    let mut old = controller
+        .animate_to(0.9, Duration::from_millis(40))
+        .expect("attached animation");
+    assert_eq!(old.tick(Duration::from_millis(40)), Completed);
+    assert!(fired.get(), "listener ran inside the final notification");
+    let mut current = newer
+        .borrow_mut()
+        .take()
+        .expect("listener started its animation");
+    assert_eq!(current.tick(Duration::from_millis(80)), Completed);
+    assert!(approx(state.extent().current_size, 0.3));
+    // The completed handle stays completed; it never disturbs the new.
+    assert_eq!(old.tick(Duration::from_millis(40)), Completed);
+}
+
+#[test]
+fn listener_resets_during_tick() {
+    // A reset inside a tick's notification cancels the ticking driver:
+    // the reset position stands and later ticks report interruption.
+    use incular_widgets::DraggableAnimationStep::{Active, Interrupted};
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let state_for_listener = state.clone();
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let fired_for_listener = fired.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        if !fired_for_listener.get() {
+            fired_for_listener.set(true);
+            assert!(state_for_listener.reset());
+        }
+        false
+    });
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(200))
+        .expect("attached animation");
+    assert_eq!(animation.tick(Duration::from_millis(40)), Active);
+    assert!(fired.get(), "listener ran inside the tick");
+    assert!(approx(state.extent().current_size, 0.5));
+    assert_eq!(animation.tick(Duration::from_millis(40)), Interrupted);
+}
+
+#[test]
+fn zero_duration_animation_with_reentrant_driver() {
+    // An instant animation completes at once; a driver started inside
+    // its single notification still owns afterwards and completes
+    // normally.
+    use incular_widgets::DraggableAnimationStep::Completed;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let controller_for_listener = controller.clone();
+    let newer = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let newer_for_listener = newer.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        if newer_for_listener.borrow().is_none() {
+            *newer_for_listener.borrow_mut() =
+                controller_for_listener.animate_to(0.3, Duration::from_millis(80));
+        }
+        false
+    });
+    let mut instant = controller
+        .animate_to(0.6, Duration::ZERO)
+        .expect("instant animation");
+    assert_eq!(instant.tick(Duration::ZERO), Completed);
+    let mut current = newer
+        .borrow_mut()
+        .take()
+        .expect("listener started its animation");
+    assert_eq!(current.tick(Duration::from_millis(80)), Completed);
+    assert!(approx(state.extent().current_size, 0.3));
+}
+
+#[test]
+fn dropping_unfinished_handle_disturbs_nothing() {
+    // Dropping a mid-flight handle cancels nothing and clears nothing:
+    // the generation it stamped stays current until a newer driver acts,
+    // which then completes normally.
+    use incular_widgets::DraggableAnimationStep::Completed;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
+    let controller = sheet.controller();
+    let (state, _) = sheet.mount();
+    let mut animation = controller
+        .animate_to(0.9, Duration::from_millis(80))
+        .expect("attached animation");
+    let _ = animation.tick(Duration::from_millis(40));
+    let mid = state.extent().current_size;
+    drop(animation);
+    assert!(approx(state.extent().current_size, mid));
+    assert!(state.activity_generation().is_some());
+    let mut next = controller
+        .animate_to(0.3, Duration::from_millis(80))
+        .expect("replacement animation");
+    assert_eq!(next.tick(Duration::from_millis(80)), Completed);
+    assert!(approx(state.extent().current_size, 0.3));
+}
+
+#[test]
+fn handoff_between_ticks_interrupts_stably() {
+    // Detach coverage in retained flow: handing the controller off
+    // between ticks cancels the old tenure — later ticks report
+    // interruption stably without writing — while the new tenure
+    // animates to completion. (Cancel-during-dispatch is covered by the
+    // reset test above; no public path subscribes to retained state, so
+    // nesting a handoff inside the dispatch itself is not expressible —
+    // the cancel half is identical machinery.)
+    use incular_widgets::DraggableAnimationStep::Interrupted;
+    let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5).expand(true);
+    let first = sheet.controller();
+    let mut tree = WidgetTree::new();
+    let root = mount_tree(&mut tree, wrap(sheet.into()));
+    let mut animation = first
+        .animate_to(0.9, Duration::from_millis(200))
+        .expect("attached animation");
+    let _ = animation.tick(Duration::from_millis(40));
+    let replacing = text_sheet("v1").extents(0.75, 1.0, 0.75).expand(true);
+    let second = replacing.controller();
+    tree.update(root, wrap(replacing.into())).expect("update");
+    tree.layout(Constraints::tight(Size::new(200.0, 400.0)))
+        .expect("layout");
+    assert_eq!(
+        animation.tick(Duration::from_millis(40)),
+        Interrupted,
+        "handoff cancels the old tenure"
+    );
+    assert_eq!(
+        animation.tick(Duration::from_millis(40)),
+        Interrupted,
+        "interruption is stable"
+    );
+    let mut current = second
+        .animate_to(0.8, Duration::from_millis(80))
+        .expect("new tenure animates");
+    assert!(second.is_attached());
+    let _ = current.tick(Duration::from_millis(80));
+    assert!(approx(second.size().expect("new size"), 0.8));
+    assert!(!first.is_attached());
+}
+
 fn mount_tree(tree: &mut WidgetTree, widget: Widget) -> ElementId {
     let root = tree.mount(widget).expect("mount");
     tree.layout(Constraints::tight(Size::new(200.0, 400.0)))
