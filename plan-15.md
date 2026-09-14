@@ -2807,7 +2807,15 @@ a metric attachment):
 | drag over tap child | Start, then Update per move, no tap | slop acceptance rejects the tap member; the same stream scrolls without firing the tap |
 | competing child drag, cross-axis | winner drives, loser silent | each axis member accepts only its own motion; the scroll member never accepts cross-axis movement |
 | competing child drag, same axis | child drives, scroll silent | tie goes to the earlier-registered (innermost application) member; the scroll member loses without a trace |
-| nested viewports at inner bound | inner clamps, outer idle | remainder transfer across nested viewports stays pending: unconsumed motion stops at the inner bound |
+| nested drag, inner consumes all | Start/Updates/End on inner only | zero remainder reaches no ancestor: outer never opens, never notified |
+| nested drag, partial spill | Updates on both | input displacement equals inner-consumed plus outer-consumed plus final remainder; each viewport under its own explicit Drag activity |
+| nested drag at inner bound | inner Start/End, outer Start/Updates/End | whole increments spill outward; the inner bracket opens and closes with no Updates of its own |
+| nested drag, all pinned | Start/End on both, zero travel | acceptance brackets; consumption is a separate fact — spilled motion drops at the chain end |
+| nested drag, reversed/mixed | sign converts once per viewport | physical remainder converts through each viewport's reversal exactly once; mixed pairs spill with opposite logical signs |
+| nested drag, incompatible axis | skipped, never opened | cross-axis ancestors are transparent: no ownership taken, no events, remainder flows past |
+| nested drag, cancel | End on every opened tenure | propagated outer brackets close innermost-ancestor first, then the gesture's own; nothing flings |
+| nested drag, inner unmount | one End per opened tenure, then silence | stream prune closes every token; later moves and release stay silent |
+| nested drag, outer replacement | old link drops, remainder stops | replaced viewports resolve to a different controller: the press-time link drops with silent cleanup instead of driving the detached handle |
 | fast release → fling | (silence at handoff) | token transfers with no End/Start churn; frames pump decayed motion with Updates until settle |
 | fling step with listener interference | own-tenure End, or silent stale drop | each step drives through the owned token with the commit snapshotted before `Update` delivery; a listener jump/bounds change closes the driver's own tenure without overwriting the new position; a listener takeover drops the stale driver silently; same-value jumps disturb nothing |
 | fling settle | End | decay under the minimum velocity closes the transferred bracket exactly once |
@@ -2844,9 +2852,20 @@ spring-math tests alone:
   scheduling useless frames until decay. Proven through the
   production frame path with deterministic tree-level steps plus one
   time-tolerant runtime integration test.
-- Still unsupported: 2D/wheel/draggable-sheet fling, nested remainder
-  routing during flings, and spring bounce-back (flings hard-clamp;
-  overscroll bounce stays a standalone helper).
+- Implemented (nested touch-drag remainder): the innermost drive's
+  leftover physical motion routes outward along the accepted axis
+  through the press-time ancestor chain, each compatible viewport
+  applying its own physics via the existing consumed/unconsumed result
+  under its own lazily opened Drag activity; incompatible axes skip
+  transparently, dead (unmounted/replaced) links drop with silent
+  cleanup while the remainder flows past. The arithmetic invariant is
+  input displacement = sum(consumed) + final remainder, with each
+  viewport's axis/reversal applied exactly once.
+- Still unsupported (separate policies, not implicit extensions):
+  2D/wheel/draggable-sheet fling, nested remainder routing during
+  flings (release always closes propagated tenures; only the
+  gesture's own viewport goes ballistic), and spring bounce-back
+  (flings hard-clamp; overscroll bounce stays a standalone helper).
 - Original W5 exit criteria (deterministic transitions, no stuck or
   duplicate brackets, single-writer geometry) hold with the fling
   driver pinned — but W5 stays open until its full transition
@@ -2927,8 +2946,9 @@ offsets only. Ordinary gesture competition runs through the single
 gesture arena — no second recognizer system: the scroll member joins
 pending alongside application members, acceptance decides per axis,
 same-axis ties go to the innermost application member, and nested
-remainder transfer stays pending. W5 stays open: fling axes beyond
-ordinary/sliver remain, per above.
+touch-drag remainder routes outward per the table above (fling
+remainder stays a separate unbuilt policy). W5 stays open: fling axes
+beyond ordinary/sliver remain, per above.
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on

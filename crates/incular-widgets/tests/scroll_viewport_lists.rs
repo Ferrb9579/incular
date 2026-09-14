@@ -2630,17 +2630,248 @@ fn cross_axis_movement_brackets_nothing() {
     assert!(events.borrow().is_empty());
 }
 
+/// Outer vertical scrollable (200x100 viewport, 190 px of content)
+/// containing an inner vertical scrollable (200x150 viewport, 300 px
+/// of content): inner range 150, outer range 90. Both non-reverse.
+fn nested_basic_viewports(outer: ScrollController, inner: ScrollController) -> Widget {
+    let inner_scroll: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(inner)
+            .into();
+    let inner_sized: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(150.), Some(inner_scroll)).into();
+    let outer_content = Column::new(vec![
+        Widget::box_(Size::new(200., 40.), Color::WHITE),
+        inner_sized,
+    ]);
+    let outer_scroll: Widget = SingleChildScrollView::new(outer_content)
+        .controller(outer)
+        .into();
+    Column::new(vec![{
+        let sized: Widget =
+            SizedBox::from_dimensions(Some(200.), Some(100.), Some(outer_scroll)).into();
+        sized
+    }])
+    .into()
+}
+
+fn listen(
+    controller: &ScrollController,
+) -> (
+    std::rc::Rc<std::cell::RefCell<Vec<incular_scroll::ScrollNotificationType>>>,
+    incular_scroll::ScrollNotificationSubscription,
+) {
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    (events, subscription)
+}
+
 #[test]
-fn nested_scrollables_hold_the_outer_at_the_inner_bound() {
-    // Remainder transfer across nested viewports is explicitly
-    // pending: a drag the inner viewport cannot consume (already at
-    // its bound) stops there — the outer viewport stays put.
+fn nested_drag_inner_consumes_all() {
+    // Small drag, room everywhere: the inner viewport consumes the
+    // whole increment, the remainder is zero, and the outer viewport
+    // never opens an activity — no Start, no events, offset untouched.
     use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 48.), Up, 2_000);
+    assert_eq!(inner.offset(), 22.);
+    assert_eq!(outer.offset(), 0.);
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, Update, End]);
+    assert!(outer_events.borrow().is_empty());
+}
+
+#[test]
+fn nested_drag_partial_then_boundary_spills_outward() {
+    // Inner has 10 px of room: the first move consumes 10 inside and
+    // spills 12 outside; the second move spills all 22. Input (-44)
+    // equals consumed (-10, -34) plus remainder (0): every pixel is
+    // accounted, each viewport under its own explicit activity.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(140.));
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 34.);
+    assert_eq!(
+        (inner.offset() - 140.) + (outer.offset() - 0.),
+        44.,
+        "input displacement is fully consumed"
+    );
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, Update, End]);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Start, Update, Update, End]
+    );
+}
+
+#[test]
+fn nested_drag_inner_at_boundary_spills_all_outward() {
+    // Inner pinned at its bound: both moves spill whole, the outer
+    // travels 0 -> 44 under its own bracket while the inner bracket
+    // opens and closes with no Updates of its own.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 44.);
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Start, Update, Update, End]
+    );
+}
+
+#[test]
+fn nested_drag_both_pinned_moves_nothing_but_brackets_both() {
+    // Inner and outer both pinned against the drag direction: every
+    // increment spills through and drops at the end of the chain, yet
+    // both viewports bracketed explicitly — Start then End, zero
+    // travel, zero Updates. Acceptance brackets; consumption is a
+    // separate fact.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    assert!(outer.jump_to(90.), "outer pinned at its bound");
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 90.);
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(outer_events.borrow().as_slice(), &[Start, End]);
+}
+
+#[test]
+fn nested_drag_reversed_pair_converts_signs_once() {
+    // Both viewports reversed: the finger moves down 44, each logical
+    // unit equals one physical unit, and the spill crosses with no
+    // double negation — inner 130 -> 150, outer 0 -> 24.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
     let outer = ScrollController::new();
     let inner = ScrollController::new();
     let inner_scroll: Widget =
         SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
             .controller(inner.clone())
+            .reverse(true)
+            .into();
+    let inner_sized: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(150.), Some(inner_scroll)).into();
+    let outer_content = Column::new(vec![
+        Widget::box_(Size::new(200., 40.), Color::WHITE),
+        inner_sized,
+    ]);
+    let outer_scroll: Widget = SingleChildScrollView::new(outer_content)
+        .controller(outer.clone())
+        .reverse(true)
+        .into();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![{
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(outer_scroll)).into();
+            sized
+        }])
+        .into(),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(130.));
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 92.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 114.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 114.), Up, 2_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 24.);
+    assert_eq!(
+        (inner.offset() - 130.) + (outer.offset() - 0.),
+        44.,
+        "reversed units convert exactly once per viewport"
+    );
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, Update, End]);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Start, Update, Update, End]
+    );
+}
+
+#[test]
+fn nested_drag_mixed_reversal_spills_with_opposite_sign() {
+    // Inner reversed and pinned, outer normal: finger down spills a
+    // positive physical remainder that the outer viewport reads as a
+    // negative logical delta — outer 50 -> 6 while content follows
+    // the finger downward on screen.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let inner_scroll: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(inner.clone())
+            .reverse(true)
             .into();
     let inner_sized: Widget =
         SizedBox::from_dimensions(Some(200.), Some(150.), Some(inner_scroll)).into();
@@ -2663,25 +2894,199 @@ fn nested_scrollables_hold_the_outer_at_the_inner_bound() {
         200.,
         100.,
     );
+    assert!(inner.jump_to(150.), "reversed inner pinned at its bound");
+    assert!(outer.jump_to(50.));
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 92.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 114.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 114.), Up, 2_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 6.);
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Start, Update, Update, End]
+    );
+}
+
+#[test]
+fn nested_drag_incompatible_axis_outer_untouched() {
+    // A vertical inner viewport inside a horizontal outer viewport:
+    // vertical remainder cannot address the horizontal axis, so the
+    // outer link is skipped before any ownership is taken — no Start,
+    // no events, offset untouched, remainder dropped at the chain end.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_widgets::Row;
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let inner_scroll: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(150., 300.), Color::WHITE))
+            .controller(inner.clone())
+            .into();
+    let inner_sized: Widget =
+        SizedBox::from_dimensions(Some(150.), Some(100.), Some(inner_scroll)).into();
+    let outer_content = Row::new(vec![
+        Widget::box_(Size::new(40., 100.), Color::WHITE),
+        inner_sized,
+    ]);
+    let outer_scroll: Widget = SingleChildScrollView::new(outer_content)
+        .controller(outer.clone())
+        .scroll_direction(Axis::Horizontal)
+        .into();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![{
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(100.), Some(100.), Some(outer_scroll)).into();
+            sized
+        }])
+        .into(),
+        100.,
+        100.,
+    );
+    assert!(inner.jump_to(200.), "inner pinned at its bound");
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(70., 50.), Down, 0);
+    touch(&mut tree, 1, Offset::new(70., 28.), Move, 10);
+    touch(&mut tree, 1, Offset::new(70., 6.), Move, 20);
+    touch(&mut tree, 1, Offset::new(70., 6.), Up, 2_000);
+    assert_eq!(inner.offset(), 200.);
+    assert_eq!(outer.offset(), 0.);
+    assert!(outer_events.borrow().is_empty());
+}
+
+#[test]
+fn nested_drag_cancel_closes_every_bracket() {
+    // Cancellation ends each stream-opened tenure exactly once: the
+    // propagated outer bracket first, then the gesture's own — spilled
+    // offsets stay, nothing flings, later pumps idle.
+    use incular_core::PointerPhase::{Cancel, Down, Move};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::Duration;
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
     assert!(inner.jump_to(150.), "inner pinned at its bound");
-    let outer_events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let _subscription = outer.add_listener({
-        let outer_events = outer_events.clone();
-        move |notification| {
-            outer_events.borrow_mut().push(notification.kind);
-            false
-        }
-    });
-    // Press inside the inner viewport's visible band (below the 40 px
-    // box) and drag upward past slop: the inner clamps, the outer
-    // never participates.
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 1, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 1, Offset::new(50., 48.), Move, 10);
+    fling_touch(&mut tree, base, 1, Offset::new(50., 26.), Move, 20);
+    fling_touch(&mut tree, base, 1, Offset::new(50., 26.), Cancel, 30);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 44.);
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Start, Update, Update, End]
+    );
+    assert!(!tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+}
+
+#[test]
+fn nested_drag_unmount_inner_midstream_completes_coherently() {
+    // Removing the inner viewport between moves prunes the whole
+    // stream: both tenures close exactly once with their spilled
+    // offsets intact, and later moves and release stay silent without
+    // panicking.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
     touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
     touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(outer.offset(), 22.);
+    // Unmount the inner viewport; the outer viewport and its spilled
+    // offset survive, the stream does not.
+    let outer_only = Column::new(vec![Widget::box_(Size::new(200., 190.), Color::WHITE)]);
+    let outer_scroll: Widget = SingleChildScrollView::new(outer_only)
+        .controller(outer.clone())
+        .into();
+    tree.update(
+        root,
+        Column::new(vec![{
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(outer_scroll)).into();
+            sized
+        }])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
     touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
     touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
     assert_eq!(inner.offset(), 150.);
-    assert_eq!(outer.offset(), 0., "no remainder transfer (pending)");
-    assert!(outer_events.borrow().is_empty());
+    assert_eq!(outer.offset(), 22., "spilled offset survives");
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(outer_events.borrow().as_slice(), &[Start, Update, End]);
+}
+
+#[test]
+fn nested_drag_outer_replacement_stops_routing() {
+    // Swapping the outer viewport's controller between moves detaches
+    // the old tenure through the replacement path; the press-time link
+    // resolves to a different controller, so it drops with silent
+    // cleanup instead of resurrecting activity on the detached handle
+    // — the remainder stops, the inner viewport keeps driving.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let outer = ScrollController::new();
+    let fresh_outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    assert_eq!(outer.offset(), 22.);
+    tree.update(
+        root,
+        nested_basic_viewports(fresh_outer.clone(), inner.clone()),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(outer.offset(), 22., "detached handle never moves again");
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(
+        outer_events
+            .borrow()
+            .iter()
+            .filter(|kind| **kind == End)
+            .count(),
+        1
+    );
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
 }
 
 #[test]

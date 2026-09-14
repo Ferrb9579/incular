@@ -765,11 +765,37 @@ pub struct SliverViewportDiagnostics {
 /// time, the physics captured with it, the release velocity observed by
 /// the end callback, and the activity token — owned here, never in the
 /// copied recognizer callbacks (which share only plain drive data).
+/// Ancestor viewports join through [`ScrollBracket::outer`]: the
+/// innermost drive's leftover reaches them in press order, each under
+/// its own explicit activity.
 struct ScrollBracket {
     member: GestureArenaMember,
     controller: ScrollController,
     physics: ScrollPhysics,
     end_velocity: Rc<Cell<Option<f32>>>,
+    activity: Option<OwnedActivity>,
+    /// Axis the gesture accepted for (the innermost viewport's axis).
+    /// Remainder routing propagates along this axis only; ancestors on
+    /// another axis are skipped transparently, never consuming.
+    axis: Axis,
+    /// Physical remainder the innermost drive could not consume, along
+    /// [`ScrollBracket::axis`]. Written by the recognizer callback,
+    /// taken by the tree for outward routing after each motion action.
+    remainder: Rc<Cell<f32>>,
+    /// Ancestor scrollable viewports, innermost ancestor first, each
+    /// with the activity this stream opened on it, if any.
+    outer: Vec<NestedDrive>,
+}
+
+/// One ancestor viewport in nested remainder routing: its press-time
+/// capture plus the activity this stream opened on it, if any. Stale
+/// tokens finish silently; only a current token closes with `End`.
+struct NestedDrive {
+    element: ElementId,
+    controller: ScrollController,
+    axis: Axis,
+    reverse: bool,
+    physics: ScrollPhysics,
     activity: Option<OwnedActivity>,
 }
 

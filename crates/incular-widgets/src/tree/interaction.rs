@@ -256,13 +256,18 @@ impl WidgetTree {
     /// never accepts through this member — the arena keeps it pending for
     /// whoever else wants the stream. The callbacks move offsets and
     /// record release velocity only; bracketing lives in the retained
-    /// stream entry, never in these copied closures. Returns the shared
-    /// release-velocity cell alongside the callbacks.
+    /// stream entry, never in these copied closures. The physical
+    /// leftover the viewport could not consume (input minus consumed,
+    /// back in finger units along the viewport axis) is published on
+    /// `remainder` for the tree's outward routing; a fully consuming
+    /// drive publishes zero. Returns the shared release-velocity cell
+    /// alongside the callbacks.
     fn scroll_drag_callbacks(
         controller: &ScrollController,
         axis: Axis,
         reverse: bool,
         physics: ScrollPhysics,
+        remainder: Rc<std::cell::Cell<f32>>,
     ) -> (GestureCallbacks, Rc<std::cell::Cell<Option<f32>>>) {
         let controller = controller.clone();
         // The recognizer reports total displacement from press time, so
@@ -279,7 +284,14 @@ impl WidgetTree {
             applied.set(main);
             // Content follows the finger.
             let logical = if reverse { step } else { -step };
-            let _ = controller.apply_physics(physics, logical);
+            let result = controller.apply_physics(physics, logical);
+            // Back to finger units: the reversal sign is its own
+            // inverse, so this is exactly input minus consumed.
+            remainder.set(if reverse {
+                result.unconsumed
+            } else {
+                -result.unconsumed
+            });
         });
         // Release velocity in offset space, recorded for a fling handoff.
         // Same sign convention as the drive above.
@@ -307,27 +319,32 @@ impl WidgetTree {
         (callbacks, end_velocity)
     }
 
-    /// Innermost scrollable viewport above `element`, if any: the element
-    /// itself when it renders one, else the nearest ancestor that does.
-    /// Returns the viewport element with the controller, axis, reversal,
-    /// and physics captured for the stream.
-    fn innermost_scrollable_viewport(
+    /// Scrollable viewports from `element` outward, innermost first: the
+    /// element itself when it renders one, then each scrollable
+    /// ancestor. Each entry carries the viewport element with the
+    /// controller, axis, reversal, and physics captured for the stream;
+    /// entry zero is the innermost viewport that owns the gesture.
+    fn scrollable_viewport_chain(
         &self,
         mut element: ElementId,
-    ) -> Option<(ElementId, ScrollController, Axis, bool, ScrollPhysics)> {
-        loop {
-            let render = self.elements.get(element.0)?.render;
-            match &self.renders.get(render.0)?.object.kind {
+    ) -> Vec<(ElementId, ScrollController, Axis, bool, ScrollPhysics)> {
+        let mut chain = Vec::new();
+        while let Some(node) = self.elements.get(element.0) {
+            let render = node.render;
+            let Some(render) = self.renders.get(render.0) else {
+                break;
+            };
+            match &render.object.kind {
                 RenderKind::Scroll {
                     controller,
                     axis,
                     reverse,
                     physics,
                 } => {
-                    return Some((element, controller.clone(), *axis, *reverse, *physics));
+                    chain.push((element, controller.clone(), *axis, *reverse, *physics));
                 }
                 RenderKind::SliverViewport { config } => {
-                    return Some((
+                    chain.push((
                         element,
                         config.controller.clone(),
                         config.axis,
@@ -337,7 +354,25 @@ impl WidgetTree {
                 }
                 _ => {}
             }
-            element = self.parent(element)?;
+            let Some(parent) = self.parent(element) else {
+                break;
+            };
+            element = parent;
+        }
+        chain
+    }
+
+    /// The controller currently driving `element`'s viewport, if the
+    /// element still renders a scrollable viewport. Press-time nested
+    /// links resolve through this: an unmounted element resolves to
+    /// nothing, a replaced viewport to its new controller — either way
+    /// the stale link drops instead of driving a dead handle.
+    fn viewport_controller(&self, element: ElementId) -> Option<ScrollController> {
+        let render = self.elements.get(element.0)?.render;
+        match &self.renders.get(render.0)?.object.kind {
+            RenderKind::Scroll { controller, .. } => Some(controller.clone()),
+            RenderKind::SliverViewport { config } => Some(config.controller.clone()),
+            _ => None,
         }
     }
 
@@ -370,12 +405,19 @@ impl WidgetTree {
 
     /// Closes and forgets the scroll bracket for a dying stream. Only a
     /// still-current token emits `End`; anything else stays silent.
-    /// Idempotent: missing entries are simply clean already.
+    /// Propagated outer tenures close innermost-ancestor first, then
+    /// the gesture's own. Idempotent: missing entries are simply clean
+    /// already.
     pub(super) fn finish_scroll_bracket(&mut self, key: GestureArenaKey) {
-        if let Some(bracket) = self.scroll_brackets.remove(&key)
-            && let Some(activity) = bracket.activity
-        {
-            activity.finish();
+        if let Some(bracket) = self.scroll_brackets.remove(&key) {
+            for link in bracket.outer {
+                if let Some(activity) = link.activity {
+                    activity.finish();
+                }
+            }
+            if let Some(activity) = bracket.activity {
+                activity.finish();
+            }
         }
     }
     /// Dispatches a pointer event through the retained gesture arena for one
@@ -459,42 +501,65 @@ impl WidgetTree {
             // ordinary pointer route (for buttons, editable fields, and
             // read-only text selection). Only actual recognizers create an
             // arena stream or retain pointer capture — plus the
-            // innermost scrollable viewport above the hit, which joins
-            // for touch dragging whether or not application recognizers
-            // are already on the stream. Presence never decides: the
-            // arena does. A tap releases without motion, so the tap
-            // member wins and the pending scroll member is rejected
-            // silently; a drag past slop accepts through whichever axis
-            // member fires, and a same-axis tie goes to the
-            // earlier-registered (innermost application) member. Nested
-            // and wrapped scrollables still route to the innermost
-            // viewport only; remainder transfer stays pending.
-            if !self.scroll_brackets.contains_key(&key)
-                && let Some((viewport, controller, axis, reverse, physics)) =
-                    self.innermost_scrollable_viewport(element)
-            {
-                let (callbacks, end_velocity) =
-                    Self::scroll_drag_callbacks(&controller, axis, reverse, physics);
-                let member = self.gesture_arena.add(key, false);
-                let mut recognizer = PointerGestureRecognizer::new(callbacks);
-                let _ = recognizer.observe(event);
-                active.members.push(ActiveGestureMember {
-                    element: viewport,
-                    member,
-                    kind: RetainedGestureKind::Pointer,
-                    recognizer: Some(recognizer),
-                    on_cancel: None,
-                });
-                self.scroll_brackets.insert(
-                    key,
-                    ScrollBracket {
-                        member,
-                        controller,
+            // scrollable viewports above the hit, which join for touch
+            // dragging whether or not application recognizers are already
+            // on the stream. Presence never decides: the arena does. A
+            // tap releases without motion, so the tap member wins and the
+            // pending scroll member is rejected silently; a drag past
+            // slop accepts through whichever axis member fires, and a
+            // same-axis tie goes to the earlier-registered (innermost
+            // application) member. The innermost viewport owns the
+            // gesture; each ancestor viewport joins the remainder chain
+            // and moves only what the inner viewports could not consume.
+            if !self.scroll_brackets.contains_key(&key) {
+                let chain = self.scrollable_viewport_chain(element);
+                if let Some((viewport, controller, axis, reverse, physics)) = chain.first() {
+                    let (viewport, controller, axis, reverse, physics) =
+                        (*viewport, controller.clone(), *axis, *reverse, *physics);
+                    let remainder = Rc::new(std::cell::Cell::new(0.0f32));
+                    let (callbacks, end_velocity) = Self::scroll_drag_callbacks(
+                        &controller,
+                        axis,
+                        reverse,
                         physics,
-                        end_velocity,
-                        activity: None,
-                    },
-                );
+                        remainder.clone(),
+                    );
+                    let member = self.gesture_arena.add(key, false);
+                    let mut recognizer = PointerGestureRecognizer::new(callbacks);
+                    let _ = recognizer.observe(event);
+                    active.members.push(ActiveGestureMember {
+                        element: viewport,
+                        member,
+                        kind: RetainedGestureKind::Pointer,
+                        recognizer: Some(recognizer),
+                        on_cancel: None,
+                    });
+                    self.scroll_brackets.insert(
+                        key,
+                        ScrollBracket {
+                            member,
+                            controller,
+                            physics,
+                            end_velocity,
+                            activity: None,
+                            axis,
+                            remainder,
+                            outer: chain[1..]
+                                .iter()
+                                .map(
+                                    |(element, controller, axis, reverse, physics)| NestedDrive {
+                                        element: *element,
+                                        controller: controller.clone(),
+                                        axis: *axis,
+                                        reverse: *reverse,
+                                        physics: *physics,
+                                        activity: None,
+                                    },
+                                )
+                                .collect(),
+                        },
+                    );
+                }
             }
             if active.members.is_empty() {
                 return None;
@@ -635,11 +700,19 @@ impl WidgetTree {
     /// no `End`/`Start` churn at handoff — and later frames pump it
     /// through [`pump_scroll_flings`](Self::pump_scroll_flings). Slow
     /// releases, unaccepted presses, and stale brackets finish or drop
-    /// silently exactly as before.
+    /// silently exactly as before. Propagated outer tenures always
+    /// close here with `End`: only the gesture's own viewport goes
+    /// ballistic. Fling remainder routing is a separate, unbuilt
+    /// policy — this transfer never carries it implicitly.
     fn maybe_begin_fling(&mut self, key: GestureArenaKey, now: Instant) {
         let Some(bracket) = self.scroll_brackets.remove(&key) else {
             return;
         };
+        for link in bracket.outer {
+            if let Some(activity) = link.activity {
+                activity.finish();
+            }
+        }
         let Some(activity) = bracket.activity else {
             return;
         };
@@ -913,6 +986,137 @@ impl WidgetTree {
                 .and_then(|candidate| candidate.recognizer.as_mut())
         }) {
             recognizer.dispatch(action);
+        }
+        // Accepted motion on the scroll member drove the innermost
+        // viewport inside that dispatch; its leftover now routes
+        // outward through the press-time chain.
+        if matches!(
+            action,
+            GestureAction::Pan(_)
+                | GestureAction::HorizontalDrag(_)
+                | GestureAction::VerticalDrag(_)
+        ) && self
+            .scroll_brackets
+            .get(&key)
+            .is_some_and(|bracket| bracket.member == member)
+        {
+            self.route_nested_remainder(key);
+        }
+    }
+
+    /// Routes the innermost drive's leftover physical motion outward
+    /// along the chain axis, innermost ancestor first. Each compatible
+    /// viewport converts the physical remainder into its own logical
+    /// units (its reversal sign is its own inverse), applies its own
+    /// physics through the existing consumed/unconsumed result, and
+    /// hands the new remainder on — no second nested-scroll algorithm,
+    /// just the same consume-and-report step every viewport already
+    /// runs. Incompatible axes are skipped transparently; the
+    /// arithmetic invariant holds in physical space: input displacement
+    /// equals the sum of consumed displacements plus the final
+    /// remainder, with each viewport's axis and reversal applied
+    /// exactly once.
+    ///
+    /// Activities open lazily per participating controller, mirroring
+    /// [`open_scroll_bracket`](Self::open_scroll_bracket): when another
+    /// driver owns the controller the stream drives under it and takes
+    /// nothing. Dead links — unmounted elements or replaced viewports
+    /// resolving to a different controller — drop with silent cleanup
+    /// while the remainder flows past them to the next live ancestor.
+    /// Nothing here is held across notifications: every apply below
+    /// can reenter the tree, so descriptors are snapshotted and every
+    /// bracket touch is a short borrow.
+    fn route_nested_remainder(&mut self, key: GestureArenaKey) {
+        struct Job {
+            element: ElementId,
+            controller: ScrollController,
+            reverse: bool,
+            physics: ScrollPhysics,
+        }
+        let (mut remaining, jobs) = {
+            let Some(bracket) = self.scroll_brackets.get(&key) else {
+                return;
+            };
+            let remaining = bracket.remainder.take();
+            if remaining == 0. || !remaining.is_finite() || bracket.outer.is_empty() {
+                return;
+            }
+            let jobs = bracket
+                .outer
+                .iter()
+                .filter(|link| link.axis == bracket.axis)
+                .map(|link| Job {
+                    element: link.element,
+                    controller: link.controller.clone(),
+                    reverse: link.reverse,
+                    physics: link.physics,
+                })
+                .collect::<Vec<_>>();
+            (remaining, jobs)
+        };
+        if jobs.is_empty() {
+            return;
+        }
+        for job in jobs {
+            if remaining == 0. {
+                break;
+            }
+            // Liveness first: a dead press-time link drops with silent
+            // cleanup and the remainder flows past it.
+            if self.viewport_controller(job.element).as_ref() != Some(&job.controller) {
+                self.drop_nested_link(key, job.element);
+                continue;
+            }
+            // Ownership, mirroring open_scroll_bracket: drive under a
+            // foreign tenure, open only onto an idle controller.
+            {
+                let Some(bracket) = self.scroll_brackets.get_mut(&key) else {
+                    return;
+                };
+                let Some(link) = bracket
+                    .outer
+                    .iter_mut()
+                    .find(|link| link.element == job.element)
+                else {
+                    // Reentrant teardown dropped the link mid-route.
+                    continue;
+                };
+                let live_own = link
+                    .activity
+                    .as_ref()
+                    .is_some_and(|activity| activity.is_current());
+                if !live_own {
+                    link.activity = None;
+                    if link.controller.current_activity_id().is_none() {
+                        link.activity =
+                            Some(link.controller.start_owned_activity(ActivityOrigin::Drag));
+                    }
+                }
+            }
+            let logical = if job.reverse { remaining } else { -remaining };
+            let result = job.controller.apply_physics(job.physics, logical);
+            remaining -= (if job.reverse { 1. } else { -1. }) * result.consumed;
+        }
+    }
+
+    /// Drops one press-time nested link, closing its stream-opened
+    /// activity if still current. Stale tokens stay silent, so a link
+    /// whose viewport already detached its tenure through the normal
+    /// path cleans up without a sound.
+    fn drop_nested_link(&mut self, key: GestureArenaKey, element: ElementId) {
+        let activity = self
+            .scroll_brackets
+            .get_mut(&key)
+            .and_then(|bracket| {
+                bracket
+                    .outer
+                    .iter()
+                    .position(|link| link.element == element)
+                    .map(|index| bracket.outer.remove(index).activity)
+            })
+            .flatten();
+        if let Some(activity) = activity {
+            activity.finish();
         }
     }
     pub(super) fn update_drag_from_action(
