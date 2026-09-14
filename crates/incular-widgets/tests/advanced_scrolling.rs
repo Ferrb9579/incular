@@ -74,7 +74,9 @@ fn wheel_projects_children_and_selects_by_fixed_extent() {
 #[test]
 fn raw_scrollbar_maps_vertical_and_horizontal_thumb_drags() {
     let controller = ScrollController::new();
-    controller.set_metrics_context(Axis::Vertical, false);
+    controller
+        .try_set_metrics_context(Axis::Vertical, false)
+        .expect("free controller declares context");
     controller
         .update_extents(500.0, 100.0)
         .expect("free controller publishes");
@@ -96,7 +98,9 @@ fn raw_scrollbar_maps_vertical_and_horizontal_thumb_drags() {
     scrollbar.pointer_up();
     assert!(!scrollbar.is_dragging());
 
-    controller.set_metrics_context(Axis::Horizontal, false);
+    controller
+        .try_set_metrics_context(Axis::Horizontal, false)
+        .expect("free controller declares context");
     let mut horizontal = RawScrollbar::new(controller.clone());
     horizontal.set_style(RawScrollbarStyle {
         orientation: RawScrollbarOrientation::Bottom,

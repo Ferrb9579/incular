@@ -36,7 +36,9 @@ fn grid_delegate() -> TwoDimensionalChildDelegate<Widget> {
 #[test]
 fn raw_scrollbar_geometry_drag_and_retained_conversions_are_public() {
     let controller = ScrollController::new();
-    controller.set_metrics_context(Axis::Vertical, false);
+    controller
+        .try_set_metrics_context(Axis::Vertical, false)
+        .expect("free controller declares context");
     controller
         .update_extents(500.0, 100.0)
         .expect("free controller publishes");

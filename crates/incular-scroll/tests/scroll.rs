@@ -82,7 +82,9 @@ fn unchanged_metrics_preserve_bouncing_but_changed_ranges_still_clamp() {
 #[test]
 fn scroll_notifications_follow_activity_lifecycle_and_unsubscribe() {
     let controller = ScrollController::new();
-    controller.set_metrics_context(incular_config::Axis::Horizontal, true);
+    controller
+        .try_set_metrics_context(incular_config::Axis::Horizontal, true)
+        .expect("free controller declares context");
     let events = Rc::new(RefCell::new(Vec::new()));
     let observed = events.clone();
     let subscription = controller.add_listener(move |notification| {

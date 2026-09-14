@@ -12,8 +12,8 @@ use std::{collections::BTreeMap, ops::Range, rc::Rc};
 use incular_config::{Axis, AxisDirection, Clip, Constraints};
 use incular_core::{Offset, Rect, Size};
 use incular_scroll::{
-    AxisExtents, MeasuredExtentIndex, MetricAttachment, MetricWriteError, ScrollController,
-    ScrollDelta, ScrollPhysics, SliverConstraints,
+    MeasuredExtentIndex, MetricAttachment, MetricWriteError, ScrollController, ScrollDelta,
+    ScrollPhysics, SliverConstraints, ViewportMetricsUpdate,
 };
 
 /// The child identity used by a two-dimensional viewport.
@@ -150,13 +150,14 @@ pub struct TwoDimensionalScrollable {
 
 impl TwoDimensionalScrollable {
     /// Creates a two-axis scrollable from independent controllers.
+    /// Construction touches no shared controller state — axis context
+    /// publishes with geometry at layout, so building a model over an
+    /// occupied controller changes nothing.
     #[must_use]
     pub fn new(
         horizontal_controller: ScrollController,
         vertical_controller: ScrollController,
     ) -> Self {
-        horizontal_controller.set_metrics_context(Axis::Horizontal, false);
-        vertical_controller.set_metrics_context(Axis::Vertical, false);
         Self {
             horizontal_controller,
             vertical_controller,
@@ -193,16 +194,15 @@ impl TwoDimensionalScrollable {
         self.vertical_physics = vertical;
     }
 
-    /// Configures physical directions.
+    /// Configures physical directions as local configuration. Shared
+    /// controller state is untouched — directions publish with geometry
+    /// at layout — so configuring a model over an owned controller never
+    /// alters the owner's notifications.
     pub fn set_axis_directions(&mut self, horizontal: AxisDirection, vertical: AxisDirection) {
         assert!(horizontal.axis() == Axis::Horizontal);
         assert!(vertical.axis() == Axis::Vertical);
         self.horizontal_axis_direction = horizontal;
         self.vertical_axis_direction = vertical;
-        self.horizontal_controller
-            .set_metrics_context(Axis::Horizontal, horizontal.is_reversed());
-        self.vertical_controller
-            .set_metrics_context(Axis::Vertical, vertical.is_reversed());
     }
 
     /// Sets the tie-breaking/main axis used by axis locking.
@@ -238,13 +238,21 @@ impl TwoDimensionalScrollable {
     ) -> Result<(), MetricWriteError> {
         ScrollController::update_extent_pair(
             &self.horizontal_controller,
-            AxisExtents::new(
+            ViewportMetricsUpdate::with_axis(
                 horizontal_content,
                 horizontal_viewport,
+                Axis::Horizontal,
+                self.horizontal_axis_direction.is_reversed(),
                 self.horizontal_physics,
             ),
             &self.vertical_controller,
-            AxisExtents::new(vertical_content, vertical_viewport, self.vertical_physics),
+            ViewportMetricsUpdate::with_axis(
+                vertical_content,
+                vertical_viewport,
+                Axis::Vertical,
+                self.vertical_axis_direction.is_reversed(),
+                self.vertical_physics,
+            ),
         )
     }
 
@@ -572,16 +580,13 @@ impl<T> TwoDimensionalViewport<T> {
         self.vertical_physics = vertical;
     }
 
-    /// Configures physical directions.
+    /// Configures physical directions as local configuration, published
+    /// with geometry at layout. Shared controller state is untouched.
     pub fn set_axis_directions(&mut self, horizontal: AxisDirection, vertical: AxisDirection) {
         assert!(horizontal.axis() == Axis::Horizontal);
         assert!(vertical.axis() == Axis::Vertical);
         self.horizontal_axis_direction = horizontal;
         self.vertical_axis_direction = vertical;
-        self.horizontal_controller
-            .set_metrics_context(Axis::Horizontal, horizontal.is_reversed());
-        self.vertical_controller
-            .set_metrics_context(Axis::Vertical, vertical.is_reversed());
     }
 
     /// Sets paint ordering's main axis.
@@ -707,16 +712,18 @@ impl<T> TwoDimensionalViewport<T> {
         {
             return Err(MetricWriteError::attached(owner));
         }
-        self.horizontal_controller.set_metrics_context(
+        // Axis context travels inside each pair value and commits with
+        // the geometry — no separate context mutation anywhere on this
+        // path, before or after authority validation.
+        let horizontal_axis = (
             Axis::Horizontal,
             self.horizontal_axis_direction.is_reversed(),
         );
-        self.vertical_controller
-            .set_metrics_context(Axis::Vertical, self.vertical_axis_direction.is_reversed());
+        let vertical_axis = (Axis::Vertical, self.vertical_axis_direction.is_reversed());
         let publish_pair = |horizontal_controller: &ScrollController,
-                            horizontal: AxisExtents,
+                            horizontal: ViewportMetricsUpdate,
                             vertical_controller: &ScrollController,
-                            vertical: AxisExtents|
+                            vertical: ViewportMetricsUpdate|
          -> Result<(), MetricWriteError> {
             match leases {
                 Some((horizontal_lease, vertical_lease)) => {
@@ -739,13 +746,21 @@ impl<T> TwoDimensionalViewport<T> {
         };
         publish_pair(
             &self.horizontal_controller,
-            AxisExtents::new(
+            ViewportMetricsUpdate::with_axis(
                 self.columns.total_extent(),
                 size.width,
+                horizontal_axis.0,
+                horizontal_axis.1,
                 self.horizontal_physics,
             ),
             &self.vertical_controller,
-            AxisExtents::new(self.rows.total_extent(), size.height, self.vertical_physics),
+            ViewportMetricsUpdate::with_axis(
+                self.rows.total_extent(),
+                size.height,
+                vertical_axis.0,
+                vertical_axis.1,
+                self.vertical_physics,
+            ),
         )?;
 
         let (cache_x, cache_y) = self.cache_padding(size);
@@ -799,13 +814,21 @@ impl<T> TwoDimensionalViewport<T> {
         }
         publish_pair(
             &self.horizontal_controller,
-            AxisExtents::new(
+            ViewportMetricsUpdate::with_axis(
                 self.columns.total_extent(),
                 size.width,
+                horizontal_axis.0,
+                horizontal_axis.1,
                 self.horizontal_physics,
             ),
             &self.vertical_controller,
-            AxisExtents::new(self.rows.total_extent(), size.height, self.vertical_physics),
+            ViewportMetricsUpdate::with_axis(
+                self.rows.total_extent(),
+                size.height,
+                vertical_axis.0,
+                vertical_axis.1,
+                self.vertical_physics,
+            ),
         )?;
 
         let cache_rect = Rect::from_origin_size(

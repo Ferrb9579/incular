@@ -7,12 +7,12 @@
 use std::{cell::Cell, rc::Rc};
 
 use incular_scroll::{
-    AxisExtents, MetricOwner, MetricWriteError, ScrollController, ScrollNotificationType,
-    ScrollPhysics,
+    MetricOwner, MetricWriteError, ScrollController, ScrollNotificationType, ScrollPhysics,
+    ViewportMetricsUpdate,
 };
 
-fn extents(content: f32, viewport: f32) -> AxisExtents {
-    AxisExtents::new(content, viewport, ScrollPhysics::default())
+fn extents(content: f32, viewport: f32) -> ViewportMetricsUpdate {
+    ViewportMetricsUpdate::new(content, viewport, ScrollPhysics::default())
 }
 
 fn notification_log(
@@ -221,7 +221,7 @@ fn attached_publication_writes_and_rejects_when_stale() {
         .try_attach(owner(1))
         .expect("free controller attaches");
     attachment
-        .update_extents(300., 100., ScrollPhysics::default())
+        .update_extents(extents(300., 100.))
         .expect("live attachment publishes");
     assert_eq!(controller.content_extent(), 300.);
     assert_eq!(controller.viewport_extent(), 100.);
@@ -230,7 +230,7 @@ fn attached_publication_writes_and_rejects_when_stale() {
     assert!(attachment.release());
     let revision = controller.revision();
     let error = attachment
-        .update_extents(900., 50., ScrollPhysics::default())
+        .update_extents(extents(900., 50.))
         .expect_err("stale handle cannot publish");
     assert_eq!(error, MetricWriteError::StaleAttachment);
     assert_eq!(controller.content_extent(), 300.);
@@ -351,7 +351,7 @@ fn dropped_lease_frees_the_controller_for_reattachment() {
         .try_attach(owner(1))
         .expect("free controller attaches");
     attachment
-        .update_extents(300., 100., ScrollPhysics::default())
+        .update_extents(extents(300., 100.))
         .expect("live lease publishes");
     assert!(controller.begin_activity());
     drop(attachment);
@@ -362,7 +362,7 @@ fn dropped_lease_frees_the_controller_for_reattachment() {
         .try_attach(owner(2))
         .expect("reattaches after drop");
     renewed
-        .update_extents(500., 100., ScrollPhysics::default())
+        .update_extents(extents(500., 100.))
         .expect("new lease publishes");
     assert_eq!(controller.max_offset(), 400.);
     assert!(renewed.release());
@@ -542,6 +542,111 @@ fn pair_same_controller_alias_rejection_is_mutation_free() {
     .unwrap_err();
     assert_eq!(error, MetricWriteError::AliasedController);
     assert!(attachment.release());
+}
+
+#[test]
+fn rejected_pair_preserves_context_and_extents() {
+    // Authority covers the axis context too: a rejected paired
+    // publication preserves the stored context alongside extents,
+    // offset, revision, ownership, and notification silence.
+    use incular_config::{Axis, AxisDirection};
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    horizontal
+        .try_set_metrics_context(Axis::Horizontal, true)
+        .expect("free controller declares context");
+    horizontal
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
+    let (log, _guard) = notification_log(&horizontal);
+    log.borrow_mut().clear();
+    let revision = horizontal.revision();
+    let attachment = horizontal.try_attach(owner(4)).expect("free axis attaches");
+    let error = ScrollController::update_extent_pair(
+        &horizontal,
+        ViewportMetricsUpdate::with_axis(50., 50., Axis::Vertical, false, ScrollPhysics::default()),
+        &vertical,
+        ViewportMetricsUpdate::with_axis(60., 60., Axis::Vertical, false, ScrollPhysics::default()),
+    )
+    .unwrap_err();
+    assert_eq!(error.owner_tree(), Some(4));
+    assert_eq!(horizontal.metrics().axis, Axis::Horizontal);
+    assert_eq!(
+        horizontal.metrics().axis_direction,
+        AxisDirection::Left,
+        "rejection preserves the stored context"
+    );
+    assert_eq!(horizontal.content_extent(), 300.);
+    assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.revision(), revision);
+    assert_eq!(horizontal.metric_owner(), Some(4));
+    assert!(log.borrow().is_empty());
+    assert!(attachment.release());
+}
+
+#[test]
+fn pair_listeners_observe_matching_context_and_geometry() {
+    // Context commits with geometry, so each axis's Metrics
+    // notification describes the publication it accompanies — matching
+    // axis, direction, and extents on both axes.
+    use incular_config::{Axis, AxisDirection};
+    use incular_scroll::ScrollNotificationType;
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    type Observed = (ScrollNotificationType, Axis, AxisDirection, f32, f32);
+    let seen: Rc<std::cell::RefCell<Vec<Observed>>> = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut guards = Vec::new();
+    for controller in [&horizontal, &vertical] {
+        let seen = seen.clone();
+        guards.push(controller.add_listener(move |notification| {
+            seen.borrow_mut().push((
+                notification.kind,
+                notification.metrics.axis,
+                notification.metrics.axis_direction,
+                notification.metrics.max_scroll_extent,
+                notification.metrics.viewport_dimension,
+            ));
+            false
+        }));
+    }
+    ScrollController::update_extent_pair(
+        &horizontal,
+        ViewportMetricsUpdate::with_axis(
+            300.,
+            100.,
+            Axis::Horizontal,
+            true,
+            ScrollPhysics::default(),
+        ),
+        &vertical,
+        ViewportMetricsUpdate::with_axis(
+            500.,
+            100.,
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+        ),
+    )
+    .expect("free pair publishes");
+    let seen = seen.borrow();
+    let horizontal_metrics: Vec<_> = seen
+        .iter()
+        .filter(|record| record.1 == Axis::Horizontal)
+        .collect();
+    let vertical_metrics: Vec<_> = seen
+        .iter()
+        .filter(|record| record.1 == Axis::Vertical)
+        .collect();
+    assert_eq!(horizontal_metrics.len(), 1);
+    assert_eq!(horizontal_metrics[0].0, ScrollNotificationType::Metrics);
+    assert_eq!(horizontal_metrics[0].2, AxisDirection::Left);
+    assert_eq!(
+        (horizontal_metrics[0].3, horizontal_metrics[0].4),
+        (200., 100.)
+    );
+    assert_eq!(vertical_metrics.len(), 1);
+    assert_eq!(vertical_metrics[0].2, AxisDirection::Down);
+    assert_eq!((vertical_metrics[0].3, vertical_metrics[0].4), (400., 100.));
 }
 
 #[test]

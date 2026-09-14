@@ -1,5 +1,5 @@
 use crate::{
-    attachment::MetricWriteError,
+    attachment::{MetricWriteError, ViewportMetricsUpdate},
     controller::{ScrollController, ScrollState},
     notifications::ScrollNotificationType,
     restoration::{ScrollRestoration, persist_scroll_offset},
@@ -474,30 +474,34 @@ impl ScrollController {
             if let Some(live) = state.metric_attachment {
                 return Err(MetricWriteError::attached(live.tree));
             }
-            Self::commit_extent_state(&mut state, content, viewport, physics)
+            Self::commit_extent_state(
+                &mut state,
+                ViewportMetricsUpdate::new(content, viewport, physics),
+            )
         };
         self.finish_extent_publication(publication);
         Ok(())
     }
 
     /// The single extent-update algorithm behind every publication path:
-    /// attached, unattached-checked, and legacy unrestricted. Runs under
-    /// the caller's state lock with authority already validated, so all
-    /// three paths share identical clamping, pending-request, revision,
-    /// and restoration behavior.
+    /// attached, unattached-checked, and paired. Runs under the caller's
+    /// state lock with authority already validated, so all paths share
+    /// identical clamping, pending-request, revision, context, and
+    /// restoration behavior.
     pub(crate) fn commit_extent_state(
         state: &mut ScrollState,
-        content: f32,
-        viewport: f32,
-        physics: ScrollPhysics,
+        update: ViewportMetricsUpdate,
     ) -> ExtentPublication {
         let old_offset = state.offset;
         let old_content = state.content_extent;
         let old_viewport = state.viewport_extent;
         let old_max_offset = state.max_offset;
-        state.content_extent = content.max(0.);
-        state.viewport_extent = viewport.max(0.);
+        state.content_extent = update.content.max(0.);
+        state.viewport_extent = update.viewport.max(0.);
         state.max_offset = (state.content_extent - state.viewport_extent).max(0.);
+        if let Some((axis, reverse)) = update.context {
+            state.notification_context = Some((axis, reverse));
+        }
         let persistence = if let Some(requested) = state.pending_jump_offset {
             let next = requested.min(state.max_offset);
             if next != state.offset {
@@ -522,7 +526,7 @@ impl ScrollController {
             }
             None
         } else {
-            let next = if physics.is_range_maintaining()
+            let next = if update.physics.is_range_maintaining()
                 && (state.max_offset - old_max_offset).abs() > f32::EPSILON
                 && old_max_offset > 0.
                 && (old_offset - old_max_offset).abs() <= 0.001
@@ -533,7 +537,7 @@ impl ScrollController {
                 state.max_offset
             } else if old_content == state.content_extent
                 && old_viewport == state.viewport_extent
-                && let BoundaryPhysics::Bouncing { max_overscroll, .. } = physics.boundary
+                && let BoundaryPhysics::Bouncing { max_overscroll, .. } = update.physics.boundary
             {
                 // Retained layout republishes unchanged metrics during a
                 // drag. Preserve its visual overscroll until settlement,
@@ -560,8 +564,8 @@ impl ScrollController {
         };
         ExtentPublication {
             persistence,
-            content,
-            viewport,
+            content: update.content,
+            viewport: update.viewport,
             old_content,
             old_viewport,
             old_offset,

@@ -716,11 +716,17 @@ impl<T> ListWheelViewport<T> {
     where
         T: Clone,
     {
-        self.controller.set_metrics_context(Axis::Vertical, false);
         let max_scroll_extent = self.max_scroll_extent();
         // The wheel's centered first/last item makes its controller range equal
         // to `(count - 1) * itemExtent`, so add the viewport extent back when
-        // feeding the ordinary content-minus-viewport controller.
+        // feeding the ordinary content-minus-viewport controller. Headless
+        // vertical publication declares its axis through the checked
+        // context entry first — adjacent authorized mutations with no
+        // callbacks between, so the Metrics notification carries matching
+        // context and geometry. Owned controllers refuse at the first
+        // step with nothing changed.
+        self.controller
+            .try_set_metrics_context(Axis::Vertical, false)?;
         self.controller.update_extents_with_physics(
             max_scroll_extent + size.height,
             size.height,

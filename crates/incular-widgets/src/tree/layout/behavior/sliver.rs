@@ -39,11 +39,12 @@ struct PublishedViewportAttempt {
 }
 
 impl WidgetTree {
-    /// Publishes one sliver-viewport attempt through the viewport's lease
-    /// — or the legacy unrestricted write when the render has no element
-    /// — then records the attempt for the bounded fallback. Every sliver
-    /// publication below routes through the same lease-checked helper as
-    /// the other viewport families.
+    /// Publishes one sliver-viewport attempt — geometry plus axis context
+    /// committed together — through the viewport's lease, or the checked
+    /// context-free write when the render has no element, then records
+    /// the attempt for the bounded fallback. Every sliver publication
+    /// below routes through the same lease-checked helper as the other
+    /// viewport families.
     fn publish_sliver_attempt(
         &self,
         viewport_element: Option<ElementId>,
@@ -57,9 +58,13 @@ impl WidgetTree {
         self.publish_scroll_extents(
             viewport_element,
             &config.controller,
-            content,
-            viewport,
-            config.physics,
+            ViewportMetricsUpdate::with_axis(
+                content,
+                viewport,
+                config.axis,
+                config.reverse,
+                config.physics,
+            ),
         );
         if config.shrink_wrap {
             *last_published = Some(PublishedViewportAttempt {
@@ -122,9 +127,9 @@ impl WidgetTree {
     ) -> Result<(Size, Vec<Offset>), TreeError> {
         Ok(match kind {
             RenderKind::SliverViewport { config } => {
-                config
-                    .controller
-                    .set_metrics_context(config.axis, config.reverse);
+                // Axis context publishes with the geometry below — never
+                // ahead of the claim — so a rejected viewport leaves both
+                // untouched.
                 let mut size = sliver_viewport_size(config.axis, constraints, config.shrink_wrap);
                 let mut viewport_extent = scroll_viewport_extent(config.axis, size);
                 let cache_extent = config.cache_extent.max(0.);
@@ -356,9 +361,13 @@ impl WidgetTree {
                     self.publish_scroll_extents(
                         viewport_element,
                         &config.controller,
-                        snapshot.content_extent,
-                        snapshot.viewport_extent,
-                        config.physics,
+                        ViewportMetricsUpdate::with_axis(
+                            snapshot.content_extent,
+                            snapshot.viewport_extent,
+                            config.axis,
+                            config.reverse,
+                            config.physics,
+                        ),
                     );
                     let _ = self.measure_sliver_children(id, &config, &snapshot.layout, false)?;
                     size = snapshot.size;

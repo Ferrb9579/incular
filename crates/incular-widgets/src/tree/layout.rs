@@ -165,12 +165,12 @@ impl WidgetTree {
         element_id: ElementId,
         viewport_size: Size,
     ) -> Result<(), TreeError> {
-        // Attached metric write under the same single-owner contract as
+        // Attached publication under the same single-owner contract as
         // ordinary viewports: a retained wheel viewport claims its
-        // controller, publishes through its lease, then lays out children
-        // from the published offset. Headless model layouts have no
-        // element to attribute, so they write without claiming and never
-        // disturb a live owner.
+        // controller, publishes geometry and vertical context together
+        // through its lease, then lays out children from the published
+        // offset. Headless model layouts publish checked without
+        // claiming and never disturb a live owner.
         let viewport = self
             .wheel_state_live_mut(id)
             .viewport
@@ -183,9 +183,13 @@ impl WidgetTree {
         self.publish_scroll_extents(
             Some(element_id),
             &controller,
-            max_scroll_extent + viewport_size.height,
-            viewport_size.height,
-            physics,
+            ViewportMetricsUpdate::with_axis(
+                max_scroll_extent + viewport_size.height,
+                viewport_size.height,
+                incular_config::Axis::Vertical,
+                false,
+                physics,
+            ),
         );
         let layout = self
             .wheel_state_live_mut(id)

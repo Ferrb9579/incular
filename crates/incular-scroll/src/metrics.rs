@@ -69,10 +69,23 @@ impl ScrollController {
         }
     }
 
-    /// Associates the controller with a viewport's axis and direction. This
-    /// does not alter scroll position; it only makes notifications and
-    /// metrics describe the physical viewport correctly.
-    pub fn set_metrics_context(&self, axis: incular_config::Axis, reverse: bool) {
-        self.state.borrow_mut().notification_context = Some((axis, reverse));
+    /// Declares the axis context for a controller no viewport owns, so
+    /// headless hosts and tests can make notifications and metrics
+    /// describe their interpreter. Refused while an attachment owns the
+    /// controller — an owned context belongs to its owner's publications
+    /// — without mutating anything. Attached viewports publish context
+    /// through their lease instead; construction and configuration
+    /// setters never touch shared state.
+    pub fn try_set_metrics_context(
+        &self,
+        axis: incular_config::Axis,
+        reverse: bool,
+    ) -> Result<(), crate::attachment::MetricWriteError> {
+        let mut state = self.state.borrow_mut();
+        if let Some(live) = state.metric_attachment {
+            return Err(crate::attachment::MetricWriteError::attached(live.tree));
+        }
+        state.notification_context = Some((axis, reverse));
+        Ok(())
     }
 }

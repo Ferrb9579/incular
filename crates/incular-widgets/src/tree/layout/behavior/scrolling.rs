@@ -12,7 +12,7 @@ impl WidgetTree {
             RenderKind::Scroll {
                 controller,
                 axis,
-                reverse: _,
+                reverse,
                 physics,
             } => {
                 if let Some(&child) = children.first() {
@@ -21,11 +21,11 @@ impl WidgetTree {
                         .render_live(child, "retained render must remain live")
                         .size;
                     let size = scroll_size(axis, constraints, content);
-                    // Attached metric write: the claim attributes this
-                    // publication to the live lease, which publishes
-                    // through its attachment. A render without an element
-                    // has no lease; it keeps the legacy unrestricted
-                    // write (last-writer-wins geometry, never ownership).
+                    // Attached publication: the claim attributes this
+                    // viewport's complete metrics — geometry plus axis
+                    // context — to the live lease, which commits both
+                    // together. A render without an element has no lease
+                    // and publishes context-free.
                     let viewport_element = self.element_for_render(id);
                     if let Some(viewport) = viewport_element {
                         self.claim_scroll_viewport(viewport, &controller)?;
@@ -33,9 +33,13 @@ impl WidgetTree {
                     self.publish_scroll_extents(
                         viewport_element,
                         &controller,
-                        axis.main_extent(content),
-                        scroll_viewport_extent(axis, size),
-                        physics,
+                        ViewportMetricsUpdate::with_axis(
+                            axis.main_extent(content),
+                            scroll_viewport_extent(axis, size),
+                            axis,
+                            reverse,
+                            physics,
+                        ),
                     );
                     (size, vec![Offset::ZERO])
                 } else {

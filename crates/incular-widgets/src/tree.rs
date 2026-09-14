@@ -39,7 +39,7 @@ use incular_rendering::{
 use incular_scroll::{
     AttachmentConflict, MetricAttachment, MetricOwner, ScrollController, ScrollNotification,
     ScrollNotificationSubscription, ScrollPhysics, ScrollbarGeometry, SliverConstraints,
-    scrollbar_geometry,
+    ViewportMetricsUpdate, scrollbar_geometry,
 };
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,

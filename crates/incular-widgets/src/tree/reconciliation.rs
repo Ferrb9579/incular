@@ -1481,12 +1481,13 @@ impl WidgetTree {
         })
     }
 
-    /// Publishes metric extents for a viewport layout. A live lease
-    /// publishes through its attachment; a render without an element has
-    /// no lease to publish through, so it attempts the checked
-    /// unattached write instead: a free controller publishes exactly as
-    /// before, while a controller owned elsewhere keeps its geometry —
-    /// an unattributed render must never clobber a live owner's record.
+    /// Publishes one viewport's complete metrics for a layout pass. A
+    /// live lease publishes geometry and axis context together through
+    /// its attachment; a render without an element has no lease to
+    /// publish through, so it attempts the checked unattached write
+    /// instead: a free controller publishes exactly as before, while a
+    /// controller owned elsewhere keeps its geometry and context — an
+    /// unattributed render must never clobber a live owner's record.
     /// The lease is live whenever the caller claimed above: only this
     /// tree releases its handles, and no releasing code runs between
     /// claim and publication.
@@ -1494,9 +1495,7 @@ impl WidgetTree {
         &self,
         element: Option<ElementId>,
         controller: &ScrollController,
-        content: f32,
-        viewport: f32,
-        physics: ScrollPhysics,
+        update: ViewportMetricsUpdate,
     ) {
         match element.and_then(|element| {
             self.scroll_attachments
@@ -1504,15 +1503,23 @@ impl WidgetTree {
                 .and_then(|leases| leases.first())
         }) {
             Some(lease) => lease
-                .update_extents(content, viewport, physics)
+                .update_extents(update)
                 .expect("viewport lease claimed above is live"),
-            None => match controller.update_extents_with_physics(content, viewport, physics) {
-                Ok(()) => {}
-                Err(_) => {
-                    // Owned by a live viewport elsewhere: drop the
-                    // unattributed write rather than overwriting it.
+            None => {
+                let bare =
+                    ViewportMetricsUpdate::new(update.content, update.viewport, update.physics);
+                match controller.update_extents_with_physics(
+                    bare.content,
+                    bare.viewport,
+                    bare.physics,
+                ) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        // Owned by a live viewport elsewhere: drop the
+                        // unattributed write rather than overwriting it.
+                    }
                 }
-            },
+            }
         }
     }
 

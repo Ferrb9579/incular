@@ -8,6 +8,8 @@ use crate::{
     physics::{ExtentPublication, ScrollPhysics},
 };
 
+use incular_config::Axis;
+
 /// Process-wide sequence minting attachment identities. Allocation is
 /// checked: exhaustion panics explicitly rather than wrapping, so an
 /// identity is never reused and a handle kept past its release can never
@@ -204,25 +206,21 @@ impl MetricAttachment {
         &self.controller
     }
 
-    /// Publishes content and viewport extents through this attachment.
-    /// Succeeds only while this handle is still the live owner; a stale
-    /// handle fails without mutating anything — no extent, offset,
+    /// Publishes one viewport's complete metrics through this
+    /// attachment: geometry and axis context commit together. Succeeds
+    /// only while this handle is still the live owner; a stale handle
+    /// fails without mutating anything — no extent, context, offset,
     /// revision, or notification changes. Success runs the single shared
     /// extent algorithm, identical to every other publication path.
     /// Framework-internal: attached viewports publish through the lease
     /// their tree holds.
     #[doc(hidden)]
-    pub fn update_extents(
-        &self,
-        content: f32,
-        viewport: f32,
-        physics: ScrollPhysics,
-    ) -> Result<(), MetricWriteError> {
+    pub fn update_extents(&self, update: ViewportMetricsUpdate) -> Result<(), MetricWriteError> {
         let publication = {
             let mut state = self.controller.state.borrow_mut();
             match state.metric_attachment {
                 Some(live) if live.id == self.id => {
-                    ScrollController::commit_extent_state(&mut state, content, viewport, physics)
+                    ScrollController::commit_extent_state(&mut state, update)
                 }
                 _ => return Err(MetricWriteError::StaleAttachment),
             }
@@ -275,21 +273,29 @@ impl MetricAttachment {
     }
 }
 
-/// One axis of a paired metric publication: the geometry one controller
-/// position publishes in a two-axis layout pass.
+/// One viewport's complete metric publication: geometry plus the
+/// axis/reversal context consumers use to interpret it. Authority and
+/// content commit together — validate authority, commit context and
+/// extents, release borrows, then notify — so context can never describe
+/// a different publication than the geometry it accompanies. A missing
+/// context leaves the stored one untouched (single-axis publishers that
+/// carry no axis information).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AxisExtents {
-    /// Measured content extent along the axis.
+pub struct ViewportMetricsUpdate {
+    /// Measured content extent.
     pub content: f32,
-    /// Viewport extent along the axis.
+    /// Viewport extent.
     pub viewport: f32,
     /// Range policy applied to the axis.
     pub physics: ScrollPhysics,
+    /// Axis context to commit with the geometry, if the publisher names
+    /// one. `None` preserves whatever context is stored.
+    pub context: Option<(Axis, bool)>,
 }
 
-impl AxisExtents {
-    /// Bundles one axis publication. Framework-internal alongside the
-    /// paired operations below.
+impl ViewportMetricsUpdate {
+    /// Bundles a context-free publication (context preserved).
+    /// Framework-internal alongside the publication paths below.
     #[doc(hidden)]
     #[must_use]
     pub fn new(content: f32, viewport: f32, physics: ScrollPhysics) -> Self {
@@ -297,6 +303,26 @@ impl AxisExtents {
             content,
             viewport,
             physics,
+            context: None,
+        }
+    }
+
+    /// Bundles a publication carrying its axis context.
+    /// Framework-internal alongside the publication paths below.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_axis(
+        content: f32,
+        viewport: f32,
+        axis: Axis,
+        reverse: bool,
+        physics: ScrollPhysics,
+    ) -> Self {
+        Self {
+            content,
+            viewport,
+            physics,
+            context: Some((axis, reverse)),
         }
     }
 }
@@ -312,9 +338,9 @@ impl ScrollController {
     #[doc(hidden)]
     pub fn update_extent_pair(
         horizontal: &ScrollController,
-        horizontal_extents: AxisExtents,
+        horizontal_extents: ViewportMetricsUpdate,
         vertical: &ScrollController,
-        vertical_extents: AxisExtents,
+        vertical_extents: ViewportMetricsUpdate,
     ) -> Result<(), MetricWriteError> {
         let (horizontal_effects, vertical_effects) = commit_extent_pair(
             horizontal,
@@ -336,10 +362,10 @@ impl ScrollController {
     pub fn publish_attached_pair(
         horizontal: &ScrollController,
         horizontal_lease: &MetricAttachment,
-        horizontal_extents: AxisExtents,
+        horizontal_extents: ViewportMetricsUpdate,
         vertical: &ScrollController,
         vertical_lease: &MetricAttachment,
-        vertical_extents: AxisExtents,
+        vertical_extents: ViewportMetricsUpdate,
     ) -> Result<(), MetricWriteError> {
         let (horizontal_effects, vertical_effects) = commit_extent_pair(
             horizontal,
@@ -377,9 +403,9 @@ enum PairAuthority<'a> {
 /// atomic, the callbacks never are.
 fn commit_extent_pair(
     horizontal: &ScrollController,
-    horizontal_extents: AxisExtents,
+    horizontal_extents: ViewportMetricsUpdate,
     vertical: &ScrollController,
-    vertical_extents: AxisExtents,
+    vertical_extents: ViewportMetricsUpdate,
     authority: PairAuthority<'_>,
 ) -> Result<(ExtentPublication, ExtentPublication), MetricWriteError> {
     // Identity first: one controller cannot drive two positions. This
@@ -420,18 +446,10 @@ fn commit_extent_pair(
             }
         }
     }
-    let horizontal_effects = ScrollController::commit_extent_state(
-        &mut horizontal_state,
-        horizontal_extents.content,
-        horizontal_extents.viewport,
-        horizontal_extents.physics,
-    );
-    let vertical_effects = ScrollController::commit_extent_state(
-        &mut vertical_state,
-        vertical_extents.content,
-        vertical_extents.viewport,
-        vertical_extents.physics,
-    );
+    let horizontal_effects =
+        ScrollController::commit_extent_state(&mut horizontal_state, horizontal_extents);
+    let vertical_effects =
+        ScrollController::commit_extent_state(&mut vertical_state, vertical_extents);
     Ok((horizontal_effects, vertical_effects))
 }
 

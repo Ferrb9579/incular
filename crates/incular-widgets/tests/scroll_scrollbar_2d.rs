@@ -246,7 +246,9 @@ fn raw_scrollbar_geometry_covers_orientations() {
         ),
     ] {
         let controller = ScrollController::new();
-        controller.set_metrics_context(Axis::Vertical, false);
+        controller
+            .try_set_metrics_context(Axis::Vertical, false)
+            .expect("free controller declares context");
         controller
             .update_extents(500., 100.)
             .expect("free controller publishes");
@@ -269,7 +271,9 @@ fn raw_scrollbar_reversed_and_empty_extents() {
     // A reversed metrics context mirrors the thumb: offset zero sits at
     // the track end.
     let controller = ScrollController::new();
-    controller.set_metrics_context(Axis::Vertical, true);
+    controller
+        .try_set_metrics_context(Axis::Vertical, true)
+        .expect("free controller declares context");
     controller
         .update_extents(500., 100.)
         .expect("free controller publishes");
@@ -281,7 +285,9 @@ fn raw_scrollbar_reversed_and_empty_extents() {
 
     // Nothing scrollable means nothing painted and no input accepted.
     let controller = ScrollController::new();
-    controller.set_metrics_context(Axis::Vertical, false);
+    controller
+        .try_set_metrics_context(Axis::Vertical, false)
+        .expect("free controller declares context");
     controller
         .update_extents(0., 0.)
         .expect("free controller publishes");
@@ -295,7 +301,9 @@ fn raw_scrollbar_reversed_and_empty_extents() {
 #[test]
 fn raw_scrollbar_drag_track_and_replacement() {
     let controller = ScrollController::new();
-    controller.set_metrics_context(Axis::Vertical, false);
+    controller
+        .try_set_metrics_context(Axis::Vertical, false)
+        .expect("free controller declares context");
     controller
         .update_extents(500., 100.)
         .expect("free controller publishes");
@@ -326,7 +334,9 @@ fn raw_scrollbar_drag_track_and_replacement() {
     // Replacement is structural: a new scrollbar owns the new handle and
     // the old one keeps driving its own controller in isolation.
     let other = ScrollController::new();
-    other.set_metrics_context(Axis::Vertical, false);
+    other
+        .try_set_metrics_context(Axis::Vertical, false)
+        .expect("free controller declares context");
     other
         .update_extents(500., 100.)
         .expect("free controller publishes");
@@ -526,6 +536,89 @@ fn two_dimensional_cache_resize_and_measure() {
     assert!(view.viewport().row_revision() > row_revision);
     assert!(measured.content_size.width < 360.);
     assert!(measured.content_size.height < 200.);
+}
+
+#[test]
+fn headless_2d_configuration_with_occupied_controller_changes_nothing() {
+    // Construction and direction setters are local configuration:
+    // building a headless model over an occupied controller, pointing
+    // it elsewhere, dropping it — none of it touches the owner's
+    // geometry, context, offset, revision, or notifications.
+    use incular_config::{Axis, AxisDirection};
+    let horizontal = ScrollController::new();
+    horizontal
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
+    let (log, _guard) = {
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let logged = log.clone();
+        let subscription = horizontal.add_listener(move |notification| {
+            logged.borrow_mut().push(notification.kind);
+            false
+        });
+        (log, subscription)
+    };
+    let lease = horizontal
+        .try_attach(MetricOwner::of_tree(1))
+        .expect("free axis attaches");
+    let revision = horizontal.revision();
+    log.borrow_mut().clear();
+    let vertical = ScrollController::new();
+    let mut scrollable = TwoDimensionalScrollable::new(horizontal.clone(), vertical.clone());
+    scrollable.set_axis_directions(AxisDirection::Left, AxisDirection::Up);
+    scrollable.set_main_axis(Axis::Horizontal);
+    drop(scrollable);
+    assert_eq!(horizontal.metrics().axis, Axis::Vertical);
+    assert_eq!(
+        horizontal.metrics().axis_direction,
+        AxisDirection::Down,
+        "configuration never reaches shared context"
+    );
+    assert_eq!(horizontal.content_extent(), 300.);
+    assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.revision(), revision);
+    assert_eq!(horizontal.metric_owner(), Some(1));
+    assert!(log.borrow().is_empty());
+    assert!(lease.release());
+}
+
+#[test]
+fn retained_reversed_directions_publish_through_layout() {
+    // Direction configuration publishes with geometry at layout: before
+    // the first layout the snapshots still describe the default
+    // context, and after it each axis reports its configured direction
+    // — coherently with the published extents.
+    use incular_config::{Axis, AxisDirection};
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let mut viewport = TwoDimensionalViewport::new(
+        TwoDimensionalChildDelegate::new(10, 12, |_| {
+            Some(Widget::box_(Size::new(30., 20.), Color::WHITE))
+        }),
+        horizontal.clone(),
+        vertical.clone(),
+        20.,
+        30.,
+    );
+    viewport.set_axis_directions(AxisDirection::Left, AxisDirection::Up);
+    assert_eq!(horizontal.metrics().axis, Axis::Vertical);
+    let boxed: Widget = incular_widgets::SizedBox::from_dimensions(
+        Some(100.),
+        Some(100.),
+        Some(Widget::from(viewport)),
+    )
+    .into();
+    let mut tree = WidgetTree::new();
+    tree.mount(Column::new(vec![boxed]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    assert_eq!(horizontal.metrics().axis, Axis::Horizontal);
+    assert_eq!(horizontal.metrics().axis_direction, AxisDirection::Left);
+    assert_eq!(vertical.metrics().axis, Axis::Vertical);
+    assert_eq!(vertical.metrics().axis_direction, AxisDirection::Up);
+    assert_eq!(horizontal.content_extent(), 360.);
+    assert_eq!(vertical.content_extent(), 200.);
 }
 
 #[test]
@@ -947,11 +1040,16 @@ fn two_dimensional_full_swap_moves_both_leases_silently() {
     assert_eq!(horizontal_ends.get(), 0);
     assert_eq!(vertical_ends.get(), 0);
     assert!(!horizontal.begin_activity() && !vertical.begin_activity());
-    // Each controller now carries its new axis geometry.
+    // Each controller now carries its new axis geometry with the
+    // matching axis context — the following layout refreshed both
+    // coherently after the silent move.
+    use incular_config::Axis;
     assert_eq!(vertical.content_extent(), 360.);
     assert_eq!(vertical.viewport_extent(), 100.);
+    assert_eq!(vertical.metrics().axis, Axis::Horizontal);
     assert_eq!(horizontal.content_extent(), 200.);
     assert_eq!(horizontal.viewport_extent(), 100.);
+    assert_eq!(horizontal.metrics().axis, Axis::Vertical);
     assert_eq!(horizontal.metric_owner(), Some(tree.tree_id()));
     assert_eq!(vertical.metric_owner(), Some(tree.tree_id()));
     assert!(horizontal.end_activity());

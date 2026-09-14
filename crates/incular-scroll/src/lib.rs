@@ -14,7 +14,7 @@ mod sliver;
 
 pub use activity::{DragStartBehavior, ScrollViewKeyboardDismissBehavior};
 pub use attachment::{
-    AttachmentConflict, AxisExtents, MetricAttachment, MetricOwner, MetricWriteError,
+    AttachmentConflict, MetricAttachment, MetricOwner, MetricWriteError, ViewportMetricsUpdate,
 };
 pub use controller::ScrollController;
 pub use coordinator::NestedScrollCoordinator;
