@@ -1954,6 +1954,362 @@ fn outward_fling_at_hard_boundary_stops_promptly() {
     assert_eq!(events.borrow().as_slice(), &[Start, End]);
 }
 
+fn sized_reversed_viewport(
+    controller: ScrollController,
+    width: f32,
+    height: f32,
+    content_height: f32,
+) -> Widget {
+    let scrolled: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(width, content_height), Color::WHITE))
+            .controller(controller)
+            .reverse(true)
+            .into();
+    SizedBox::from_dimensions(Some(width), Some(height), Some(scrolled)).into()
+}
+
+fn sized_horizontal_reversed_viewport(
+    controller: ScrollController,
+    width: f32,
+    height: f32,
+    content_width: f32,
+) -> Widget {
+    let scrolled: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(content_width, height), Color::WHITE))
+            .controller(controller)
+            .scroll_direction(Axis::Horizontal)
+            .reverse(true)
+            .into();
+    SizedBox::from_dimensions(Some(width), Some(height), Some(scrolled)).into()
+}
+
+#[test]
+fn reversed_vertical_touch_drag_moves_offset_with_finger() {
+    // Independent derivation (not wheel-sign handling): the viewport
+    // paints content at translation T = offset - max (physical origin
+    // at the trailing edge), so content follows the finger exactly
+    // when the logical offset moves WITH the finger: +66 px down means
+    // 100 -> 166.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_reversed_viewport(
+            controller.clone(),
+            200.,
+            100.,
+            300.,
+        )])
+        .into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 74.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 96.), Move, 30);
+    touch(&mut tree, 1, Offset::new(50., 96.), Up, 2_000);
+    assert_eq!(controller.offset(), 166.);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End]
+    );
+}
+
+#[test]
+fn reversed_horizontal_touch_drag_moves_offset_with_finger() {
+    // Same derivation on the horizontal axis: finger left 44 px moves
+    // the logical offset with it, 100 -> 56.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_horizontal_reversed_viewport(
+            controller.clone(),
+            100.,
+            40.,
+            300.,
+        )])
+        .into(),
+        100.,
+        40.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(70., 20.), Down, 0);
+    touch(&mut tree, 1, Offset::new(48., 20.), Move, 10);
+    touch(&mut tree, 1, Offset::new(26., 20.), Move, 20);
+    touch(&mut tree, 1, Offset::new(26., 20.), Up, 2_000);
+    assert_eq!(controller.offset(), 56.);
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, Update, End]);
+}
+
+#[test]
+fn tap_child_taps_and_still_scrolls() {
+    // An application tap recognizer on scrolled content must not
+    // disable scrolling for the whole stream: a press-release taps
+    // with no bracket, while a drag past slop scrolls without tapping.
+    // Both share one arena stream; acceptance decides, not presence.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let taps = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let content: Widget = GestureDetector::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+        .on_tap({
+            let taps = taps.clone();
+            move || taps.set(taps.get() + 1)
+        })
+        .into();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![{
+            let scrolled: Widget = SingleChildScrollView::new(content)
+                .controller(controller.clone())
+                .into();
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into();
+            sized
+        }])
+        .into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    // Press-release: tap fires, scrolling brackets nothing.
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 30.), Up, 10);
+    assert_eq!(taps.get(), 1);
+    assert!(events.borrow().is_empty());
+    assert_eq!(controller.offset(), 100.);
+    // Drag past slop on the same child: scrolls, never taps.
+    touch(&mut tree, 2, Offset::new(50., 30.), Down, 20);
+    touch(&mut tree, 2, Offset::new(50., 52.), Move, 30);
+    touch(&mut tree, 2, Offset::new(50., 74.), Move, 40);
+    touch(&mut tree, 2, Offset::new(50., 74.), Up, 2_000);
+    assert_eq!(taps.get(), 1, "drag is not a tap");
+    assert_eq!(controller.offset(), 56.);
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, Update, End]);
+}
+
+#[test]
+fn competing_drag_child_arbitrates_by_axis() {
+    // A child handling horizontal drags coexists with a vertical
+    // scrollable in one stream: horizontal motion drives the child
+    // while the viewport stays put; vertical motion scrolls while the
+    // child stays silent. Cross-axis movement never accepts through
+    // the scroll member, so the arena decides per axis.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let controller = ScrollController::new();
+    let child_deltas = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let content: Widget = GestureDetector::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+        .on_horizontal_drag_update({
+            let child_deltas = child_deltas.clone();
+            move |delta: Offset| child_deltas.borrow_mut().push(delta)
+        })
+        .into();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![{
+            let scrolled: Widget = SingleChildScrollView::new(content)
+                .controller(controller.clone())
+                .into();
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into();
+            sized
+        }])
+        .into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    // Horizontal: the child wins, the viewport never brackets.
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(72., 30.), Move, 10);
+    touch(&mut tree, 1, Offset::new(94., 30.), Move, 20);
+    touch(&mut tree, 1, Offset::new(94., 30.), Up, 30);
+    assert_eq!(controller.offset(), 100.);
+    assert!(events.borrow().is_empty());
+    assert_eq!(child_deltas.borrow().len(), 2);
+    // Vertical: the viewport wins, the child never fires.
+    touch(&mut tree, 2, Offset::new(50., 30.), Down, 40);
+    touch(&mut tree, 2, Offset::new(50., 52.), Move, 50);
+    touch(&mut tree, 2, Offset::new(50., 74.), Move, 60);
+    touch(&mut tree, 2, Offset::new(50., 74.), Up, 2_000);
+    assert_eq!(controller.offset(), 56.);
+    assert_eq!(child_deltas.borrow().len(), 2, "child stays silent");
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, Update, End]);
+}
+
+#[test]
+fn same_axis_competing_drag_goes_to_the_child() {
+    // Both members accept the same vertical motion: the innermost
+    // application recognizer registered first, so it wins the tie and
+    // the scroll member loses silently — no bracket, no offset change.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    let controller = ScrollController::new();
+    let child_deltas = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let content: Widget = GestureDetector::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+        .on_vertical_drag_update({
+            let child_deltas = child_deltas.clone();
+            move |_: Offset| child_deltas.set(child_deltas.get() + 1)
+        })
+        .into();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![{
+            let scrolled: Widget = SingleChildScrollView::new(content)
+                .controller(controller.clone())
+                .into();
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into();
+            sized
+        }])
+        .into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 52.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 74.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 74.), Up, 30);
+    assert_eq!(child_deltas.get(), 2, "child drives both moves");
+    assert_eq!(controller.offset(), 100., "scroll loses the tie");
+    assert!(events.borrow().is_empty());
+}
+
+#[test]
+fn cross_axis_movement_brackets_nothing() {
+    // Horizontal motion over a plain vertical viewport never accepts:
+    // no bracket, no notifications, no offset change.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(100.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    touch(&mut tree, 1, Offset::new(50., 30.), Down, 0);
+    touch(&mut tree, 1, Offset::new(72., 30.), Move, 10);
+    touch(&mut tree, 1, Offset::new(94., 30.), Move, 20);
+    touch(&mut tree, 1, Offset::new(94., 30.), Up, 30);
+    assert_eq!(controller.offset(), 100.);
+    assert!(events.borrow().is_empty());
+}
+
+#[test]
+fn nested_scrollables_hold_the_outer_at_the_inner_bound() {
+    // Remainder transfer across nested viewports is explicitly
+    // pending: a drag the inner viewport cannot consume (already at
+    // its bound) stops there — the outer viewport stays put.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let inner_scroll: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(inner.clone())
+            .into();
+    let inner_sized: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(150.), Some(inner_scroll)).into();
+    let outer_content = Column::new(vec![
+        Widget::box_(Size::new(200., 40.), Color::WHITE),
+        inner_sized,
+    ]);
+    let outer_scroll: Widget = SingleChildScrollView::new(outer_content)
+        .controller(outer.clone())
+        .into();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![{
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(outer_scroll)).into();
+            sized
+        }])
+        .into(),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    let outer_events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = outer.add_listener({
+        let outer_events = outer_events.clone();
+        move |notification| {
+            outer_events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    // Press inside the inner viewport's visible band (below the 40 px
+    // box) and drag upward past slop: the inner clamps, the outer
+    // never participates.
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 0., "no remainder transfer (pending)");
+    assert!(outer_events.borrow().is_empty());
+}
+
 #[test]
 fn programmatic_jump_during_fling_ends_it() {
     // An external position change takes visual control: the next pump

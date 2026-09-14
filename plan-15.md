@@ -2803,6 +2803,11 @@ a metric attachment):
 | animation tick (superseded) | Interrupted, no write | superseded, reset, detached, or state gone — never a silent boolean |
 | completing tick with newer driver | Completed (own trajectory) | reaching target reports completion even when the final notification started a newer tenure; the tick never clears another activity |
 | accepted touch drag | Start, then Update per move | bracket opens at acceptance (pending presses claim nothing); moves drive captured controller increments |
+| tap press over scrollable | tap only, no bracket | the scroll member joins pending alongside the tap member; release without motion lets the tap win and rejects scrolling silently |
+| drag over tap child | Start, then Update per move, no tap | slop acceptance rejects the tap member; the same stream scrolls without firing the tap |
+| competing child drag, cross-axis | winner drives, loser silent | each axis member accepts only its own motion; the scroll member never accepts cross-axis movement |
+| competing child drag, same axis | child drives, scroll silent | tie goes to the earlier-registered (innermost application) member; the scroll member loses without a trace |
+| nested viewports at inner bound | inner clamps, outer idle | remainder transfer across nested viewports stays pending: unconsumed motion stops at the inner bound |
 | fast release → fling | (silence at handoff) | token transfers with no End/Start churn; frames pump decayed motion with Updates until settle |
 | fling step with listener interference | own-tenure End, or silent stale drop | each step drives through the owned token with the commit snapshotted before `Update` delivery; a listener jump/bounds change closes the driver's own tenure without overwriting the new position; a listener takeover drops the stale driver silently; same-value jumps disturb nothing |
 | fling settle | End | decay under the minimum velocity closes the transferred bracket exactly once |
@@ -2918,8 +2923,12 @@ persisted positions only) and needed no changes. Adapter audit: the
 wheel adapter owns one token per sample (reentrant takeovers survive
 completion); header-snap observers only read Start/End; touch-drag
 streams bracket through retained entries with copied callbacks driving
-offsets only. W5 stays open: fling axes beyond ordinary/sliver remain,
-per above.
+offsets only. Ordinary gesture competition runs through the single
+gesture arena — no second recognizer system: the scroll member joins
+pending alongside application members, acceptance decides per axis,
+same-axis ties go to the innermost application member, and nested
+remainder transfer stays pending. W5 stays open: fling axes beyond
+ordinary/sliver remain, per above.
 
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on

@@ -458,13 +458,18 @@ impl WidgetTree {
             // A plain hit-tested label must continue through the runtime's
             // ordinary pointer route (for buttons, editable fields, and
             // read-only text selection). Only actual recognizers create an
-            // arena stream or retain pointer capture — except a scrollable
-            // viewport with no competing app recognizer, which claims the
-            // otherwise-unclaimed stream for touch dragging. App gestures
-            // always win outright here; competing arbitration is future
-            // work, so nested and wrapped scrollables route to the
-            // innermost viewport only.
-            if active.members.is_empty()
+            // arena stream or retain pointer capture — plus the
+            // innermost scrollable viewport above the hit, which joins
+            // for touch dragging whether or not application recognizers
+            // are already on the stream. Presence never decides: the
+            // arena does. A tap releases without motion, so the tap
+            // member wins and the pending scroll member is rejected
+            // silently; a drag past slop accepts through whichever axis
+            // member fires, and a same-axis tie goes to the
+            // earlier-registered (innermost application) member. Nested
+            // and wrapped scrollables still route to the innermost
+            // viewport only; remainder transfer stays pending.
+            if !self.scroll_brackets.contains_key(&key)
                 && let Some((viewport, controller, axis, reverse, physics)) =
                     self.innermost_scrollable_viewport(element)
             {
@@ -494,6 +499,9 @@ impl WidgetTree {
             if active.members.is_empty() {
                 return None;
             }
+            // A scroll-only stream has exactly one member (its own);
+            // coexistence streams carry application members alongside.
+            let scroll_only = self.scroll_brackets.contains_key(&key) && active.members.len() == 1;
             self.active_gestures.insert(key, active);
             self.pointer_captures.insert(key, element);
             let scale_elements = self
@@ -509,11 +517,14 @@ impl WidgetTree {
                 })
                 .unwrap_or_default();
             self.activate_scale_pairs(key.window, scale_elements);
-            if self.scroll_brackets.contains_key(&key) {
-                // A pending scroll press claims nothing yet: buttons,
+            if scroll_only {
+                // A pending scroll-only press claims nothing yet: buttons,
                 // fields, and hover keep working until the drag actually
                 // accepts and drives. The stream and capture above still
-                // stand, so later moves reach slop evaluation.
+                // stand, so later moves reach slop evaluation. With
+                // application members alongside, the stream reports
+                // normally — the scroll member is just one pending
+                // competitor among them.
                 return None;
             }
             return Some(element);
