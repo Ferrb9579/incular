@@ -655,12 +655,14 @@ impl WidgetTree {
             return;
         }
         let expected_offset = bracket.controller.offset();
+        let expected_revision = bracket.controller.revision();
         self.scroll_flings.push(ScrollFlingDriver {
             controller: bracket.controller,
             activity,
             velocity,
             last_tick: now,
             expected_offset,
+            expected_revision,
             physics: bracket.physics,
         });
     }
@@ -699,10 +701,15 @@ impl WidgetTree {
             if !driver.activity.is_current() {
                 continue;
             }
-            if driver.controller.offset() != driver.expected_offset {
-                // Programmatic jump, bounds clamp, or layout-applied
-                // position took visual control between frames: close the
-                // tenure this driver still owns.
+            if driver.controller.offset() != driver.expected_offset
+                || driver.controller.revision() != driver.expected_revision
+            {
+                // Programmatic jump, bounds clamp, pending-request
+                // application, or controller replacement took visual
+                // control between frames: close the tenure this driver
+                // still owns. The revision half catches writes that land
+                // back on the same offset; same-value commands bump
+                // nothing and never trip it.
                 driver.activity.finish();
                 continue;
             }
@@ -744,13 +751,16 @@ impl WidgetTree {
                 driver.activity.finish();
                 continue;
             }
-            if committed.offset == previous
-                && ((step.offset_delta > 0. && previous >= driver.controller.max_offset())
-                    || (step.offset_delta < 0. && previous <= 0.))
-            {
-                // Hard boundary with an outward fling and no movement
-                // possible: stop now instead of scheduling useless
-                // frames until the velocity decays.
+            // A hard-clamped fling pushing outward ends on the step
+            // that reaches the boundary — including when that step
+            // moved. Decay never reverses direction, so no later step
+            // could leave again; demanding another frame would only
+            // rediscover the same wall. The final movement and its
+            // notification above are preserved.
+            let reached_boundary = (step.offset_delta > 0.
+                && committed.offset >= driver.controller.max_offset())
+                || (step.offset_delta < 0. && committed.offset <= 0.);
+            if reached_boundary {
                 driver.activity.finish();
                 continue;
             }
@@ -758,8 +768,10 @@ impl WidgetTree {
                 moved += 1;
             }
             // The driver's own committed write — not a post-callback
-            // read — is the next step's expectation.
+            // read — is the next step's expectation, offset and
+            // revision together.
             driver.expected_offset = committed.offset;
+            driver.expected_revision = committed.revision;
             self.scroll_flings.push(driver);
         }
         self.diagnostics.scroll_events += moved;

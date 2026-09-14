@@ -789,6 +789,13 @@ struct ScrollFlingDriver {
     /// is detected against the drive snapshot instead, so listener
     /// writes are never absorbed here.
     expected_offset: f32,
+    /// Revision the driver's own last commit produced. Any state write
+    /// between ticks — a jump, a bounds clamp, a pending-request
+    /// application, controller replacement — bumps the revision, so a
+    /// revision mismatch interrupts even when the offset happens to
+    /// read back the same value. Same-value commands bump nothing and
+    /// never interrupt.
+    expected_revision: u64,
     physics: ScrollPhysics,
 }
 

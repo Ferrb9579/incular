@@ -1954,6 +1954,380 @@ fn outward_fling_at_hard_boundary_stops_promptly() {
     assert_eq!(events.borrow().as_slice(), &[Start, End]);
 }
 
+#[test]
+fn fling_arriving_at_upper_boundary_finishes_on_that_step() {
+    // A fling step that carries the offset onto the boundary — with
+    // movement — finishes the tenure on that same step: the final
+    // position and its Update are preserved, exactly one End fires,
+    // and no extra frame is demanded.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(150.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    assert_eq!(controller.offset(), 190.);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    // The first 16 ms step travels ~31 px: 190 + 31 clamps onto 200
+    // with movement, so this same pump must both arrive and finish.
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(46), false),
+        "arrival step demands no further frame"
+    );
+    assert_eq!(controller.offset(), 200.);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End],
+        "final movement and its Update are preserved"
+    );
+}
+
+#[test]
+fn fling_arriving_at_lower_boundary_finishes_on_that_step() {
+    // Mirror image toward zero: the arrival step moves 10 -> 0,
+    // keeps its Update, closes with one End, demands nothing more.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.jump_to(50.));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Move, 20);
+    assert_eq!(controller.offset(), 10.);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 90.), Up, 30);
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(46), false),
+        "arrival step demands no further frame"
+    );
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End],
+        "final movement and its Update are preserved"
+    );
+}
+
+#[test]
+fn fling_interrupted_by_jump_between_ticks() {
+    // A programmatic jump between frames takes visual control: the
+    // next pump sees the offset/revision mismatch, closes the tenure
+    // it still owns with End, and never writes over the jump.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    assert!(controller.jump_to(150.));
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "interrupted tenure retains nothing"
+    );
+    assert_eq!(controller.offset(), 150.);
+    let kinds = events.borrow();
+    assert_eq!(kinds.iter().filter(|kind| **kind == Start).count(), 1);
+    assert_eq!(kinds.iter().filter(|kind| **kind == End).count(), 1);
+    assert_eq!(kinds[kinds.len() - 1], End);
+}
+
+#[test]
+fn fling_interrupted_by_bounds_change_between_ticks() {
+    // Shrinking the content between frames clamps the offset through
+    // layout republication: the mismatch closes the tenure, and the
+    // clamped position is preserved, never overwritten.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let flung = controller.offset();
+    assert!(flung > 40.);
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 120.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(controller.offset(), 20., "layout clamps to the new range");
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "interrupted tenure retains nothing"
+    );
+    assert_eq!(controller.offset(), 20.);
+    let kinds = events.borrow();
+    assert_eq!(kinds.iter().filter(|kind| **kind == Start).count(), 1);
+    assert_eq!(kinds.iter().filter(|kind| **kind == End).count(), 1);
+}
+
+#[test]
+fn fling_interrupted_by_controller_replacement() {
+    // Swapping the viewport's controller mid-fling ends the old
+    // tenure through the replacement path; the orphaned driver finds
+    // a stale token at the next pump and drops silently — no second
+    // End, nothing written anywhere.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let replacement = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(replacement.clone(), 200., 100., 300.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "orphaned driver retains nothing"
+    );
+    let kinds = events.borrow();
+    assert_eq!(kinds.iter().filter(|kind| **kind == End).count(), 1);
+    assert_eq!(replacement.offset(), 0.);
+    assert!(replacement.begin_activity());
+    assert!(replacement.end_activity());
+}
+
+#[test]
+fn fling_takeover_between_ticks_drops_silently() {
+    // A directly started activity between frames takes ownership: the
+    // next pump finds a stale token, drops without a sound, and the
+    // newer bracket stays open until its own owner closes it.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::{
+        ActivityOrigin,
+        ScrollNotificationType::{End, Start, Update},
+    };
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let taken = controller.start_owned_activity(ActivityOrigin::Drag);
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "stale driver retains nothing"
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update],
+        "no End from the stale driver"
+    );
+    assert!(!controller.begin_activity(), "newer bracket still open");
+    assert!(taken.finish());
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[Start, Update, Update, Update, End]
+    );
+}
+
+#[test]
+fn fling_interrupted_by_jump_there_and_back_again() {
+    // Offset-equality alone is not continuity: jumping away and back
+    // between frames restores the offset but not the revision, so the
+    // tenure still closes instead of resuming from a position the
+    // application visibly owned in between.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let flung = controller.offset();
+    assert!(controller.jump_to(150.));
+    assert!(controller.jump_to(flung));
+    assert_eq!(controller.offset(), flung);
+    assert!(
+        !tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "revision mismatch interrupts despite equal offsets"
+    );
+    assert_eq!(controller.offset(), flung);
+    let kinds = events.borrow();
+    assert_eq!(kinds.iter().filter(|kind| **kind == Start).count(), 1);
+    assert_eq!(kinds.iter().filter(|kind| **kind == End).count(), 1);
+}
+
+#[test]
+fn fling_survives_same_value_jump_between_ticks() {
+    // A same-value jump is a no-op command: no write, no revision
+    // bump, no notification — so the tenure continues undisturbed.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::End;
+    use std::time::{Duration, Instant};
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let base = Instant::now();
+    fling_touch(&mut tree, base, 7, Offset::new(50., 70.), Down, 0);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 50.), Move, 10);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 30.), Move, 20);
+    fling_touch(&mut tree, base, 7, Offset::new(50., 10.), Up, 30);
+    assert!(tree.pump_scroll_flings(base + Duration::from_millis(46), false));
+    let flung = controller.offset();
+    assert!(
+        !controller.jump_to(controller.offset()),
+        "same-value jump changes nothing"
+    );
+    assert!(
+        tree.pump_scroll_flings(base + Duration::from_millis(62), false),
+        "tenure continues"
+    );
+    assert!(
+        controller.offset() > flung,
+        "motion resumes after the no-op"
+    );
+    assert_eq!(
+        events.borrow().iter().filter(|kind| **kind == End).count(),
+        0
+    );
+}
+
 fn sized_reversed_viewport(
     controller: ScrollController,
     width: f32,
