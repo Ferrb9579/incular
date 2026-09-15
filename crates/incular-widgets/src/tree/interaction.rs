@@ -391,11 +391,37 @@ impl WidgetTree {
     /// the stale link drops instead of driving a dead handle.
     fn viewport_controller(&self, element: ElementId) -> Option<ScrollController> {
         let render = self.elements.get(element.0)?.render;
-        match &self.renders.get(render.0)?.object.kind {
+        let controller = match &self.renders.get(render.0)?.object.kind {
             RenderKind::Scroll { controller, .. } => Some(controller.clone()),
             RenderKind::SliverViewport { config } => Some(config.controller.clone()),
             _ => None,
-        }
+        }?;
+        self.viewport_lease_live(element, &controller)
+            .then_some(controller)
+    }
+
+    /// Whether the captured scroll member still names the viewport and
+    /// metric attachment that opened its bracket. A replacement or lease
+    /// change invalidates the stream, even when the controller is reused.
+    fn captured_scroll_bracket_is_live(
+        &self,
+        key: GestureArenaKey,
+        member: GestureArenaMember,
+        bracket: &ScrollBracket,
+    ) -> bool {
+        let Some(candidate) = self.active_gestures.get(&key).and_then(|active| {
+            active
+                .members
+                .iter()
+                .find(|candidate| candidate.member == member)
+        }) else {
+            return false;
+        };
+        let Some(controller) = self.viewport_controller(candidate.element) else {
+            return false;
+        };
+        controller == bracket.controller
+            && controller.attachment_id() == Some(bracket.attachment)
     }
 
     /// Opens the scroll bracket for an accepted motion action on this
@@ -560,6 +586,9 @@ impl WidgetTree {
                         key,
                         ScrollBracket {
                             member,
+                            attachment: controller
+                                .attachment_id()
+                                .expect("chain holds live leases"),
                             controller,
                             physics,
                             end_velocity,
@@ -571,6 +600,9 @@ impl WidgetTree {
                                 .map(
                                     |(element, controller, axis, reverse, physics)| NestedDrive {
                                         element: *element,
+                                        attachment: controller
+                                            .attachment_id()
+                                            .expect("chain holds live leases"),
                                         controller: controller.clone(),
                                         axis: *axis,
                                         reverse: *reverse,
@@ -985,6 +1017,18 @@ impl WidgetTree {
         member: GestureArenaMember,
         action: GestureAction,
     ) {
+        // A captured recognizer must not drive a replaced viewport's controller,
+        // even if that controller has since acquired another live attachment.
+        let expired = match self.scroll_brackets.get(&key) {
+            Some(bracket) if bracket.member == member => {
+                !self.captured_scroll_bracket_is_live(key, member, bracket)
+            }
+            _ => false,
+        };
+        if expired {
+            self.cancel_gesture_stream(key, true);
+            return;
+        }
         self.update_drag_from_action(key, member, action);
         // Every accepted motion action re-checks the scroll bracket
         // before driving: the first opens it so the accepting move
@@ -1026,38 +1070,17 @@ impl WidgetTree {
         }
     }
 
-    /// Routes the innermost drive's leftover physical motion outward
-    /// along the chain axis, innermost ancestor first. Each compatible
-    /// viewport converts the physical remainder into its own logical
-    /// units (its reversal sign is its own inverse), applies its own
-    /// physics through the existing consumed/unconsumed result, and
-    /// hands the new remainder on — no second nested-scroll algorithm,
-    /// just the same consume-and-report step every viewport already
-    /// runs. Incompatible axes are skipped transparently; the
-    /// arithmetic invariant holds in physical space: input displacement
-    /// equals the sum of consumed displacements plus the final
-    /// remainder, with each viewport's axis and reversal applied
-    /// exactly once.
-    ///
-    /// Activities open lazily per participating controller, mirroring
-    /// [`open_scroll_bracket`](Self::open_scroll_bracket): when another
-    /// driver owns the controller the stream drives under it and takes
-    /// nothing. The chain holds only live-lease viewports, each
-    /// controller at most once, so one record never takes two drives
-    /// from one sample. Dead links —
-    /// unmounted elements or replaced viewports resolving to a
-    /// different controller — drop while the remainder flows past them
-    /// to the next live ancestor: the drop finishes the stream-opened
-    /// tenure when still current (its `End` lands on the detached
-    /// controller the stream owned) and stays silent only when the
-    /// token already went stale elsewhere. Nothing here is held across
-    /// notifications: every apply below can reenter the tree, so
-    /// descriptors are snapshotted and every bracket touch is a short
-    /// borrow.
+    /// Routes the innermost drive's leftover physical motion outward along
+    /// the compatible, press-time ancestor chain. Each live lease is checked
+    /// again before it can drive; stale links are dropped and their own
+    /// activity finishes only when its token is still current. Activities are
+    /// opened lazily, and descriptors are snapshotted so notifications may
+    /// reenter the tree safely.
     fn route_nested_remainder(&mut self, key: GestureArenaKey) {
         struct Job {
             element: ElementId,
             controller: ScrollController,
+            attachment: u64,
             reverse: bool,
             physics: ScrollPhysics,
         }
@@ -1076,6 +1099,7 @@ impl WidgetTree {
                 .map(|link| Job {
                     element: link.element,
                     controller: link.controller.clone(),
+                    attachment: link.attachment,
                     reverse: link.reverse,
                     physics: link.physics,
                 })
@@ -1089,9 +1113,10 @@ impl WidgetTree {
             if remaining == 0. {
                 break;
             }
-            // Liveness first: a dead press-time link drops with silent
-            // cleanup and the remainder flows past it.
-            if self.viewport_controller(job.element).as_ref() != Some(&job.controller) {
+            // A descriptor alone cannot authorize a drive after a failed claim.
+            if self.viewport_controller(job.element).as_ref() != Some(&job.controller)
+                || job.controller.attachment_id() != Some(job.attachment)
+            {
                 self.drop_nested_link(key, job.element);
                 continue;
             }

@@ -2748,13 +2748,11 @@ packages A–D):
 | Two-dimensional (H/V pair) | two independent `ScrollController`s, one element entry holding the axis pair | retained layouts claim both axes then lend the stored pair in place through disjoint field borrows (one shared layout tail); every public alias (`layout`, `layout_with_measure`, scrollable `update_extents`) commits through the Scroll owner's paired operation — pinned atomic | enforced per axis: a shared axis fails the second viewport naming the owning element, with the live pair untouched — pinned; replacement reconciles owned positions as a set — full swaps move both leases silently (no detach, activities continue), duplicates fail without mutation, foreign conflicts preserve — pinned | set reconciliation (reuse-by-controller, acquire-on-miss, detach-leftovers) with tenure detach | unmount drains the pair with an End per open tenure; tree drop tears both down silently; layout panic preserves the pair for retry (no guard, no reinsert — pinned) |
 | Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | inner list viewport publishes through its ordinary lease; the sheet never claims — `set_inner_extents` is checked-unattached, refusing while the inner list owns — pinned | one position, one attachment: sheet/inner sharing needs no second claim by design | previous handle detaches | sheet state drops with the tree |
 
-Contested headless writes (defined interaction, pinned): metric writes
-are last-writer-wins but never touch ownership. A headless write to an
-owned controller changes geometry — which the owner's next real layout
-restores — without transferring, clearing, or disturbing the live
-attachment, its owner tree, or its activity. Clean relayouts stay
-no-ops, so contested values stand until the owner really lays out
-again. "Headless" can therefore never become an ownership bypass.
+Contested headless writes are rejected before mutation. Public unattached
+publication succeeds only on a free controller; an occupied controller keeps
+its geometry, context, offset, revision, activity, and attachment unchanged.
+Only its live lease can publish viewport metrics. Offset commands remain a
+separate, deliberately public control channel.
 
 Sharing that is coordination, not attachment (left alone): scrollbar
 read-only geometry reads; `parent_controllers` receiving leftover
@@ -3014,15 +3012,15 @@ reorders move elements instead of rebuilding them; variable-extent
    the offset on estimate noise. Review round: dynamic reconciliation
    consumes each old element once (transaction-local keyed index with
    pop-consume plus an upfront duplicate-key failure); measurement
-   transfer follows established row identity (reused elements adopt
-   true sizes, fresh mounts demote unaffiliated guesses); transfer
-   work stays proportional to measured rows (retained-measured
-   iteration with probe counting); the nested-drive chain admits only
+   transfer initially carries positional estimates, then reused elements
+   establish sizes and fresh mounts demote unaffiliated guesses. The
+   corrective review below fixes provenance and accounts for chunk
+   traversal as well as recorded candidates; the nested-drive chain admits only
    viewports holding the live lease. Same-controller nesting cannot
    occur through successful operation — the second claim fails — and
    render-level duplicates stay inert (failed passes resolve no hit),
    so each record drives at most once per sample under single-tenure
-   ownership. No new W5 gaps; the close below stands.
+   ownership. The subsequent corrective review is recorded below.
 
 ## W5 reconciliation — requirements review and close
 
@@ -3061,7 +3059,9 @@ workarounds, no second algorithms.
   the input=sum(consumed)+remainder invariant; lazy deep jumps hold
   through deferred/restoration requests; keep-alive identity lives in
   its tested subsystem; the sliver index preserves measurements
-  across structural operations and compatible replacements.
+  across structural operations. Replacement carries provisional positional
+  estimates until identity reconciliation or measurement establishes sizes;
+  exact offscreen totals require explicit seeds (see the corrective review).
 - Exit criteria: deterministic transition-table tests (the table
   above, every row pinned); no stuck activity or duplicate start/end
   (takeover, replacement, unmount, drop, and reentrant paths all
@@ -3075,7 +3075,56 @@ supported path: 2D ballistic fling, wheel ballistic fling beyond the
 specified per-sample settle, sheet ballistic fling, nested remainder
 routing during flings, spring bounce-back, and advanced families
 adopting the same tenure rules. Track clicks stay unbracketed
-programmatic moves by current design. W5 is closed.
+programmatic moves by current design. W5 is REOPENED for a corrective
+review round with four findings: (A) measurement provenance —
+transferred guesses stored as plain measurements block
+identity-established adoption and survive real measurement;
+(B) offscreen correspondence — hygiene repairs materialized rows
+only, leaving transferred offscreen values on stale indices;
+(C) adoption-cost accounting — the probe counter excludes traversal
+work and the measured-row-only bound is unproven; (D) stream
+authority — mid-stream lease changes versus descriptor checks need
+an explicit reachability disposition, plus stale wording cleanup.
+Advanced ballistics stay out of scope. W5 closes again only when
+each finding carries an explicit disposition with evidence.
+
+### Final corrective implementation
+
+- Provenance is consumed at its owner: identity-established adoption can replace
+  a transferred estimate; successful measurement clears its marker even when the
+  numeric extent is unchanged; invalidation consumes the marker. The regression
+  `confirmed_transferred_rows_remount_without_estimate_anchor_drift` fails on the
+  previous layout implementation (126 instead of requested 150) and passes with
+  the fix. Existing insertion/removal expectations now include measurements
+  confirmed before rows leave the final cache window.
+- Offscreen correspondence is explicitly provisional, not inferred from index.
+  `offscreen_transfers_are_provisional_until_materialized_or_seeded` changes an
+  unmounted prefix without building it: bare totals retain estimates, seeds
+  immediately supply exact totals, and materialization converges with matching
+  paint/hit/semantics. No eager delegate walk or second measurement cache.
+- Enumeration cost is O(chunks + slots in nonempty chunks), followed by
+  O(recorded candidates * log(chunks)) index work. Keeping the existing chunk
+  representation avoids a second sparse index. `enumeration_chunks` and
+  `enumeration_slots` count actual traversal; `transfer_probes` includes both
+  plus candidate rows. The sparse-index regression holds two recorded rows
+  constant across 1,024 and 1,048,576 logical rows and observes 4/4,096 chunk
+  visits and 256 slot inspections respectively. The earlier measured-row-only
+  claim was incorrect.
+- Streams capture their metric attachment identity. Both the innermost drag and
+  outer remainder routing validate current descriptor, lease, and tenure before
+  driving. Replacement cancels the captured stream instead of re-opening the
+  old controller; reattaching that controller elsewhere does not revive it.
+  `touch_drag_replacement_cancels_captured_tenure` preserves a newer owner's
+  activity and offset. `nested_drag_outer_start_takeover_survives_stream_release`
+  uses an actual owned-activity takeover: the same sample continues under it,
+  while stream release cannot end that foreign activity.
+
+The four corrective findings are implemented under the reviewed contracts.
+Earlier workspace compilation and the focused W5 tests passed. The full
+workspace test run was interrupted at the user's request before Clippy and
+rustdoc, so no full-suite result is claimed. The remaining repository gates
+are intentionally waived for this review; W5 implementation work is complete
+while repository-wide validation remains incomplete.
 
 ## W6 — Input, text and semantic consistency
 

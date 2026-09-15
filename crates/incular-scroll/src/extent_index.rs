@@ -126,9 +126,10 @@ struct MeasuredExtentState {
     structure_revision: u64,
 }
 
-/// Structural operation counts for one variable-extent index. These prove
-/// lookup/materialization complexity contracts (O(visible + overscan + log N))
-/// without relying on wall-clock timings. Increments are relaxed atomics.
+/// Structural operation counts for one variable-extent index. These expose
+/// lookup, materialization, and transfer-enumeration work without relying on
+/// wall-clock timings. The counters use interior `Cell` storage and are
+/// shared by index clones.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExtentIndexMetrics {
     /// `offset_for_index` calls (index → offset direction).
@@ -139,6 +140,10 @@ pub struct ExtentIndexMetrics {
     pub viewport_queries: u64,
     /// Exact post-layout extent updates applied to the tree.
     pub extent_updates: u64,
+    /// Chunks inspected while enumerating recorded extents.
+    pub enumeration_chunks: u64,
+    /// Slots inspected in nonempty chunks while enumerating recorded extents.
+    pub enumeration_slots: u64,
 }
 
 /// Interior shared counters; `Rc`-shared across clones of the index so every
@@ -149,6 +154,8 @@ struct ExtentIndexCounters {
     offset_to_index: std::cell::Cell<u64>,
     viewport_queries: std::cell::Cell<u64>,
     extent_updates: std::cell::Cell<u64>,
+    enumeration_chunks: std::cell::Cell<u64>,
+    enumeration_slots: std::cell::Cell<u64>,
 }
 impl ExtentIndexCounters {
     #[must_use]
@@ -158,6 +165,8 @@ impl ExtentIndexCounters {
             offset_to_index_queries: self.offset_to_index.get(),
             viewport_queries: self.viewport_queries.get(),
             extent_updates: self.extent_updates.get(),
+            enumeration_chunks: self.enumeration_chunks.get(),
+            enumeration_slots: self.enumeration_slots.get(),
         }
     }
 }
@@ -286,21 +295,26 @@ impl MeasuredExtentIndex {
             .map(|chunk| chunk.measured)
             .sum()
     }
-    /// Indices holding recorded measurements, in order. Wholly
-    /// unmeasured chunks are skipped without visiting their rows, so
-    /// transfer and audit work stays proportional to measured rows
-    /// rather than logical length. Framework-internal.
+    /// Indices holding recorded measurements, in order. Every chunk is
+    /// visited, while slots are scanned only in chunks with measurements.
+    /// Work is O(chunks + slots in nonempty chunks). Framework-internal.
     #[doc(hidden)]
     pub fn measured_indices(&self) -> Vec<usize> {
         let state = self.state.borrow();
         let mut out = Vec::new();
         let mut base = 0;
         for chunk in &state.chunks {
+            self.metrics
+                .enumeration_chunks
+                .set(self.metrics.enumeration_chunks.get() + 1);
             if chunk.measured == 0 {
                 base += chunk.values.len();
                 continue;
             }
             for (local, value) in chunk.values.iter().enumerate() {
+                self.metrics
+                    .enumeration_slots
+                    .set(self.metrics.enumeration_slots.get() + 1);
                 if value.is_some() {
                     out.push(base + local);
                 }

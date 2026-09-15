@@ -317,7 +317,7 @@ pub(super) struct VariableExtentRenderSliver {
     /// established identity. Reconciliation reads this set to tell
     /// transferred guesses apart from explicit seeds; entries belong
     /// to this delegate generation only.
-    pub(super) transferred: RefCell<HashSet<usize>>,
+    pub(super) transferred: Rc<RefCell<HashSet<usize>>>,
 }
 
 impl VariableExtentRenderSliver {
@@ -326,7 +326,7 @@ impl VariableExtentRenderSliver {
             index,
             builder,
             widgets: HashMap::new(),
-            transferred: RefCell::new(HashSet::new()),
+            transferred: Rc::new(RefCell::new(HashSet::new())),
         }
     }
 
@@ -380,11 +380,21 @@ impl RenderSliver for VariableExtentRenderSliver {
     }
 
     fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
-        child
+        let Some(index) = child
             .0
             .checked_sub(1)
             .and_then(|index| usize::try_from(index).ok())
-            .is_some_and(|index| self.index.set_measured_extent(index, extent))
+        else {
+            return false;
+        };
+        if !extent.is_finite() || extent < 0. || index >= self.index.len() {
+            return false;
+        }
+        // A valid child measurement consumes provisional provenance even when
+        // its numeric value is unchanged, so later reconciliation cannot
+        // overwrite established truth.
+        self.transferred.borrow_mut().remove(&index);
+        self.index.set_measured_extent(index, extent)
     }
 
     fn revision(&self) -> u64 {
@@ -1981,12 +1991,8 @@ impl RenderSliver for SequenceRenderSliver {
     }
 }
 
-/// Transfers validated natural-header measurement from a retained sliver into
-/// its freshly built replacement, recursing by position through sequences
-/// and transparent single-inner wrappers. Only validated measurements move;
-/// stretched presentation, estimates, and incompatible shapes stay fresh, so
-/// replacing a viewport descriptor during overscroll keeps the true size
-/// without flashing an estimate or spuriously changing the scroll range.
+/// Transfers compatible header state and provisional variable-row extents,
+/// recursing by position through sequences and transparent wrappers.
 pub(crate) fn transfer_retained_sliver_state(
     fresh: &mut dyn RenderSliver,
     retained: &mut dyn RenderSliver,
@@ -2036,16 +2042,10 @@ fn adopt_natural_header_state(
     fresh.adopt_compatible_state(retained)
 }
 
-/// Carries retained per-row measurements into a fresh variable-extent
-/// sliver — but only where the fresh index holds a bare fallback
-/// estimate. A fresh seed embodies new builder knowledge (including a
-/// changed extent builder) and always wins; a bare fallback embodies
-/// nothing, so the retained measurement is strictly more informed.
-/// This keeps the first post-replacement layout measured-accurate, so
-/// the scroll anchor never corrects for estimate noise on identical
-/// content, while changed builders still flow through seeds and
-/// re-measurement. Adopted entries count as measured and self-heal on
-/// the next measure pass if the content truly changed.
+/// Carries positional estimates to avoid resetting unchanged lazy content to
+/// the global fallback. No row correspondence is implied: explicit seeds win,
+/// reused elements establish identity, and fresh elements invalidate guesses.
+/// Offscreen totals remain estimates until those rows are materialized.
 fn adopt_variable_extent_measurements(
     fresh: &mut dyn RenderSliver,
     retained: &mut dyn RenderSliver,
@@ -2061,9 +2061,6 @@ fn adopt_variable_extent_measurements(
     ) else {
         return false;
     };
-    if retained.index.measured_count() == 0 {
-        return false;
-    }
     // Iterate retained-measured rows only: unmeasured slots carry
     // nothing to adopt. Fresh seeds always win; only bare fallbacks
     // accept a carried measurement, recorded so reconciliation can
@@ -2072,7 +2069,12 @@ fn adopt_variable_extent_measurements(
     // established post-mapping below.
     let fresh_len = fresh.index.len();
     let mut adopted = false;
-    for index in retained.index.measured_indices() {
+    let before = retained.index.metrics();
+    let indices = retained.index.measured_indices();
+    let after = retained.index.metrics();
+    *probes += after.enumeration_chunks - before.enumeration_chunks + after.enumeration_slots
+        - before.enumeration_slots;
+    for index in indices {
         if index >= fresh_len {
             break;
         }
@@ -2093,14 +2095,13 @@ fn adopt_variable_extent_measurements(
 struct VariableSlot {
     index: MeasuredExtentIndex,
     local: usize,
-    transferred: bool,
+    transferred: Rc<RefCell<HashSet<usize>>>,
 }
 
-/// Resolves a viewport-scoped child to its variable-extent slot: the
-/// shared index, the sliver-local row, and whether the last transfer
-/// wrote that slot. Descends sequences by scope and through the same
-/// transparent wrappers the transfer helper crosses. None for
-/// non-variable shapes, which manage their own measurements.
+/// Resolves a viewport-scoped child to the shared index, local row, and
+/// transfer-provenance set from the same variable sliver. Descends sequences
+/// by scope and through the transparent wrappers used by state transfer.
+/// Non-variable shapes return `None` and manage their own measurements.
 fn variable_slot_for_child(
     delegate: &dyn SliverViewportDelegate,
     child: SliverChildId,
@@ -2113,7 +2114,7 @@ fn variable_slot_for_child(
             return Some(VariableSlot {
                 index: variable.index.clone(),
                 local,
-                transferred: variable.transferred.borrow().contains(&local),
+                transferred: variable.transferred.clone(),
             });
         }
         if let Some(wrapper) = sliver
@@ -2158,7 +2159,11 @@ pub(crate) fn adopt_reconciled_measurement(
     let Some(slot) = variable_slot_for_child(delegate, child) else {
         return false;
     };
-    if slot.index.measured_extent(slot.local).is_some() {
+    if !extent.is_finite() || extent < 0. {
+        return false;
+    }
+    let provisional = slot.transferred.borrow_mut().remove(&slot.local);
+    if !provisional && slot.index.measured_extent(slot.local).is_some() {
         return false;
     }
     slot.index.set_measured_extent(slot.local, extent)
@@ -2175,7 +2180,7 @@ pub(crate) fn invalidate_transferred_measurement(
     let Some(slot) = variable_slot_for_child(delegate, child) else {
         return false;
     };
-    if !slot.transferred {
+    if !slot.transferred.borrow_mut().remove(&slot.local) {
         return false;
     }
     slot.index.invalidate_extent(slot.local)

@@ -1233,9 +1233,12 @@ fn transfer_insertion_before_viewport_keeps_pixels() {
         if seeded {
             assert_eq!(max, 4270.);
         } else {
-            // Adopted window truth (X50 + rows 0..=9 truth 480 = 530)
-            // with 30 fallbacks (1440): total 1970, max 1870.
-            assert_eq!(max, 1870.);
+            // The reused old row 10 also established its 70px measurement
+            // before leaving the cache: 50 + sum(30..=70 step 4) + 29*48.
+            assert_eq!(
+                max,
+                50. + base_heights(11).iter().sum::<f32>() + 29. * 48. - 100.
+            );
         }
     }
 }
@@ -1301,9 +1304,12 @@ fn transfer_removal_before_viewport_keeps_pixels() {
         if seeded {
             assert_eq!(max, 4190.);
         } else {
-            // Adopted window truth (new rows 0..=11 = old rows
-            // 1..=12: 672) with 27 fallbacks (1296): total 1968.
-            assert_eq!(max, 1868.);
+            // Surviving measurements belong to old rows 1..=11, including
+            // the row reconciled before the final cache window narrowed.
+            assert_eq!(
+                max,
+                base_heights(12)[1..].iter().sum::<f32>() + 28. * 48. - 100.
+            );
         }
     }
 }
@@ -1462,11 +1468,7 @@ fn transfer_replacement_content_revalidates_coherently() {
 }
 
 #[test]
-fn transfer_large_lazy_replacement_probes_only_measured_rows() {
-    // A 100k-row bare list measures only its materialized window;
-    // replacing its descriptor must not visit every logical row.
-    // Transfer probes stay proportional to the measured working set
-    // (a full logical scan would read ~100k rows here).
+fn transfer_large_lazy_replacement_counts_chunks_slots_and_candidates() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
     let view = |controller: &ScrollController| {
@@ -1489,11 +1491,103 @@ fn transfer_large_lazy_replacement_probes_only_measured_rows() {
     let after = tree.diagnostics();
     assert!(
         after.transfer_probes - before.transfer_probes < 1_000,
-        "transfer visits measured rows, not logical rows"
+        "391 chunk visits plus one 256-slot chunk and recorded candidates"
     );
     assert_eq!(controller.max_offset(), settled_max);
     assert_eq!(controller.offset(), 0.);
     assert_eq!(tree.children(root).unwrap().len(), settled_kids);
+}
+
+#[test]
+fn confirmed_transferred_rows_remount_without_estimate_anchor_drift() {
+    let controller = ScrollController::new();
+    let mut heights = vec![48.; 100];
+    heights[..15].fill(40.);
+    let keys = base_keys(100);
+    let view = || bare_labeled_view(&controller, &heights, &keys);
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(view()).unwrap();
+    let constraints = Constraints::tight(Size::new(100., 100.));
+    tree.layout(constraints).unwrap();
+    tree.update(root, view()).unwrap();
+    tree.layout(constraints).unwrap();
+    controller.jump_to(150.);
+    tree.layout(constraints).unwrap();
+    let confirmed_offset = controller.offset();
+    let confirmed = tree.element_with_key(&Key::Value(4)).unwrap();
+    controller.jump_to(2_000.);
+    tree.layout(constraints).unwrap();
+    assert!(!tree.element_exists(confirmed));
+    controller.jump_to(confirmed_offset);
+    tree.layout(constraints).unwrap();
+    assert_eq!(controller.offset(), confirmed_offset);
+    let (_, _, _, _, dump) = snapshot(&mut tree, &controller, root);
+    assert!(dump.contains("row4"));
+    assert_eq!(
+        hit_element(&tree, Offset::new(50., 30.)),
+        tree.element_with_key(&Key::Value(4))
+    );
+}
+
+#[test]
+fn offscreen_transfers_are_provisional_until_materialized_or_seeded() {
+    for seeded in [false, true] {
+        let controller = ScrollController::new();
+        let mut old_heights = vec![48.; 100];
+        old_heights[..10].fill(80.);
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(bare_labeled_view(
+                &controller,
+                &old_heights,
+                &base_keys(100),
+            ))
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 800.)))
+            .unwrap();
+        let constraints = Constraints::tight(Size::new(100., 100.));
+        tree.layout(constraints).unwrap();
+        controller.jump_to(4_000.);
+        tree.layout(constraints).unwrap();
+        assert!(tree.element_with_key(&Key::Value(0)).is_none());
+        assert_eq!(controller.max_offset(), 10. * 80. + 90. * 48. - 100.);
+
+        let prefix_builds = Rc::new(Cell::new(0));
+        let observed = prefix_builds.clone();
+        let view = incular_widgets::ListView::builder(100, move |index| {
+            if index < 10 {
+                observed.set(observed.get() + 1);
+            }
+            labeled_row(if index < 10 { 20. } else { 48. }, 1_000 + index as u64)
+        })
+        .controller(controller.clone());
+        let view = if seeded {
+            view.item_extent_builder(|index| if index < 10 { 20. } else { 48. })
+        } else {
+            view
+        };
+        tree.update(root, view.into()).unwrap();
+        tree.layout(constraints).unwrap();
+        assert_eq!(prefix_builds.get(), 0, "replacement stays lazy");
+        assert_eq!(controller.offset(), 4_000.);
+        let prefix_estimate = if seeded { 20. } else { 80. };
+        assert_eq!(
+            controller.max_offset(),
+            10. * prefix_estimate + 90. * 48. - 100.
+        );
+
+        controller.jump_to(0.);
+        tree.layout(constraints).unwrap();
+        assert_eq!(prefix_builds.get(), 10);
+        assert_eq!(controller.max_offset(), 10. * 20. + 90. * 48. - 100.);
+        let (_, _, paint, _, dump) = snapshot(&mut tree, &controller, root);
+        assert!(paint.contains(&Offset::new(0., 20.)));
+        assert!(dump.contains("row1000"));
+        assert_eq!(
+            hit_element(&tree, Offset::new(50., 10.)),
+            tree.element_with_key(&Key::Value(1_000))
+        );
+    }
 }
 
 #[test]

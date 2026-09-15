@@ -189,9 +189,8 @@ pub struct Diagnostics {
     pub key_map_entries: u64,
     /// Keyed lookups against those maps.
     pub key_lookups: u64,
-    /// Rows examined by measurement transfer while adopting retained
-    /// extents. Bounded by measured rows, never logical length: a large
-    /// lazy replacement probes only its measured working set.
+    /// Chunk visits, slot inspections, and candidate rows in extent transfer.
+    /// Candidate rows additionally use logarithmic extent-index lookups.
     pub transfer_probes: u64,
     /// New elements mounted during reconciliation.
     pub elements_created: u64,
@@ -775,6 +774,7 @@ pub struct SliverViewportDiagnostics {
 struct ScrollBracket {
     member: GestureArenaMember,
     controller: ScrollController,
+    attachment: u64,
     physics: ScrollPhysics,
     end_velocity: Rc<Cell<Option<f32>>>,
     activity: Option<OwnedActivity>,
@@ -797,6 +797,7 @@ struct ScrollBracket {
 struct NestedDrive {
     element: ElementId,
     controller: ScrollController,
+    attachment: u64,
     axis: Axis,
     reverse: bool,
     physics: ScrollPhysics,

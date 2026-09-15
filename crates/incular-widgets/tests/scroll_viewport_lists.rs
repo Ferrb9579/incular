@@ -1552,11 +1552,7 @@ fn touch_drag_cancel_closes_bracket() {
 }
 
 #[test]
-fn touch_drag_replacement_rebrackets_stale_token() {
-    // Controller replacement mid-drag ends the open bracket through the
-    // tenure path; the next accepted move re-brackets the still-live
-    // gesture on the old controller, and release closes that — the
-    // replacement never gains activity from this stream.
+fn touch_drag_replacement_cancels_captured_tenure() {
     use incular_core::PointerPhase::{Down, Move, Up};
     use incular_scroll::ScrollNotificationType::{End, Start, Update};
     let controller = ScrollController::new();
@@ -1586,12 +1582,18 @@ fn touch_drag_replacement_rebrackets_stale_token() {
     .expect("update");
     tree.layout(Constraints::tight(Size::new(200., 100.)))
         .expect("layout");
+    let old_offset = controller.offset();
+    let new_lease = controller
+        .try_attach(incular_scroll::MetricOwner::of_tree(999))
+        .unwrap();
+    let new_activity = controller.start_owned_activity(incular_scroll::ActivityOrigin::Wheel);
     touch(&mut tree, 1, Offset::new(50., 74.), Move, 20);
     touch(&mut tree, 1, Offset::new(50., 74.), Up, 30);
-    assert_eq!(
-        events.borrow().as_slice(),
-        &[Start, Update, End, Start, Update, End]
-    );
+    assert_eq!(events.borrow().as_slice(), &[Start, Update, End, Start]);
+    assert_eq!(controller.offset(), old_offset);
+    assert!(new_activity.is_current());
+    new_activity.finish();
+    drop(new_lease);
     assert_eq!(replacement.offset(), 0.);
     assert!(replacement.begin_activity());
     assert!(replacement.end_activity());
@@ -3237,6 +3239,46 @@ fn nested_drag_outer_start_listener_jump_keeps_one_tenure() {
         &[Update, Start, Update, Update, End]
     );
     assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+}
+
+#[test]
+fn nested_drag_outer_start_takeover_survives_stream_release() {
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::{
+        ActivityOrigin,
+        ScrollNotificationType::{End, Start, Update},
+    };
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    inner.jump_to(150.);
+    let token = Rc::new(RefCell::new(None));
+    let _takeover = outer.add_listener({
+        let outer = outer.clone();
+        let token = token.clone();
+        move |event| {
+            if event.kind == Start {
+                *token.borrow_mut() = Some(outer.start_owned_activity(ActivityOrigin::Wheel));
+            }
+            false
+        }
+    });
+    let (events, _guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(outer.offset(), 44.);
+    assert_eq!(*events.borrow(), vec![Start, Update, Update]);
+    assert!(token.borrow().as_ref().unwrap().is_current());
+    token.borrow_mut().take().unwrap().finish();
+    assert_eq!(*events.borrow(), vec![Start, Update, Update, End]);
 }
 
 /// Independent extent arithmetic for mutation tests: plain sums and

@@ -291,6 +291,20 @@ generational lifetime path.
 
 ## Lazy variable-extent slivers
 
+Replacing a variable-extent delegate may carry old positional extents as
+provisional estimates to avoid resetting unchanged content to the global
+fallback. This does not establish offscreen row identity or exact totals.
+Explicit extent seeds take precedence; reconciliation of reused elements and
+actual child measurement establish current sizes. Confirmed sizes survive cache
+eviction within that delegate. Freshly mounted rows discard unverified transfers
+before measuring. Applications needing exact offscreen totals should supply
+extent seeds.
+
+Transfer visits all extent-index chunks, scans slots only in chunks with recorded
+values, and performs logarithmic index lookups for those values. Diagnostics count
+chunk visits, slot inspections, and candidate rows separately from lookup cost;
+the transfer is not claimed to be independent of logical list length.
+
 `SliverList` uses the same retained viewport for rows whose height is known
 only after layout. It starts with an estimate, records exact extents as cached
 children are laid out, and compensates the visible anchor when rows above it

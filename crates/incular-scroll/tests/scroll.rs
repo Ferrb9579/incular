@@ -523,3 +523,16 @@ fn nested_coordinator_transfers_only_unconsumed_delta_to_the_outer_viewport() {
     coordinator.cancel();
     assert_eq!(coordinator.active_index(), None);
 }
+#[test]
+fn recorded_extent_enumeration_accounts_for_sparse_chunk_traversal() {
+    for (length, chunks) in [(1_024, 4), (1_048_576, 4_096)] {
+        let index = MeasuredExtentIndex::new(length, 48.);
+        index.set_measured_extent(3, 40.);
+        index.set_measured_extent(9, 80.);
+        let before = index.metrics();
+        assert_eq!(index.measured_indices(), vec![3, 9]);
+        let after = index.metrics();
+        assert_eq!(after.enumeration_chunks - before.enumeration_chunks, chunks);
+        assert_eq!(after.enumeration_slots - before.enumeration_slots, 256);
+    }
+}
