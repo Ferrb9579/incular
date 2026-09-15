@@ -1992,11 +1992,12 @@ impl RenderSliver for SequenceRenderSliver {
 pub(crate) fn transfer_retained_sliver_state(
     fresh: &mut dyn RenderSliver,
     retained: &mut dyn RenderSliver,
+    probes: &mut u64,
 ) {
     if adopt_natural_header_state(fresh, retained)
         || adopt_box_extent(fresh, retained)
         || adopt_floating_header_state(fresh, retained)
-        || adopt_variable_extent_measurements(fresh, retained)
+        || adopt_variable_extent_measurements(fresh, retained, probes)
     {
         return;
     }
@@ -2009,15 +2010,15 @@ pub(crate) fn transfer_retained_sliver_state(
             .and_then(|any| any.downcast_mut::<SequenceRenderSliver>()),
     ) {
         for (fresh_child, retained_child) in fresh.children.iter().zip(retained.children.iter()) {
-            let mut fresh = fresh_child.borrow_mut();
-            let mut retained = retained_child.borrow_mut();
-            transfer_retained_sliver_state(&mut **fresh, &mut **retained);
+            let mut fresh_sliver = fresh_child.borrow_mut();
+            let mut retained_sliver = retained_child.borrow_mut();
+            transfer_retained_sliver_state(&mut **fresh_sliver, &mut **retained_sliver, probes);
         }
         return;
     }
-    transfer_single_inner_sliver_state::<PaddingRenderSliver>(fresh, retained);
-    transfer_single_inner_sliver_state::<WidgetWrapRenderSliver>(fresh, retained);
-    transfer_single_inner_sliver_state::<OverlapAbsorberRenderSliver>(fresh, retained);
+    transfer_single_inner_sliver_state::<PaddingRenderSliver>(fresh, retained, probes);
+    transfer_single_inner_sliver_state::<WidgetWrapRenderSliver>(fresh, retained, probes);
+    transfer_single_inner_sliver_state::<OverlapAbsorberRenderSliver>(fresh, retained, probes);
 }
 
 fn adopt_natural_header_state(
@@ -2050,6 +2051,7 @@ fn adopt_natural_header_state(
 fn adopt_variable_extent_measurements(
     fresh: &mut dyn RenderSliver,
     retained: &mut dyn RenderSliver,
+    probes: &mut u64,
 ) -> bool {
     let (Some(fresh), Some(retained)) = (
         fresh
@@ -2064,14 +2066,20 @@ fn adopt_variable_extent_measurements(
     if retained.index.measured_count() == 0 {
         return false;
     }
-    let len = fresh.index.len().min(retained.index.len());
+    // Iterate retained-measured rows only: unmeasured slots carry
+    // nothing to adopt, so a full logical-list scan would visit every
+    // row to learn nothing. Fresh seeds (Some) always win; only bare
+    // fallbacks (None) accept a carried measurement. Carried slots are
+    // recorded so reconciliation can later tell transferred guesses
+    // apart from explicit seeds. This transfer only shields totals and
+    // first paint; per-row truth is established post-mapping below.
+    let fresh_len = fresh.index.len();
     let mut adopted = false;
-    for index in 0..len {
-        // Fresh seeds (Some) always win; only bare fallbacks (None)
-        // accept a carried measurement. Carried slots are recorded so
-        // reconciliation can later tell transferred guesses apart from
-        // explicit seeds. This transfer only shields totals and first
-        // paint; per-row truth is established post-mapping below.
+    for index in retained.index.measured_indices() {
+        if index >= fresh_len {
+            break;
+        }
+        *probes += 1;
         if fresh.index.measured_extent(index).is_some() {
             continue;
         }
@@ -2254,6 +2262,7 @@ impl SingleInnerSliver for OverlapAbsorberRenderSliver {
 fn transfer_single_inner_sliver_state<T: SingleInnerSliver + 'static>(
     fresh: &mut dyn RenderSliver,
     retained: &mut dyn RenderSliver,
+    probes: &mut u64,
 ) {
     if let (Some(fresh), Some(retained)) = (
         fresh.as_any_mut().and_then(|any| any.downcast_mut::<T>()),
@@ -2263,7 +2272,7 @@ fn transfer_single_inner_sliver_state<T: SingleInnerSliver + 'static>(
     ) {
         let mut fresh_inner = fresh.inner_cell().borrow_mut();
         let mut retained_inner = retained.inner_cell().borrow_mut();
-        transfer_retained_sliver_state(&mut **fresh_inner, &mut **retained_inner);
+        transfer_retained_sliver_state(&mut **fresh_inner, &mut **retained_inner, probes);
     }
 }
 
@@ -2345,7 +2354,7 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
         true
     }
 
-    fn adopt_compatible_state(&self, previous: &dyn SliverViewportDelegate) {
+    fn adopt_compatible_state(&self, previous: &dyn SliverViewportDelegate, probes: &mut u64) {
         let Some(previous) = previous
             .as_any()
             .and_then(|any| any.downcast_ref::<SequenceViewportDelegate>())
@@ -2357,7 +2366,7 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
         for (fresh_child, retained_child) in fresh.children.iter().zip(retained.children.iter()) {
             let mut fresh_sliver = fresh_child.borrow_mut();
             let mut retained_sliver = retained_child.borrow_mut();
-            transfer_retained_sliver_state(&mut **fresh_sliver, &mut **retained_sliver);
+            transfer_retained_sliver_state(&mut **fresh_sliver, &mut **retained_sliver, probes);
         }
     }
 }

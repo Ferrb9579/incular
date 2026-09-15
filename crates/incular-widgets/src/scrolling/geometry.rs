@@ -182,7 +182,9 @@ pub(crate) trait SliverViewportDelegate {
     /// Inherits compatible retained sliver state (validated measurements,
     /// reversal tracking) from the delegate this one replaces. The default is
     /// a no-op so custom delegates keep existing replacement semantics.
-    fn adopt_compatible_state(&self, _previous: &dyn SliverViewportDelegate) {}
+    /// `probes` counts rows examined while adopting, so callers can
+    /// prove the work stays proportional to measured rows.
+    fn adopt_compatible_state(&self, _previous: &dyn SliverViewportDelegate, _probes: &mut u64) {}
     /// Invalidates one viewport-scoped child's retained measurement after a
     /// content rebuild below it. Returns whether a sliver was found to
     /// notify; the default reports none.

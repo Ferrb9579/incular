@@ -1462,6 +1462,41 @@ fn transfer_replacement_content_revalidates_coherently() {
 }
 
 #[test]
+fn transfer_large_lazy_replacement_probes_only_measured_rows() {
+    // A 100k-row bare list measures only its materialized window;
+    // replacing its descriptor must not visit every logical row.
+    // Transfer probes stay proportional to the measured working set
+    // (a full logical scan would read ~100k rows here).
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let view = |controller: &ScrollController| {
+        CustomScrollView::new(vec![Box::new(SliverList::builder(100_000, |index| {
+            Widget::box_(Size::new(80., 40.), Color::WHITE).with_key(Key::Value(index as u64))
+        })) as Box<dyn Sliver>])
+        .controller(controller.clone())
+        .into()
+    };
+    let root = tree.mount(view(&controller)).unwrap();
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let settled_max = controller.max_offset();
+    let settled_kids = tree.children(root).unwrap().len();
+    assert!(settled_kids < 100, "large list stays lazy");
+    let before = tree.diagnostics();
+    tree.update(root, view(&controller)).expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let after = tree.diagnostics();
+    assert!(
+        after.transfer_probes - before.transfer_probes < 1_000,
+        "transfer visits measured rows, not logical rows"
+    );
+    assert_eq!(controller.max_offset(), settled_max);
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.children(root).unwrap().len(), settled_kids);
+}
+
+#[test]
 fn dynamic_duplicate_widget_keys_are_rejected_without_aliasing() {
     // Old keyed children [7, 9], desired widget keys [9, 9]: the first
     // desired child moves old 9, and the positional lookup for the

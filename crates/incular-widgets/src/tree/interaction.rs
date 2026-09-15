@@ -319,11 +319,23 @@ impl WidgetTree {
         (callbacks, end_velocity)
     }
 
-    /// Scrollable viewports from `element` outward, innermost first: the
-    /// element itself when it renders one, then each scrollable
-    /// ancestor. Each entry carries the viewport element with the
-    /// controller, axis, reversal, and physics captured for the stream;
-    /// entry zero is the innermost viewport that owns the gesture.
+    /// Scrollable viewports from `element` outward holding the live
+    /// lease for the controller they render, innermost first: the
+    /// element itself when it renders one under a live lease, then
+    /// each scrollable ancestor holding its own. Each entry carries
+    /// the viewport element with the controller, axis, reversal, and
+    /// physics captured for the stream; entry zero is the innermost
+    /// viewport that owns the gesture. A render merely referencing a
+    /// controller drives nothing: successful attachment rules forbid
+    /// live sharing (a second viewport claiming an attached controller
+    /// fails layout with `DuplicateScrollAttachment`), so the lease
+    /// check drops failed-claim renders, unlaid-out viewports, and
+    /// mid-replacement transients before they can own or join. Each
+    /// live lease is unique to one element, so each controller appears
+    /// at most once and one position record never takes two drives
+    /// from a single sample. Every laid-out viewport of a successful
+    /// configuration holds its lease, so this changes nothing for
+    /// them.
     fn scrollable_viewport_chain(
         &self,
         mut element: ElementId,
@@ -340,10 +352,12 @@ impl WidgetTree {
                     axis,
                     reverse,
                     physics,
-                } => {
+                } if self.viewport_lease_live(element, controller) => {
                     chain.push((element, controller.clone(), *axis, *reverse, *physics));
                 }
-                RenderKind::SliverViewport { config } => {
+                RenderKind::SliverViewport { config }
+                    if self.viewport_lease_live(element, &config.controller) =>
+                {
                     chain.push((
                         element,
                         config.controller.clone(),
@@ -360,6 +374,23 @@ impl WidgetTree {
             element = parent;
         }
         chain
+    }
+
+    /// Whether `element` holds this tree's live attachment for
+    /// `controller`: one of its stored leases names the controller's
+    /// current attachment identity. Attachment identities are never
+    /// reused, so an identity match is the liveness proof — a stale
+    /// lease from a replaced-away generation never matches, and a
+    /// failed claim stores nothing to match with.
+    fn viewport_lease_live(&self, element: ElementId, controller: &ScrollController) -> bool {
+        let Some(live) = controller.attachment_id() else {
+            return false;
+        };
+        self.scroll_attachments.get(&element).is_some_and(|leases| {
+            leases
+                .iter()
+                .any(|lease| lease.controller() == controller && lease.id() == live)
+        })
     }
 
     /// The controller currently driving `element`'s viewport, if the
@@ -1020,12 +1051,19 @@ impl WidgetTree {
     /// Activities open lazily per participating controller, mirroring
     /// [`open_scroll_bracket`](Self::open_scroll_bracket): when another
     /// driver owns the controller the stream drives under it and takes
-    /// nothing. Dead links — unmounted elements or replaced viewports
-    /// resolving to a different controller — drop with silent cleanup
-    /// while the remainder flows past them to the next live ancestor.
-    /// Nothing here is held across notifications: every apply below
-    /// can reenter the tree, so descriptors are snapshotted and every
-    /// bracket touch is a short borrow.
+    /// nothing. Each controller appears at most once — the chain
+    /// builder keeps only viewports holding the live lease, and each
+    /// live lease is unique — so one record never takes two drives
+    /// from one sample. Dead links —
+    /// unmounted elements or replaced viewports resolving to a
+    /// different controller — drop while the remainder flows past them
+    /// to the next live ancestor: the drop finishes the stream-opened
+    /// tenure when still current (its `End` lands on the detached
+    /// controller the stream owned) and stays silent only when the
+    /// token already went stale elsewhere. Nothing here is held across
+    /// notifications: every apply below can reenter the tree, so
+    /// descriptors are snapshotted and every bracket touch is a short
+    /// borrow.
     fn route_nested_remainder(&mut self, key: GestureArenaKey) {
         struct Job {
             element: ElementId,
@@ -1099,10 +1137,12 @@ impl WidgetTree {
         }
     }
 
-    /// Drops one press-time nested link, closing its stream-opened
-    /// activity if still current. Stale tokens stay silent, so a link
-    /// whose viewport already detached its tenure through the normal
-    /// path cleans up without a sound.
+    /// Drops one press-time nested link. The distinction is the token,
+    /// not the link: a still-current token owns its tenure, so
+    /// finishing it emits `End` — even on a detached controller, which
+    /// is correct because the stream opened that tenure. A stale token
+    /// (a takeover closed the bracket elsewhere) finishes silently;
+    /// the drop then only forgets the descriptor.
     fn drop_nested_link(&mut self, key: GestureArenaKey, element: ElementId) {
         let activity = self
             .scroll_brackets

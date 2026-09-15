@@ -286,6 +286,30 @@ impl MeasuredExtentIndex {
             .map(|chunk| chunk.measured)
             .sum()
     }
+    /// Indices holding recorded measurements, in order. Wholly
+    /// unmeasured chunks are skipped without visiting their rows, so
+    /// transfer and audit work stays proportional to measured rows
+    /// rather than logical length. Framework-internal.
+    #[doc(hidden)]
+    pub fn measured_indices(&self) -> Vec<usize> {
+        let state = self.state.borrow();
+        let mut out = Vec::new();
+        let mut base = 0;
+        for chunk in &state.chunks {
+            if chunk.measured == 0 {
+                base += chunk.values.len();
+                continue;
+            }
+            for (local, value) in chunk.values.iter().enumerate() {
+                if value.is_some() {
+                    out.push(base + local);
+                }
+            }
+            base += chunk.values.len();
+        }
+        out
+    }
+
     /// Changes whenever an extent or the logical structure changes.
     #[must_use]
     pub fn revision(&self) -> u64 {

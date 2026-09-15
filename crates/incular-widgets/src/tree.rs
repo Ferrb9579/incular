@@ -189,6 +189,10 @@ pub struct Diagnostics {
     pub key_map_entries: u64,
     /// Keyed lookups against those maps.
     pub key_lookups: u64,
+    /// Rows examined by measurement transfer while adopting retained
+    /// extents. Bounded by measured rows, never logical length: a large
+    /// lazy replacement probes only its measured working set.
+    pub transfer_probes: u64,
     /// New elements mounted during reconciliation.
     pub elements_created: u64,
     /// Existing elements reused (compatible match) during reconciliation.

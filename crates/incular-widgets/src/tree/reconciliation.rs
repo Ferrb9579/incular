@@ -512,7 +512,8 @@ impl WidgetTree {
             RenderKind::SliverViewport { config: next },
         ) = (&old_kind, &new_kind)
         {
-            next.delegate.adopt_compatible_state(&*previous.delegate);
+            next.delegate
+                .adopt_compatible_state(&*previous.delegate, &mut self.diagnostics.transfer_probes);
         }
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);

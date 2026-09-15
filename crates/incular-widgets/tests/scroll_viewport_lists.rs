@@ -3046,9 +3046,10 @@ fn nested_drag_unmount_inner_midstream_completes_coherently() {
 fn nested_drag_outer_replacement_stops_routing() {
     // Swapping the outer viewport's controller between moves detaches
     // the old tenure through the replacement path; the press-time link
-    // resolves to a different controller, so it drops with silent
-    // cleanup instead of resurrecting activity on the detached handle
-    // — the remainder stops, the inner viewport keeps driving.
+    // resolves to a different controller, so the link drops — closing
+    // the stream's tenure on the detached handle with its End — instead
+    // of resurrecting activity there. The remainder stops, the inner
+    // viewport keeps driving.
     use incular_core::PointerPhase::{Down, Move, Up};
     use incular_scroll::ScrollNotificationType::{End, Start};
     let outer = ScrollController::new();
@@ -3085,6 +3086,155 @@ fn nested_drag_outer_replacement_stops_routing() {
             .filter(|kind| **kind == End)
             .count(),
         1
+    );
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+}
+
+#[test]
+fn nested_drag_shared_controller_rejected_and_inert() {
+    // Attachment rules forbid live controller sharing: pointing both
+    // viewports at the inner controller fails layout with
+    // DuplicateScrollAttachment, and the failed pass leaves the
+    // replaced renders without geometry — the press resolves to no
+    // hit, so no stream opens, nothing moves, and no tenure opens on
+    // either record. The rejected outer viewport carries bouncing
+    // physics so that any path reaching it would overshoot the bound
+    // and report Overscroll instead of clamping: staying exactly
+    // clamped with no notifications proves only lease holders ever
+    // drive, which the chain's live-lease check enforces
+    // structurally. Recovering with distinct controllers then drives
+    // normally, proving the rejected pass stuck nothing.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    let inner_scroll: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(inner.clone())
+            .into();
+    let inner_sized: Widget =
+        SizedBox::from_dimensions(Some(200.), Some(150.), Some(inner_scroll)).into();
+    let outer_content = Column::new(vec![
+        Widget::box_(Size::new(200., 40.), Color::WHITE),
+        inner_sized,
+    ]);
+    let outer_scroll: Widget = SingleChildScrollView::new(outer_content)
+        .controller(inner.clone())
+        .physics(ScrollPhysics::clamping().bouncing())
+        .into();
+    tree.update(
+        root,
+        Column::new(vec![{
+            let sized: Widget =
+                SizedBox::from_dimensions(Some(200.), Some(100.), Some(outer_scroll)).into();
+            sized
+        }])
+        .into(),
+    )
+    .expect("update");
+    let error = tree
+        .layout(Constraints::tight(Size::new(200., 100.)))
+        .unwrap_err();
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert!(owner.is_some());
+            assert_ne!(owner, Some(attempted));
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    let hit = tree.dispatch_gesture(incular_gestures::PointerEvent {
+        pointer: 1,
+        position: Offset::new(50., 70.),
+        phase: Down,
+        time: std::time::Instant::now(),
+    });
+    assert!(hit.is_none(), "failed pass resolves no hit");
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    assert_eq!(inner.offset(), 150., "shared record never driven");
+    assert_eq!(outer.offset(), 0., "detached handle never moves");
+    assert!(inner_events.borrow().is_empty());
+    assert!(outer_events.borrow().is_empty());
+    // Recovery with distinct controllers drives normally: inner stays
+    // pinned while the full spill lands on the outer under one tenure
+    // each — the rejected pass stuck nothing.
+    tree.update(root, nested_basic_viewports(outer.clone(), inner.clone()))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 3_000);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 3_010);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 3_020);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 5_000);
+    assert_eq!(inner.offset(), 150.);
+    assert_eq!(outer.offset(), 44.);
+    assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Start, Update, Update, End]
+    );
+}
+#[test]
+fn nested_drag_outer_start_listener_jump_keeps_one_tenure() {
+    // An application Start listener that repositions the outer
+    // viewport mid-drag takes nothing: jump_to emits Update only, so
+    // the stream's still-current tenure survives the jump and the
+    // spill keeps driving under it. One Start, one End, and the final
+    // offset composes the jump with the remaining spill exactly.
+    use incular_core::PointerPhase::{Down, Move, Up};
+    use incular_scroll::ScrollNotificationType::{End, Start, Update};
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        nested_basic_viewports(outer.clone(), inner.clone()),
+        200.,
+        100.,
+    );
+    assert!(inner.jump_to(150.), "inner pinned at its bound");
+    assert!(outer.jump_to(90.), "outer pinned at its bound");
+    let _takeover = outer.add_listener({
+        let outer = outer.clone();
+        move |notification| {
+            if notification.kind == Start {
+                outer.jump_to(0.);
+            }
+            false
+        }
+    });
+    let (inner_events, _inner_guard) = listen(&inner);
+    let (outer_events, _outer_guard) = listen(&outer);
+    touch(&mut tree, 1, Offset::new(50., 70.), Down, 0);
+    touch(&mut tree, 1, Offset::new(50., 48.), Move, 10);
+    touch(&mut tree, 1, Offset::new(50., 26.), Move, 20);
+    touch(&mut tree, 1, Offset::new(50., 26.), Up, 2_000);
+    // First spill opens the outer tenure: the listener jumps 90 -> 0,
+    // then the same sample drives 0 -> 22 and the second spill drives
+    // 22 -> 44 under the undisturbed tenure. The jump's Update sorts
+    // before Start in this log because listeners run in subscription
+    // order: the reentrant jump completes before the recorder observes
+    // the Start that caused it.
+    assert_eq!(outer.offset(), 44.);
+    assert_eq!(
+        outer_events.borrow().as_slice(),
+        &[Update, Start, Update, Update, End]
     );
     assert_eq!(inner_events.borrow().as_slice(), &[Start, End]);
 }
