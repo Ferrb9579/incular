@@ -313,12 +313,10 @@ pub(super) struct VariableExtentRenderSliver {
     pub(super) index: MeasuredExtentIndex,
     pub(super) builder: Rc<dyn Fn(usize) -> Widget>,
     pub(super) widgets: HashMap<usize, Widget>,
-    /// Slots the last compatible-state transfer wrote. Transfer runs at
-    /// descriptor-update time, before element reconciliation establishes
-    /// row identity; reconciliation consults this set to tell
-    /// transferred guesses apart from explicit seeds. Per-delegate
-    /// generation: a fresh delegate starts empty, and entries are only
-    /// ever read for fresh mounts of that same generation.
+    /// Slots the last compatible-state transfer wrote without
+    /// established identity. Reconciliation reads this set to tell
+    /// transferred guesses apart from explicit seeds; entries belong
+    /// to this delegate generation only.
     pub(super) transferred: RefCell<HashSet<usize>>,
 }
 
@@ -2067,12 +2065,11 @@ fn adopt_variable_extent_measurements(
         return false;
     }
     // Iterate retained-measured rows only: unmeasured slots carry
-    // nothing to adopt, so a full logical-list scan would visit every
-    // row to learn nothing. Fresh seeds (Some) always win; only bare
-    // fallbacks (None) accept a carried measurement. Carried slots are
-    // recorded so reconciliation can later tell transferred guesses
-    // apart from explicit seeds. This transfer only shields totals and
-    // first paint; per-row truth is established post-mapping below.
+    // nothing to adopt. Fresh seeds always win; only bare fallbacks
+    // accept a carried measurement, recorded so reconciliation can
+    // tell transferred guesses apart from explicit seeds. This
+    // transfer only shields totals and first paint; per-row truth is
+    // established post-mapping below.
     let fresh_len = fresh.index.len();
     let mut adopted = false;
     for index in retained.index.measured_indices() {
@@ -2099,13 +2096,11 @@ struct VariableSlot {
     transferred: bool,
 }
 
-/// Resolves a viewport-scoped child to its variable-extent slot:
-/// the shared index, the sliver-local row, and whether the last
-/// transfer wrote that slot without established identity. Descends
-/// sequences by scope and through transparent single-inner wrappers
-/// (same set as the transfer helper). Shared borrows only; the
-/// cloned index shares state. Returns None for non-variable shapes,
-/// which manage their own measurements.
+/// Resolves a viewport-scoped child to its variable-extent slot: the
+/// shared index, the sliver-local row, and whether the last transfer
+/// wrote that slot. Descends sequences by scope and through the same
+/// transparent wrappers the transfer helper crosses. None for
+/// non-variable shapes, which manage their own measurements.
 fn variable_slot_for_child(
     delegate: &dyn SliverViewportDelegate,
     child: SliverChildId,
@@ -2188,7 +2183,7 @@ pub(crate) fn invalidate_transferred_measurement(
 
 /// Adopts a measured box extent so replacing a viewport descriptor does not
 /// flash the lazy default and spuriously move the scroll range. Pinning is
-/// presentation-only; the measured extent transfers regardless of it.
+/// presentation-only; the recorded `measured_extent` transfers regardless.
 fn adopt_box_extent(fresh: &mut dyn RenderSliver, retained: &mut dyn RenderSliver) -> bool {
     let (Some(fresh), Some(retained)) = (
         fresh

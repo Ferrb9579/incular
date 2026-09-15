@@ -833,11 +833,10 @@ impl WidgetTree {
                 GeneratedChildIdentity::Sliver(format!("{key:?}"))
             })?;
         // Identity-established measurements: reused elements carry
-        // their retained size into previously unseeded slots, and
-        // fresh mounts demote transferred guesses without established
-        // identity. Fresh seeds always stand. Reports whether any
-        // element moved, which suppresses this pass's anchor
-        // correction (pixels hold across structural edits).
+        // their retained size into unseeded slots; fresh mounts demote
+        // transferred guesses, fresh seeds always stand. Reports
+        // whether any element moved, suppressing this pass's anchor
+        // correction so pixels hold across structural edits.
         let delegate: &dyn crate::scrolling::SliverViewportDelegate = &*config.delegate;
         let mut mapping_changed = false;
         for (position, (child, origin)) in reconciled
@@ -1011,11 +1010,10 @@ impl WidgetTree {
 
         for DesiredDynamicChild { key, widget } in desired {
             let new_position = next_children.len();
-            // Positional path: the generated key names exactly one old
-            // element, which must be unconsumed. Sibling keys are
-            // unique (checked above), so a consumed candidate here is
-            // unreachable; the filter still enforces one-element-once
-            // structurally, falling through instead of aliasing.
+            // Positional path: the generated key names one old element,
+            // which must be unconsumed since sibling keys are unique.
+            // The filter enforces one-element-once structurally,
+            // falling through instead of aliasing.
             let (child, origin) = if let Some(candidate) = existing
                 .get(&key)
                 .copied()
@@ -1088,13 +1086,12 @@ impl WidgetTree {
     }
 
     /// Pops an unconsumed old element for a keyed desired widget from
-    /// the transaction-local index. Popping consumes structurally, so a
-    /// popped element is never handed out again; each pop probes at
-    /// most one candidate through [`compatible`](Self::compatible),
-    /// keeping lookup work proportional to consumed elements rather
-    /// than repeated scans. Same-key candidates of another type
-    /// pop-and-discard: sibling keys are unique, so a discarded
-    /// element has no other claimant and unmounts below.
+    /// the transaction-local index. Popping consumes structurally, so
+    /// an element is never handed out twice; each popped candidate is
+    /// vetted through [`compatible`](Self::compatible), keeping lookup
+    /// work proportional to consumed elements. Same-key candidates of
+    /// another type pop-and-discard — sibling keys are unique, so a
+    /// discarded element unmounts below.
     fn take_keyed_move(
         &mut self,
         index: &mut HashMap<Key, Vec<ElementId>>,

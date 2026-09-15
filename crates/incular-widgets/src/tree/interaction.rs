@@ -320,22 +320,15 @@ impl WidgetTree {
     }
 
     /// Scrollable viewports from `element` outward holding the live
-    /// lease for the controller they render, innermost first: the
-    /// element itself when it renders one under a live lease, then
-    /// each scrollable ancestor holding its own. Each entry carries
-    /// the viewport element with the controller, axis, reversal, and
-    /// physics captured for the stream; entry zero is the innermost
-    /// viewport that owns the gesture. A render merely referencing a
-    /// controller drives nothing: successful attachment rules forbid
-    /// live sharing (a second viewport claiming an attached controller
-    /// fails layout with `DuplicateScrollAttachment`), so the lease
-    /// check drops failed-claim renders, unlaid-out viewports, and
-    /// mid-replacement transients before they can own or join. Each
-    /// live lease is unique to one element, so each controller appears
-    /// at most once and one position record never takes two drives
-    /// from a single sample. Every laid-out viewport of a successful
-    /// configuration holds its lease, so this changes nothing for
-    /// them.
+    /// lease for the controller they render, innermost first; entry
+    /// zero owns the gesture. A render merely referencing a
+    /// controller drives nothing: attachment rules forbid live sharing
+    /// (a second claim fails with `DuplicateScrollAttachment`), so the
+    /// lease check drops failed-claim renders, unlaid-out viewports,
+    /// and mid-replacement transients. Each live lease is unique, so
+    /// each controller appears at most once and one record never takes
+    /// two drives from a sample. Successful configurations always hold
+    /// their leases, so this changes nothing for them.
     fn scrollable_viewport_chain(
         &self,
         mut element: ElementId,
@@ -378,10 +371,8 @@ impl WidgetTree {
 
     /// Whether `element` holds this tree's live attachment for
     /// `controller`: one of its stored leases names the controller's
-    /// current attachment identity. Attachment identities are never
-    /// reused, so an identity match is the liveness proof — a stale
-    /// lease from a replaced-away generation never matches, and a
-    /// failed claim stores nothing to match with.
+    /// current attachment identity. Identities are never reused, so a
+    /// match proves liveness; stale leases and failed claims never match.
     fn viewport_lease_live(&self, element: ElementId, controller: &ScrollController) -> bool {
         let Some(live) = controller.attachment_id() else {
             return false;
@@ -1051,9 +1042,8 @@ impl WidgetTree {
     /// Activities open lazily per participating controller, mirroring
     /// [`open_scroll_bracket`](Self::open_scroll_bracket): when another
     /// driver owns the controller the stream drives under it and takes
-    /// nothing. Each controller appears at most once — the chain
-    /// builder keeps only viewports holding the live lease, and each
-    /// live lease is unique — so one record never takes two drives
+    /// nothing. The chain holds only live-lease viewports, each
+    /// controller at most once, so one record never takes two drives
     /// from one sample. Dead links —
     /// unmounted elements or replaced viewports resolving to a
     /// different controller — drop while the remainder flows past them

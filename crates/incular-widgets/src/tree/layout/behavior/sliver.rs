@@ -230,13 +230,10 @@ impl WidgetTree {
                     )),
                 );
 
-                // Hygiene: establish row identity (adopt true sizes,
-                // demote unaffiliated guesses) before any anchor is
+                // Hygiene: establish row identity before any anchor is
                 // taken, so the anchor never compares transferred
-                // guesses. Mapping without measuring; adopted positions
-                // take effect on the corrective layout below. Seeds the
-                // structural flag: keyed moves keep pixels for the
-                // whole call, while genuine refinements still correct.
+                // guesses. Seeds the structural flag: keyed moves keep
+                // pixels for the whole call, refinements still correct.
                 let mut structural = self.reconcile_sliver_children(id, &config, &sliver_layout)?;
                 sliver_layout = self.publish_sliver_attempt(
                     viewport_element,
@@ -315,12 +312,10 @@ impl WidgetTree {
                         );
                     }
                     // A structural layout keeps pixels: moved index names
-                    // now address different rows, so comparing them
-                    // would correct for a shift that is the edit
-                    // itself, not a measurement refinement. The flag is
-                    // sticky for the call because later passes see a
-                    // stable mapping; genuine refinements then correct
-                    // as before.
+                    // address different rows now, so comparing them would
+                    // correct for the edit itself, not a refinement. The
+                    // flag is sticky because later passes see a stable
+                    // mapping; genuine refinements then correct as before.
                     if !structural
                         && let Some((anchor_id, anchor_offset)) = anchor_before
                         && let Some(updated) = next_layout

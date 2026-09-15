@@ -2817,7 +2817,7 @@ a metric attachment):
 | nested drag, incompatible axis | skipped, never opened | cross-axis ancestors are transparent: no ownership taken, no events, remainder flows past |
 | nested drag, cancel | End on every opened tenure | propagated outer brackets close innermost-ancestor first, then the gesture's own; nothing flings |
 | nested drag, inner unmount | one End per opened tenure, then silence | stream prune closes every token; later moves and release stay silent |
-| nested drag, outer replacement | old link drops, remainder stops | replaced viewports resolve to a different controller: the press-time link drops with silent cleanup instead of driving the detached handle |
+| nested drag, outer replacement | old link drops, remainder stops | replaced viewports resolve to a different controller: the press-time link drops — finishing the stream's still-current tenure with its `End` on the detached handle (silent only when already stale) — instead of driving the detached handle |
 | fast release → fling | (silence at handoff) | token transfers with no End/Start churn; frames pump decayed motion with Updates until settle |
 | fling step with listener interference | own-tenure End, or silent stale drop | each step drives through the owned token with the commit snapshotted before `Update` delivery; a listener jump/bounds change closes the driver's own tenure without overwriting the new position; a listener takeover drops the stale driver silently; same-value jumps disturb nothing |
 | fling settle | End | decay under the minimum velocity closes the transferred bracket exactly once |
@@ -2856,11 +2856,13 @@ spring-math tests alone:
   time-tolerant runtime integration test.
 - Implemented (nested touch-drag remainder): the innermost drive's
   leftover physical motion routes outward along the accepted axis
-  through the press-time ancestor chain, each compatible viewport
-  applying its own physics via the existing consumed/unconsumed result
-  under its own lazily opened Drag activity; incompatible axes skip
-  transparently, dead (unmounted/replaced) links drop with silent
-  cleanup while the remainder flows past. The arithmetic invariant is
+   through the press-time ancestor chain, each compatible viewport
+   applying its own physics via the existing consumed/unconsumed result
+   under its own lazily opened Drag activity; incompatible axes skip
+   transparently, dead (unmounted/replaced) links drop while the
+   remainder flows past (the drop closes the stream's still-current
+   tenure with its `End`, staying silent only for already-stale
+   tokens). The arithmetic invariant is
   input displacement = sum(consumed) + final remainder, with each
   viewport's axis/reversal applied exactly once.
 - Still unsupported (separate policies, not implicit extensions):
@@ -3007,9 +3009,20 @@ retained sliver paths: insert/remove/reorder/resize mid-drag and
 shrink mid-fling keep model-exact offset/range with coherent
 paint/hit/semantics and exact activity completion; keyed sliver
 reorders move elements instead of rebuilding them; variable-extent
-replacements carry retained measurements only into bare-estimate
-slots (fresh seeds always win) so same-content updates never shift
-the offset on estimate noise.
+   replacements carry retained measurements only into bare-estimate
+   slots (fresh seeds always win) so same-content updates never shift
+   the offset on estimate noise. Review round: dynamic reconciliation
+   consumes each old element once (transaction-local keyed index with
+   pop-consume plus an upfront duplicate-key failure); measurement
+   transfer follows established row identity (reused elements adopt
+   true sizes, fresh mounts demote unaffiliated guesses); transfer
+   work stays proportional to measured rows (retained-measured
+   iteration with probe counting); the nested-drive chain admits only
+   viewports holding the live lease. Same-controller nesting cannot
+   occur through successful operation — the second claim fails — and
+   render-level duplicates stay inert (failed passes resolve no hit),
+   so each record drives at most once per sample under single-tenure
+   ownership. No new W5 gaps; the close below stands.
 
 ## W5 reconciliation — requirements review and close
 
