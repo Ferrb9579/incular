@@ -3142,6 +3142,83 @@ while repository-wide validation remains incomplete.
 Exit: keyboard/pointer/accessibility invoke the same action once; editing survives
 composition/undo/restoration; no stale focus/capture/semantic owner remains.
 
+First batch — entry points and authoritative owners (implemented):
+- IME events enter at `Runtime::handle_input(InputEvent::Ime)` and route in
+  `Runtime::handle_ime`; the retained `(field, controller)` composition owner
+  decides Commit/End targets. Text/range normalization stays in
+  `TextEditingController` (`set_preedit` clamps to the preedit string).
+- History lives in `UndoHistoryController` per focused field, fed by the
+  controller's single commit path; `ensure_text_history` swaps on controller
+  replacement. Borrow-then-dispatch holds in `update`, `notify_listeners`,
+  and every history mutation.
+- Semantic actions enter at `Runtime::dispatch_semantic_action` (native side
+  via `translate_action` plus `dispatch_accessibility_action`); eligibility
+  reuses the advertisement predicate `semantic_action_is_executable`, the
+  field editability owner, and `set_focus` as the single focus owner.
+- Teardown reuses current owners only: `set_focus`/`clear_focus_if_unmounted`
+  (focus plus capture plus composition cancel), unmount work (gesture
+  brackets, captures, leases, semantic ids), `dispose_window`/`shutdown`
+  (focus, histories, clients, scopes). No new registries or managers.
+
+Concrete defects fixed (each reproduced in analysis before changing code):
+- Commits after a focus move landed in the wrong editor while the old editor
+  kept a stale preedit; replacement, unmount, and editable-to-frozen
+  transitions orphaned preedit the same way. Fixed with the retained owner,
+  per-event validation, and one cleanup path writing only the owner's own
+  controller (runtime `frame.rs`).
+- Semantic Activate executed the built-in fallback on disabled buttons while
+  pointer, keyboard, and advertisement refused it. Fixed by gating the
+  fallback on the shared predicate (widgets `retained.rs`, runtime dispatch).
+
+Composition/history policies (specified, implementation already followed them):
+- Preedit set/clear, selection/caret moves, and the composing marker are
+  transient and never enter history; every committed text change is exactly
+  one step, with one committed composition collapsing to its single replace
+  step; any committed value change clears the transient overlay.
+- Redo clears on the next committed text change including after undo;
+  controller replacement starts fresh; reentrant listener edits commit
+  normally (newer wins, snapshots never restored over them); edits during
+  undo/redo dispatch absorb into current without creating steps.
+- No input-formatter layer exists: every edit funnels through `update()`.
+- Post-divergence IME events process as ownerless (attributed to the focused
+  field); the triggering event is never silently dropped nor specially routed.
+
+Behavior inspected and left unchanged (sound, documented where pinned):
+- Focus dispatch returning true (acceptance is `set_focus` running, the
+  single owner); SetText/SetSelection asymmetry (mutation editable-only,
+  selection controller-only — pointer and keyboard agree, including disabled
+  fields); scroll/increment/decrement callback-first with shared fallback
+  predicates; exactly-once activation through the single `activate_action`
+  root; detached nodes resolving to nothing via synchronous unmount pruning
+  plus generational arena ids; native translation gating on advertised
+  actions with stale-id rejection counters; undo histories surviving field
+  unmount per the controller-owned model.
+
+Remaining native-only evidence: IME client behavior across real platform
+keyboards (preedit/cancel sequencing, focus-change resets), screen-reader
+action delivery through AccessKit/mobile bridges, and host window-close
+ordering around in-flight gestures — retained logic pins the framework side
+only.
+
+Tests added but NOT executed (batch budget forbade all validation commands):
+runtime `text_input_gating.rs` (focus-move cancel plus commit retarget,
+direct commit, End cancel, controller-replacement cancel,
+shutdown-during-composition), runtime `undo.rs` (preedit transient plus
+cancel traceless, committed composition as one step, undo-then-edit clears
+redo, reentrant edit consistency), runtime `semantic_action_dispatch.rs`
+(enabled/disabled built-in Activate, disabled-field SetSelection,
+post-unmount refusal). A runtime dev-dependency on `incular-controls` was
+added for the button-gate test with the Cargo.lock edge hand-matched; the
+next cargo run heals the lockfile if the entries differ.
+
+Remaining W6 work (W6 stays open): execute the unexecuted tests plus full
+gates; multi-contact arbitration and captured-pointer cleanup across popup,
+route, and window teardown at runtime level; semantic bounds/checked-state
+and stable-id behavior under structural edits; same-action-once across
+pointer, keyboard, and accessibility for representative controls beyond
+buttons and text fields; composition surviving restoration; reentrant
+listener/validator coverage per item 4.
+
 ## W7 — Controls and Material as presentation layers
 
 1. Inventory exported control/Material fields against W3's ledger, including

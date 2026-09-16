@@ -247,6 +247,24 @@ fn ime_controller_replacement_cancels_composition() {
 }
 
 #[test]
+fn shutdown_during_composition_cancels_and_clears_focus() {
+    let controller = TextEditingController::with_text("ab");
+    let mut runtime = mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
+        text: "xy".into(),
+        selection: None,
+    }));
+    assert_eq!(controller.preedit().as_deref(), Some("xy"));
+    // Window close retires focus through the single focus owner, which
+    // cancels the open composition on its own editor: no commit lands,
+    // no stale preedit survives, and no focus remains.
+    runtime.shutdown();
+    assert_eq!(controller.preedit(), None);
+    assert_eq!(controller.text(), "ab");
+    assert_eq!(runtime.focused_element(), None);
+}
+
+#[test]
 fn cut_and_paste_follow_editability() {
     let controller = TextEditingController::with_text("hello");
     let mut runtime = mount_focused(controller.clone(), |field| {
