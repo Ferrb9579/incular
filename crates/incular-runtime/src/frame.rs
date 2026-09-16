@@ -740,7 +740,15 @@ impl Runtime {
     }
     /// Dispatches an owned semantic action through the same control state used
     /// by pointer and keyboard input. Native adapters queue these requests;
-    /// they never borrow mutable element storage.
+    /// they never borrow mutable element storage. Eligibility reuses the
+    /// existing owners: explicit semantic callbacks always execute;
+    /// built-in Activate additionally requires the advertisement predicate
+    /// (enabled button with a bound callback), matching the pointer and
+    /// keyboard paths, which never see a disabled button past their own
+    /// enabled gate. SetText requires an editable field while SetSelection
+    /// requires only a controller — selection stays available in read-only
+    /// and disabled fields on every input path. Focus acceptance is
+    /// `set_focus` running, the single focus owner for all paths.
     pub fn dispatch_semantic_action(
         &mut self,
         node: SemanticNodeId,
@@ -755,19 +763,22 @@ impl Runtime {
                 self.set_focus(Some(element));
                 true
             }
-            SemanticAction::Activate => self
-                .tree
-                .semantic_action_callback(element, incular_semantics::SemanticActionKind::Activate)
-                .map(|callback| {
+            SemanticAction::Activate => {
+                if let Some(callback) = self.tree.semantic_action_callback(
+                    element,
+                    incular_semantics::SemanticActionKind::Activate,
+                ) {
                     callback();
                     true
-                })
-                .or_else(|| {
+                } else if self.tree.semantic_activate_executable(element) {
                     self.tree
                         .action_for_element(element)
                         .map(|action| self.activate_action(action))
-                })
-                .unwrap_or(false),
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
             SemanticAction::SetText(text) => {
                 if !self.tree.text_field_is_editable(element) {
                     false

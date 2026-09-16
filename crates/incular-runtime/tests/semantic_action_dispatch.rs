@@ -10,8 +10,12 @@ use std::{cell::Cell, rc::Rc};
 use incular_config::Constraints;
 use incular_core::{Code, KeyboardEvent, KeyboardKey, NamedKey, Size};
 use incular_runtime::Runtime;
+use incular_controls::Button;
 use incular_semantics::{SemanticAction, SemanticActionKind, SemanticRole};
-use incular_widgets::{CallbackShortcuts, KeyboardListener, Semantics, Stack, Text, Widget};
+use incular_widgets::{
+    CallbackShortcuts, EditableText, KeyboardListener, Semantics, Stack, Text, Widget,
+    internal::TextEditingController,
+};
 
 fn arrow_listener(calls: Rc<Cell<u32>>) -> impl Fn(KeyboardEvent) -> bool {
     move |event| {
@@ -260,6 +264,138 @@ fn child_actions_and_sibling_survive_flag_toggle() {
     let arrow = KeyboardEvent::key_down(KeyboardKey::Named(NamedKey::ArrowRight), Code::ArrowRight);
     assert!(runtime.tree().dispatch_keyboard(Some(listener_el), arrow));
     assert_eq!(keys.get(), 1);
+}
+
+#[test]
+fn semantic_activate_respects_button_enabled_gate() {
+    let enabled_calls = Rc::new(Cell::new(0));
+    let disabled_calls = Rc::new(Cell::new(0));
+    let enabled_observed = enabled_calls.clone();
+    let disabled_observed = disabled_calls.clone();
+    let mut runtime = Runtime::new(
+        Stack::new([
+            Widget::from(
+                Button::builder()
+                    .child(Text::new("go"))
+                    .enabled(true)
+                    .on_click(move || enabled_observed.set(enabled_observed.get() + 1))
+                    .build(),
+            ),
+            Widget::from(
+                Button::builder()
+                    .child(Text::new("stop"))
+                    .enabled(false)
+                    .on_click(move || disabled_observed.set(disabled_observed.get() + 1))
+                    .build(),
+            ),
+        ])
+        .into(),
+    )
+    .expect("mount");
+    runtime
+        .run_frame(Constraints::tight(Size::new(200., 100.)))
+        .expect("frame");
+    let tree = runtime.tree();
+    let root = tree.root().expect("root");
+    let kids: Vec<_> = tree.children(root).expect("children").to_vec();
+    let enabled_node = tree
+        .semantic_node_for_element(kids[0])
+        .expect("enabled node");
+    let disabled_node = tree
+        .semantic_node_for_element(kids[1])
+        .expect("disabled node");
+    // Advertisement already agrees: only the enabled button offers Activate.
+    assert!(node_actions(&runtime, enabled_node).contains(&SemanticActionKind::Activate));
+    assert!(!node_actions(&runtime, disabled_node).contains(&SemanticActionKind::Activate));
+    // Execution agrees: the enabled button fires exactly once per dispatch,
+    // while the disabled button refuses without running its callback.
+    assert!(runtime.dispatch_semantic_action(enabled_node, SemanticAction::Activate));
+    assert_eq!(enabled_calls.get(), 1);
+    assert!(runtime.dispatch_semantic_action(enabled_node, SemanticAction::Activate));
+    assert_eq!(enabled_calls.get(), 2);
+    assert!(!runtime.dispatch_semantic_action(disabled_node, SemanticAction::Activate));
+    assert_eq!(disabled_calls.get(), 0);
+}
+
+#[test]
+fn semantic_set_selection_disabled_field_applies_without_mutating() {
+    let controller = TextEditingController::with_text("hello");
+    let mut runtime = Runtime::new(
+        Stack::new([
+            Widget::from(
+                EditableText::new(controller.clone())
+                    .enabled(false)
+                    .size(Size::new(180., 32.)),
+            ),
+            Widget::from(Text::new("sibling")),
+        ])
+        .into(),
+    )
+    .expect("mount");
+    runtime
+        .run_frame(Constraints::tight(Size::new(200., 100.)))
+        .expect("frame");
+    let tree = runtime.tree();
+    let root = tree.root().expect("root");
+    let field = tree.children(root).expect("children").to_vec()[0];
+    let node = tree
+        .semantic_node_for_element(field)
+        .expect("field node");
+    // SetSelection is advertised even for disabled fields, while SetText
+    // requires editability — matching pointer and keyboard behavior, where
+    // selection works but mutation is gated.
+    assert!(node_actions(&runtime, node).contains(&SemanticActionKind::SetSelection));
+    assert!(!node_actions(&runtime, node).contains(&SemanticActionKind::SetText));
+    assert!(runtime.dispatch_semantic_action(
+        node,
+        SemanticAction::SetSelection {
+            base: 1,
+            extent: 3
+        }
+    ));
+    assert_eq!(controller.selection().base, 1);
+    assert_eq!(controller.selection().extent, 3);
+    assert_eq!(controller.text(), "hello");
+}
+
+#[test]
+fn semantic_action_after_unmount_resolves_false() {
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let mut runtime = Runtime::new(
+        Stack::new([
+            Semantics::new(Text::new("child"))
+                .role(SemanticRole::Group)
+                .label("tapped")
+                .on_tap(move || observed.set(observed.get() + 1))
+                .into(),
+            Widget::from(Text::new("sibling")),
+        ])
+        .into(),
+    )
+    .expect("mount");
+    runtime
+        .run_frame(Constraints::tight(Size::new(200., 100.)))
+        .expect("frame");
+    let root = runtime.tree().root().expect("root");
+    let node = runtime
+        .tree()
+        .semantic_node_for_element(
+            runtime.tree().children(root).expect("children").to_vec()[0],
+        )
+        .expect("node");
+    // Remove the subtree without running a frame: unmount drops the element
+    // and its semantic id synchronously, so the retained node resolves to
+    // nothing and the detached callback never runs.
+    runtime
+        .tree_mut()
+        .update(
+            root,
+            Stack::new([Widget::from(Text::new("sibling"))]).into(),
+        )
+        .expect("unmount");
+    assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Activate));
+    assert_eq!(calls.get(), 0);
 }
 
 #[test]

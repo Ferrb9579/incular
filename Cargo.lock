@@ -2244,6 +2244,7 @@ dependencies = [
  "criterion",
  "incular-accessibility",
  "incular-config",
+ "incular-controls",
  "incular-core",
  "incular-devtools-protocol",
  "incular-navigation",

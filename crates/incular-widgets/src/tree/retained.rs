@@ -1027,6 +1027,22 @@ impl WidgetTree {
             _ => None,
         }
     }
+    /// Whether a semantic Activate may execute on this element right now.
+    /// This is the single advertisement/execution predicate shared with
+    /// semantic collection: explicit callbacks always qualify, otherwise
+    /// only an enabled button with a bound callback does. Dispatch checks
+    /// this instead of re-stating the rule, so execution can never drift
+    /// from what native adapters were told the node offers.
+    #[must_use]
+    pub fn semantic_activate_executable(&self, id: ElementId) -> bool {
+        self.elements.get(id.0).is_some_and(|element| {
+            super::semantics::semantic_action_is_executable(
+                element.widget.kind(),
+                SemanticActionKind::Activate,
+                &element.widget.semantic_properties().callbacks,
+            )
+        })
+    }
     /// Returns an application-provided semantic action callback, if one was
     /// attached by [`Semantics`](crate::Semantics). The callback is cloned
     /// before the runtime invokes it, so it never runs while the tree is
