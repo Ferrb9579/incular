@@ -1829,7 +1829,8 @@ impl Runtime {
     /// writer, so cleanup never lands in another editor. Clearing an
     /// unset preedit notifies nothing.
     fn cancel_ime_composition(&mut self) {
-        if let Some(owner) = self.ime_composition.take() {
+        let owner = self.ime_composition.take();
+        if let Some(owner) = owner {
             owner.controller.clear_preedit();
         }
     }
@@ -1849,29 +1850,18 @@ impl Runtime {
         })
     }
 
-    /// Adopts the focused editable field as the composition target,
-    /// recording it as the retained owner. None when no field can own.
-    fn ime_adopt_target(&mut self) -> Option<TextEditingController> {
-        let field = self.focused.filter(|id| self.tree.is_text_field(*id))?;
-        let controller = self.tree.text_controller(field)?;
-        if !self.tree.text_field_is_editable(field) {
-            return None;
-        }
-        self.ime_composition = Some(ImeCompositionOwner {
+    fn ime_focused_target(&self) -> Option<ImeCompositionOwner> {
+        let field = self.focused.filter(|id| self.tree.text_field_is_editable(*id))?;
+        Some(ImeCompositionOwner {
             field,
-            controller: controller.clone(),
-        });
-        Some(controller)
+            controller: self.tree.text_controller(field)?,
+        })
     }
 
-    /// Ownerless commit target: the focused editable field's
-    /// controller. Preserves direct-commit IMEs that never preedit.
-    fn ime_direct_target(&self) -> Option<TextEditingController> {
-        let field = self.focused.filter(|id| self.tree.is_text_field(*id))?;
-        if !self.tree.text_field_is_editable(field) {
-            return None;
+    fn validate_ime_composition(&mut self) {
+        if !self.ime_owner_current() {
+            self.cancel_ime_composition();
         }
-        self.tree.text_controller(field)
     }
 
     /// Routes one native IME event. An owner that no longer validates
@@ -1882,34 +1872,23 @@ impl Runtime {
     /// to the focused field, and only ownerless Preedits adopt a target.
     fn handle_ime(&mut self, event: ImeEvent) {
         self.editing_diagnostics.ime_events += 1;
-        if !self.ime_owner_current() {
-            self.cancel_ime_composition();
-        }
-        // Owned clone up front: later arms borrow `self` mutably, which
-        // a live match on the retained slot would forbid.
-        let owner = self
-            .ime_composition
-            .as_ref()
-            .map(|owner| owner.controller.clone());
-        let controller = match &event {
-            ImeEvent::Preedit { .. } => match owner {
-                Some(controller) => controller,
-                None => {
-                    let Some(controller) = self.ime_adopt_target() else {
-                        return;
-                    };
-                    controller
+        self.validate_ime_composition();
+        let target = match &event {
+            ImeEvent::Preedit { .. } => {
+                if self.ime_composition.is_none() {
+                    self.ime_composition = self.ime_focused_target();
                 }
-            },
-            ImeEvent::Commit(_) | ImeEvent::End => match owner {
-                Some(controller) => controller,
-                None => {
-                    let Some(controller) = self.ime_direct_target() else {
-                        return;
-                    };
-                    controller
-                }
-            },
+                self.ime_composition.as_ref().map(|owner| owner.controller.clone())
+            }
+            ImeEvent::Commit(_) => self
+                .ime_composition
+                .take()
+                .or_else(|| self.ime_focused_target())
+                .map(|owner| owner.controller),
+            ImeEvent::End => self.ime_composition.take().map(|owner| owner.controller),
+        };
+        let Some(controller) = target else {
+            return;
         };
         match event {
             ImeEvent::Preedit { text, selection } => {
@@ -1919,12 +1898,15 @@ impl Runtime {
                 );
             }
             ImeEvent::Commit(text) => {
+                // Ownerless commit policy: without a session or client
+                // identity, a late Commit after focus changes cannot be
+                // distinguished from a legitimate direct commit, so it
+                // applies to the focused editable field. This is a routing
+                // policy, not stale-commit protection.
                 controller.commit_preedit(&text);
-                self.ime_composition = None;
             }
             ImeEvent::End => {
                 controller.clear_preedit();
-                self.ime_composition = None;
             }
         }
         controller.reset_caret(Instant::now());
@@ -1990,6 +1972,7 @@ impl Runtime {
             }
         }
         self.clear_focus_if_unmounted();
+        self.validate_ime_composition();
         self.prune_handlers();
         let build = build_span.elapsed_us();
         drop(build_guard);
@@ -2020,6 +2003,7 @@ impl Runtime {
             }
         }
         self.clear_focus_if_unmounted();
+        self.validate_ime_composition();
         self.prune_handlers();
         // Layout builders create their retained controls during the first
         // layout. Resolve initial autofocus once those controls exist, without

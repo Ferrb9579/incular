@@ -236,14 +236,43 @@ fn ime_controller_replacement_cancels_composition() {
     runtime
         .run_frame(Constraints::tight(Size::new(180., 100.)))
         .unwrap();
-    // The composition belonged to the detached controller: it is
-    // cancelled on its own editor, so nothing commits there. The
-    // commit itself arrives ownerless and applies to the live focused
-    // field like any direct commit.
-    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Commit("xy".into())));
     assert_eq!(first.preedit(), None);
     assert_eq!(first.text(), "ab");
-    assert!(replacement.text().contains("xy"));
+    assert_eq!(replacement.text(), "");
+}
+
+#[test]
+fn retained_editability_changes_cancel_composition_without_native_events() {
+    for read_only in [false, true] {
+        let controller = TextEditingController::with_text("ab");
+        let mut runtime = mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
+        let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
+            text: "xy".into(),
+            selection: None,
+        }));
+        let field = runtime.focused_element().unwrap();
+        runtime.tree_mut().update(
+            field,
+            EditableText::new(controller.clone())
+                .enabled(read_only)
+                .read_only(read_only)
+                .size(Size::new(180., 32.))
+                .into(),
+        ).unwrap();
+        runtime.run_frame(Constraints::tight(Size::new(180., 100.))).unwrap();
+        assert_eq!(controller.preedit(), None);
+        assert_eq!(controller.text(), "ab");
+    }
+}
+
+#[test]
+fn ownerless_end_preserves_unrelated_preedit() {
+    let controller = TextEditingController::with_text("ab");
+    let mut runtime = mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
+    controller.set_preedit("application", None);
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::End));
+    assert_eq!(controller.preedit().as_deref(), Some("application"));
+    assert_eq!(controller.text(), "ab");
 }
 
 #[test]
