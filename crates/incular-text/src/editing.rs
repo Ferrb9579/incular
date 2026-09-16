@@ -745,6 +745,10 @@ impl TextEditingController {
                 state.content_revision = state.content_revision.saturating_add(1);
             }
             state.visual_revision = state.visual_revision.saturating_add(1);
+            // A committed value change invalidates the transient overlay —
+            // including selection-only moves — so preedit never describes a
+            // stale value. The logical composition (if any) continues; only
+            // its visual is reset.
             state.preedit = None;
             state.preedit_selection = None;
             state.preferred_caret_x = None;

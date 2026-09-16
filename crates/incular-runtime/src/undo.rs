@@ -4,6 +4,24 @@
 //! observes the authoritative `TextEditingController`, stores complete
 //! editing values (including selection), and exposes availability through the
 //! runtime's `Signal` type so only consumers that read history state rebuild.
+//!
+//! History policy — what enters the stacks:
+//! Undoable: every committed text change, exactly one step per
+//! notification (typing, deletion, cut/paste, programmatic sets, and one
+//! committed IME composition: preedit plus Commit collapse to the single
+//! replace step, and the trailing clear is a no-op).
+//! Transient, never a step: preedit set/clear, selection and caret moves,
+//! and the composing marker. A cancelled composition leaves no trace, and
+//! any committed value change clears the transient overlay so preedit never
+//! describes a stale value. There is no separate formatter layer: every edit
+//! funnels through the controller's single commit path.
+//! Redo clears on the next committed text change, including after an undo.
+//! Controller replacement starts fresh: the old history drops with its
+//! listener and the new controller tracks from its current value.
+//! Reentrant edits made by listeners during notification commit normally —
+//! newer wins and snapshots are never restored over them; edits made while
+//! an undo/redo application is dispatching are absorbed into current without
+//! creating steps, so current always tracks the editor.
 
 use crate::Signal;
 use incular_text::{TextEditingController, TextEditingValue};
