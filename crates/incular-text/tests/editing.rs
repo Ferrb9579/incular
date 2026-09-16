@@ -50,6 +50,28 @@ fn reentrant_mutation_during_notify_terminates_without_panic() {
 }
 
 #[test]
+fn committed_preedit_preserves_composition_started_by_listener() {
+    for commit in ["", "x"] {
+        let controller = TextEditingController::new();
+        controller.set_preedit("old", None);
+        let editor = controller.clone();
+        let fired = Rc::new(Cell::new(false));
+        let observed = fired.clone();
+        let token = controller.add_listener(move |_| {
+            if !observed.replace(true) {
+                assert_eq!(editor.preedit(), None);
+                editor.set_preedit("new", None);
+            }
+        });
+        controller.commit_preedit(commit);
+        assert!(fired.get());
+        assert_eq!(controller.text(), commit);
+        assert_eq!(controller.preedit().as_deref(), Some("new"));
+        assert!(controller.remove_listener(token));
+    }
+}
+
+#[test]
 fn deletion_moves_by_codepoint_not_by_byte() {
     let controller = TextEditingController::with_text("a🙂");
     controller.delete_backward();

@@ -571,8 +571,9 @@ impl TextEditingController {
     }
 
     pub fn commit_preedit(&self, text: &str) {
-        self.replace_selection(text);
-        self.clear_preedit();
+        let value = self.value();
+        let range = value.selection.range();
+        self.update_committed(value.replace(range, text), true, true);
     }
 
     pub fn clear_preedit(&self) {
@@ -735,9 +736,13 @@ impl TextEditingController {
     }
 
     fn update(&self, value: TextEditingValue, content_changed: bool) {
+        self.update_committed(value, content_changed, false);
+    }
+
+    fn update_committed(&self, value: TextEditingValue, content_changed: bool, end_preedit: bool) {
         let listeners = {
             let mut state = self.inner.borrow_mut();
-            if state.value == value {
+            if state.value == value && !(end_preedit && state.preedit.is_some()) {
                 return;
             }
             state.value = value;
@@ -745,10 +750,6 @@ impl TextEditingController {
                 state.content_revision = state.content_revision.saturating_add(1);
             }
             state.visual_revision = state.visual_revision.saturating_add(1);
-            // A committed value change invalidates the transient overlay —
-            // including selection-only moves — so preedit never describes a
-            // stale value. The logical composition (if any) continues; only
-            // its visual is reset.
             state.preedit = None;
             state.preedit_selection = None;
             state.preferred_caret_x = None;

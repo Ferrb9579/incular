@@ -106,10 +106,24 @@ impl Inner {
     }
 
     fn apply_history_value(&self, value: TextEditingValue) {
-        self.applying.set(true);
+        struct RestorePrevious<'a> {
+            inner: &'a Inner,
+            previous: bool,
+        }
+
+        impl Drop for RestorePrevious<'_> {
+            fn drop(&mut self) {
+                self.inner.history.borrow_mut().current = self.inner.editor.value();
+                self.inner.applying.set(self.previous);
+                if !std::thread::panicking() {
+                    self.inner.sync_state();
+                }
+            }
+        }
+
+        let previous = self.applying.replace(true);
+        let _guard = RestorePrevious { inner: self, previous };
         self.editor.set_value(value);
-        self.applying.set(false);
-        self.sync_state();
     }
 }
 
@@ -144,9 +158,9 @@ impl UndoHistoryController {
         let inner = Rc::new_cyclic(|weak: &Weak<Inner>| {
             let listener = {
                 let weak = weak.clone();
-                editor.add_listener(move |value| {
+                editor.add_listener(move |_| {
                     if let Some(inner) = weak.upgrade() {
-                        inner.record(value.clone());
+                        inner.record(inner.editor.value());
                     }
                 })
             };

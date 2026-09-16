@@ -116,6 +116,84 @@ fn reentrant_edit_during_notification_stays_consistent() {
 }
 
 #[test]
+fn manual_reentrant_listeners_cannot_restore_older_history_current() {
+    use std::{cell::Cell, rc::Rc};
+    for history_first in [false, true] {
+        let editor = TextEditingController::with_text("a");
+        let mut history = history_first.then(|| UndoHistoryController::new(editor.clone()));
+        let nested = editor.clone();
+        let fired = Rc::new(Cell::new(false));
+        let observed = fired.clone();
+        let token = editor.add_listener(move |_| {
+            if !observed.replace(true) {
+                nested.set_text("reentrant");
+            }
+        });
+        let history = history.take().unwrap_or_else(|| UndoHistoryController::new(editor.clone()));
+        editor.set_text("first");
+        assert_eq!(editor.text(), "reentrant");
+        editor.set_text("last");
+        assert!(history.undo());
+        assert_eq!(editor.text(), "reentrant");
+        assert!(history.undo());
+        assert_eq!(editor.text(), if history_first { "first" } else { "a" });
+        if history_first {
+            assert!(history.undo());
+            assert_eq!(editor.text(), "a");
+        }
+        assert!(!history.undo());
+        assert!(editor.remove_listener(token));
+    }
+}
+
+#[test]
+fn panic_during_undo_does_not_suppress_subsequent_edits() {
+    use std::{cell::Cell, panic::{AssertUnwindSafe, catch_unwind}, rc::Rc};
+    let editor = TextEditingController::with_text("a");
+    let panic_once = Rc::new(Cell::new(false));
+    let observed = panic_once.clone();
+    let token = editor.add_listener(move |_| {
+        assert!(!observed.replace(false), "listener panic");
+    });
+    let history = UndoHistoryController::new(editor.clone());
+    editor.set_text("b");
+    panic_once.set(true);
+    assert!(catch_unwind(AssertUnwindSafe(|| history.undo())).is_err());
+    assert_eq!(editor.text(), "a");
+    editor.set_text("c");
+    assert!(!history.can_redo());
+    assert!(history.undo());
+    assert_eq!(editor.text(), "a");
+    assert!(!history.undo());
+    assert!(editor.remove_listener(token));
+}
+
+#[test]
+fn nested_redo_keeps_outer_undo_application_active() {
+    use std::{cell::Cell, rc::Rc};
+    let editor = TextEditingController::with_text("a");
+    let history = UndoHistoryController::new(editor.clone());
+    editor.set_text("b");
+    let nested_history = history.clone();
+    let nested_editor = editor.clone();
+    let fired = Rc::new(Cell::new(false));
+    let observed = fired.clone();
+    let token = editor.add_listener(move |_| {
+        if !observed.replace(true) {
+            assert!(nested_history.redo());
+            nested_editor.set_text("nested");
+        }
+    });
+    assert!(history.undo());
+    assert_eq!(editor.text(), "nested");
+    assert!(!history.can_redo());
+    assert!(history.undo());
+    assert_eq!(editor.text(), "a");
+    assert!(!history.undo());
+    assert!(editor.remove_listener(token));
+}
+
+#[test]
 fn selection_changes_do_not_create_undo_steps_and_capacity_is_bounded() {
     let editor = TextEditingController::with_text("one");
     let controller = UndoHistoryController::new(editor.clone());
