@@ -156,6 +156,97 @@ fn ime_preedit_and_commit_follow_editability() {
 }
 
 #[test]
+fn ime_focus_move_cancels_composition_and_commit_targets_focused_field() {
+    let first = TextEditingController::with_text("aa");
+    let second = TextEditingController::with_text("bb");
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Column::new(vec![
+        Widget::from(EditableText::new(first.clone()).size(Size::new(180., 32.))),
+        Widget::from(EditableText::new(second.clone()).size(Size::new(180., 32.))),
+    ])))
+    .unwrap();
+    let constraints = Constraints::tight(Size::new(180., 100.));
+    runtime.run_frame(constraints).unwrap();
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: incular_core::PointerPhase::Down,
+        position: Offset::new(5., 5.),
+    });
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
+        text: "xy".into(),
+        selection: None,
+    }));
+    assert_eq!(first.preedit().as_deref(), Some("xy"));
+    // Moving focus retires the composition's client: the orphaned
+    // preedit clears on its own editor instead of lingering, and the
+    // newly focused field holds none.
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: incular_core::PointerPhase::Down,
+        position: Offset::new(5., 40.),
+    });
+    assert_eq!(first.preedit(), None);
+    assert_eq!(second.preedit(), None);
+    // The following commit belongs to no open composition, so it
+    // applies to the focused field directly; the first field is
+    // untouched.
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Commit("zz".into())));
+    assert_eq!(first.text(), "aa");
+    assert!(second.text().contains("zz"));
+}
+
+#[test]
+fn ime_commit_without_preedit_applies_to_focused_field() {
+    let controller = TextEditingController::with_text("ab");
+    let mut runtime = mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Commit("xy".into())));
+    assert!(controller.text().contains("xy"));
+    assert_eq!(controller.preedit(), None);
+}
+
+#[test]
+fn ime_end_cancels_preedit_without_text_change() {
+    let controller = TextEditingController::with_text("ab");
+    let mut runtime = mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
+        text: "xy".into(),
+        selection: None,
+    }));
+    assert_eq!(controller.preedit().as_deref(), Some("xy"));
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::End));
+    assert_eq!(controller.preedit(), None);
+    assert_eq!(controller.text(), "ab");
+}
+
+#[test]
+fn ime_controller_replacement_cancels_composition() {
+    let first = TextEditingController::with_text("ab");
+    let replacement = TextEditingController::new();
+    let mut runtime = mount_focused(first.clone(), |field| field.size(Size::new(180., 32.)));
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
+        text: "xy".into(),
+        selection: None,
+    }));
+    assert_eq!(first.preedit().as_deref(), Some("xy"));
+    let field = runtime.focused_element().expect("field stays focused");
+    runtime
+        .tree_mut()
+        .update(
+            field,
+            Widget::from(EditableText::new(replacement.clone()).size(Size::new(180., 32.))),
+        )
+        .unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(180., 100.)))
+        .unwrap();
+    // The composition belonged to the detached controller: it is
+    // cancelled on its own editor, so nothing commits there. The
+    // commit itself arrives ownerless and applies to the live focused
+    // field like any direct commit.
+    let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Commit("xy".into())));
+    assert_eq!(first.preedit(), None);
+    assert_eq!(first.text(), "ab");
+    assert!(replacement.text().contains("xy"));
+}
+
+#[test]
 fn cut_and_paste_follow_editability() {
     let controller = TextEditingController::with_text("hello");
     let mut runtime = mount_focused(controller.clone(), |field| {

@@ -35,8 +35,8 @@ use incular_semantics::{SemanticAction, SemanticNodeId};
 use incular_widgets::internal::InvalidationCause;
 use incular_widgets::internal::{
     ActionId, Diagnostics, ElementId, MouseCursor, PlatformMenuBinding, PointerDeviceKind,
-    PointerEvent, RawPointerEvent, TextRange, TextSelection, TreeError, WidgetTree,
-    WindowInteraction,
+    PointerEvent, RawPointerEvent, TextEditingController, TextRange, TextSelection, TreeError,
+    WidgetTree, WindowInteraction,
 };
 use incular_widgets::{TextInputActionHint, TextInputTypeHint, Widget};
 use std::{
@@ -84,6 +84,23 @@ pub struct EditingDiagnostics {
     pub text_commits: u64,
     pub ime_events: u64,
 }
+
+/// Open IME composition. Native IME events carry no session identity,
+/// so the field and controller that received the latest Preedit are
+/// the only routing authority for the matching Commit/End. The
+/// controller handle is retained so cleanup always addresses the
+/// composition's own editor, never the currently focused one.
+///
+/// Preedit → update → Commit → End: all three reach the owner.
+/// Preedit → End: cancellation; the owner's preedit clears, no text changes.
+/// Preedit → focus moves: focus change cancels first; later events start fresh.
+/// Preedit → controller replaced, field unmounted, or field no longer
+///   editable: the owner stops validating and is cancelled, never committed.
+/// Commit without Preedit: ownerless, applies to the focused field directly.
+struct ImeCompositionOwner {
+    field: ElementId,
+    controller: TextEditingController,
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InitialFocus {
     AwaitingLayout,
@@ -113,6 +130,7 @@ pub struct Runtime {
     initial_focus: InitialFocus,
     pub(crate) captured_text_field: Option<ElementId>,
     pub(crate) captured_selectable_text: Option<ElementId>,
+    ime_composition: Option<ImeCompositionOwner>,
     pub(crate) text_histories: HashMap<ElementId, UndoHistoryController>,
     pub(crate) text_input_commands: VecDeque<TextInputCommand>,
     pub(crate) text_input_client: Option<TextInputClientId>,
@@ -256,6 +274,7 @@ impl Runtime {
             initial_focus: InitialFocus::AwaitingLayout,
             captured_text_field: None,
             captured_selectable_text: None,
+            ime_composition: None,
             text_histories: HashMap::new(),
             text_input_commands: VecDeque::new(),
             text_input_client: None,
@@ -1361,6 +1380,11 @@ impl Runtime {
         if self.focused == next {
             return;
         }
+        // A focus change retires the native client behind any open
+        // composition: without a session id later IME events are
+        // unattributable, so the old composition ends here and later
+        // events start fresh on the newly focused field.
+        self.cancel_ime_composition();
         if let Some(next) = next
             && self.tree.dismiss_transients_for_focus(next) > 0
         {
@@ -1392,6 +1416,9 @@ impl Runtime {
         // The element is already gone, so do not attempt to write retained
         // focus state through a stale generational id. Runtime focus and the
         // native text-input client must nevertheless be cleared in this frame.
+        // The composition owner (if any) names this field: cancel through the
+        // retained controller handle so its stale preedit clears as well.
+        self.cancel_ime_composition();
         self.focused = None;
         self.captured_text_field = None;
         self.captured_selectable_text = None;
@@ -1786,24 +1813,108 @@ impl Runtime {
         }
         handled
     }
+    /// Drops the open composition, clearing the owner's stale preedit.
+    /// Single cleanup path: the owner's own controller is the only
+    /// writer, so cleanup never lands in another editor. Clearing an
+    /// unset preedit notifies nothing.
+    fn cancel_ime_composition(&mut self) {
+        if let Some(owner) = self.ime_composition.take() {
+            owner.controller.clear_preedit();
+        }
+    }
+
+    /// Whether the retained owner still names the live editing target:
+    /// the focused field, with the same controller identity, still
+    /// editable. Anything else means the composition's client is gone.
+    fn ime_owner_current(&self) -> bool {
+        self.ime_composition.as_ref().is_some_and(|owner| {
+            self.focused == Some(owner.field)
+                && self.tree.is_text_field(owner.field)
+                && self.tree.text_field_is_editable(owner.field)
+                && self
+                    .tree
+                    .text_controller(owner.field)
+                    .is_some_and(|current| current == owner.controller)
+        })
+    }
+
+    /// Adopts the focused editable field as the composition target,
+    /// recording it as the retained owner. None when no field can own.
+    fn ime_adopt_target(&mut self) -> Option<TextEditingController> {
+        let field = self.focused.filter(|id| self.tree.is_text_field(*id))?;
+        let controller = self.tree.text_controller(field)?;
+        if !self.tree.text_field_is_editable(field) {
+            return None;
+        }
+        self.ime_composition = Some(ImeCompositionOwner {
+            field,
+            controller: controller.clone(),
+        });
+        Some(controller)
+    }
+
+    /// Ownerless commit target: the focused editable field's
+    /// controller. Preserves direct-commit IMEs that never preedit.
+    fn ime_direct_target(&self) -> Option<TextEditingController> {
+        let field = self.focused.filter(|id| self.tree.is_text_field(*id))?;
+        if !self.tree.text_field_is_editable(field) {
+            return None;
+        }
+        self.tree.text_controller(field)
+    }
+
+    /// Routes one native IME event. An owner that no longer validates
+    /// (focus moved off-path, controller replaced, field unmounted or
+    /// no longer editable) is cancelled before routing, so its preedit
+    /// clears on its own controller and is never committed elsewhere.
+    /// Owned events address the owner; only ownerless Commits fall back
+    /// to the focused field, and only ownerless Preedits adopt a target.
     fn handle_ime(&mut self, event: ImeEvent) {
         self.editing_diagnostics.ime_events += 1;
-        let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
-            return;
-        };
-        let Some(controller) = self.tree.text_controller(field) else {
-            return;
-        };
-        if !self.tree.text_field_is_editable(field) {
-            return;
+        if !self.ime_owner_current() {
+            self.cancel_ime_composition();
         }
+        // Owned clone up front: later arms borrow `self` mutably, which
+        // a live match on the retained slot would forbid.
+        let owner = self
+            .ime_composition
+            .as_ref()
+            .map(|owner| owner.controller.clone());
+        let controller = match &event {
+            ImeEvent::Preedit { .. } => match owner {
+                Some(controller) => controller,
+                None => {
+                    let Some(controller) = self.ime_adopt_target() else {
+                        return;
+                    };
+                    controller
+                }
+            },
+            ImeEvent::Commit(_) | ImeEvent::End => match owner {
+                Some(controller) => controller,
+                None => {
+                    let Some(controller) = self.ime_direct_target() else {
+                        return;
+                    };
+                    controller
+                }
+            },
+        };
         match event {
-            ImeEvent::Preedit { text, selection } => controller.set_preedit(
-                text,
-                selection.map(|(start, end)| TextRange::new(start, end)),
-            ),
-            ImeEvent::Commit(text) => controller.commit_preedit(&text),
-            ImeEvent::End => controller.clear_preedit(),
+            ImeEvent::Preedit { text, selection } => {
+                controller.set_preedit(
+                    text,
+                    selection.map(|(start, end)| TextRange::new(start, end)),
+                );
+            }
+            ImeEvent::Commit(text) => {
+                controller.commit_preedit(&text);
+                self.ime_composition = None;
+            }
+            ImeEvent::End => {
+                controller.clear_preedit();
+                self.ime_composition = None;
+            }
         }
         controller.reset_caret(Instant::now());
         self.frame_requested = true;
