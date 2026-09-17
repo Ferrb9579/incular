@@ -627,6 +627,8 @@ impl PartialEq for TextFieldSpec {
             && self.cursor_color == other.cursor_color
             && self.selection_color == other.selection_color
             && same_optional_callback(&self.on_submit, &other.on_submit)
+            && same_optional_callback(&self.edit_transform, &other.edit_transform)
+            && same_optional_callback(&self.edit_changed, &other.edit_changed)
     }
 }
 

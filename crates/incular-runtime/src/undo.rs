@@ -6,15 +6,16 @@
 //! runtime's `Signal` type so only consumers that read history state rebuild.
 //!
 //! History policy — what enters the stacks:
-//! Undoable: every committed text change, exactly one step per
-//! notification (typing, deletion, cut/paste, programmatic sets, and one
-//! committed IME composition: preedit plus Commit collapse to the single
-//! replace step, and the trailing clear is a no-op).
+//! Undoable: observed committed text transitions, including typing,
+//! deletion, cut/paste, programmatic sets and committed IME composition.
+//! Historical notification arguments are not authoritative current state;
+//! reentrant edits before this observer runs can coalesce intermediate values.
 //! Transient, never a step: preedit set/clear, selection and caret moves,
 //! and the composing marker. A cancelled composition leaves no trace, and
 //! any committed value change clears the transient overlay so preedit never
-//! describes a stale value. There is no separate formatter layer: every edit
-//! funnels through the controller's single commit path.
+//! describes a stale value. Material installs Widgets formatters through
+//! retained subscriptions; Text applies them before committing or notifying
+//! history, so rejected intermediate values are not recorded.
 //! Redo clears on the next committed text change, including after an undo.
 //! Controller replacement starts fresh: the old history drops with its
 //! listener and the new controller tracks from its current value.

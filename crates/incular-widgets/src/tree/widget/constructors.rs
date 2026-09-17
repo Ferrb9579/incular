@@ -501,6 +501,8 @@ impl Widget {
             key: None,
             kind: WidgetKind::TextField(TextFieldSpec {
                 controller,
+                edit_transform: None,
+                edit_changed: None,
                 size,
                 style,
                 placeholder,
@@ -523,6 +525,20 @@ impl Widget {
             semantics: SemanticProperties::default(),
         })
     }
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_edit_callbacks(
+        mut self,
+        transform: Option<Rc<dyn Fn(&incular_text::TextEditingValue, &incular_text::TextEditingValue) -> incular_text::TextEditingValue>>,
+        changed: Option<Rc<dyn Fn(&str)>>,
+    ) -> Self {
+        if let WidgetKind::TextField(spec) = self.kind_mut() {
+            spec.edit_transform = transform;
+            spec.edit_changed = changed;
+        }
+        self
+    }
+
     #[must_use]
     pub(crate) fn padding(padding: EdgeInsets, child: Self) -> Self {
         Self::from_node(WidgetNode {

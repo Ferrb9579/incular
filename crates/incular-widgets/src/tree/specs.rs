@@ -159,10 +159,15 @@ pub struct ButtonSpec {
     pub(crate) child: Option<Widget>,
 }
 
+pub(crate) type EditTransform = Rc<dyn Fn(&incular_text::TextEditingValue, &incular_text::TextEditingValue) -> incular_text::TextEditingValue>;
+pub(crate) type EditChanged = Rc<dyn Fn(&str)>;
+
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct TextFieldSpec {
     pub(crate) controller: TextEditingController,
+    pub(crate) edit_transform: Option<EditTransform>,
+    pub(crate) edit_changed: Option<EditChanged>,
     pub(crate) size: Size,
     pub(crate) style: TextStyle,
     pub(crate) placeholder: String,

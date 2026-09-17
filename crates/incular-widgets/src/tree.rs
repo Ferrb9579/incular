@@ -332,6 +332,8 @@ pub struct Element {
     /// layout so lazily materialized sliver viewports are included without
     /// keeping dead controller listeners alive.
     notification_subscriptions: Vec<ScrollNotificationSubscription>,
+    edit_transform_subscription: Option<incular_core::reactivity::Subscription>,
+    edit_changed_subscription: Option<incular_text::TextEditingSubscription>,
     sliver_delegate_revision: u64,
     sliver_scroll_revision: u64,
     /// Last consumed wheel-controller revision, mirroring

@@ -63,7 +63,6 @@ use incular_widgets::{
     FormField, GestureDetector, HitTestBehavior, Semantics, Text, TextInputActionHint,
     TextInputFormatter, TextInputTypeHint, Widget,
 };
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
@@ -728,7 +727,24 @@ impl TextField {
             });
         }
 
-        let mut editor: Widget = raw.into();
+        let formatters = self.input_formatters.clone();
+        let limit = self.max_length;
+        let transform = if formatters.is_empty() && limit.is_none() {
+            None
+        } else {
+            Some(Rc::new(move |old: &incular_text::TextEditingValue, current: &incular_text::TextEditingValue| {
+                let mut next = current.clone();
+                for formatter in &formatters {
+                    next = formatter.format_edit_update(old, &next);
+                }
+                if let Some(limit) = limit {
+                    next = incular_widgets::LengthLimitingTextInputFormatter::new(limit)
+                        .format_edit_update(old, &next);
+                }
+                next
+            }) as Rc<dyn Fn(&incular_text::TextEditingValue, &incular_text::TextEditingValue) -> incular_text::TextEditingValue>)
+        };
+        let mut editor = Widget::from(raw).with_edit_callbacks(transform, self.on_changed.clone());
         if let Some(callback) = self.on_tap.clone() {
             editor = GestureDetector::new(editor)
                 .behavior(HitTestBehavior::DeferToChild)
@@ -839,47 +855,6 @@ impl Default for TextField {
 
 impl From<TextField> for Widget {
     fn from(value: TextField) -> Self {
-        let controller = value.controller.clone();
-        if value.on_changed.is_some()
-            || value.max_length.is_some()
-            || !value.input_formatters.is_empty()
-        {
-            let callback = value.on_changed.clone();
-            let limit = value.max_length;
-            let formatters = value.input_formatters.clone();
-            let controller_for_listener = controller.clone();
-            let previous = Rc::new(RefCell::new(controller.value()));
-            let normalizing = Rc::new(Cell::new(false));
-            controller.add_listener(move |current| {
-                // Applying a formatter may update the same retained
-                // controller synchronously. Ignore that nested notification;
-                // the outer pass emits one callback for the effective value.
-                if normalizing.get() {
-                    return;
-                }
-                let old = previous.replace(current.clone());
-                let mut next = current.clone();
-                for formatter in &formatters {
-                    next = formatter.format_edit_update(&old, &next);
-                }
-                if let Some(limit) = limit {
-                    next = incular_widgets::LengthLimitingTextInputFormatter::new(limit)
-                        .format_edit_update(&old, &next);
-                }
-                if next != *current {
-                    normalizing.set(true);
-                    controller_for_listener.set_value(next);
-                    normalizing.set(false);
-                    if let Some(callback) = &callback {
-                        callback(&controller_for_listener.text());
-                    }
-                    return;
-                }
-                if let Some(callback) = &callback {
-                    callback(&current.text);
-                }
-            });
-        }
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = context.depend_on::<ControlTheme>().unwrap_or_default();

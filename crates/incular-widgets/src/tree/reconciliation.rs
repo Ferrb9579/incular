@@ -27,6 +27,30 @@ enum ChildProvenance {
 }
 
 impl WidgetTree {
+    fn sync_edit_callbacks(&mut self, id: ElementId) {
+        let element = self.element_live_mut(id, "editing owner must remain live");
+        element.edit_transform_subscription = None;
+        element.edit_changed_subscription = None;
+        let WidgetKind::TextField(spec) = element.widget.kind() else {
+            return;
+        };
+        if let Some(transform) = spec.edit_transform.clone() {
+            element.edit_transform_subscription = Some(
+                spec.controller.register_edit_transform(move |old, next| transform(old, next)),
+            );
+        }
+        if let Some(changed) = spec.edit_changed.clone() {
+            let previous = RefCell::new(spec.controller.text());
+            element.edit_changed_subscription = Some(spec.controller.observe(move |value| {
+                let differs = *previous.borrow() != value.text;
+                if differs {
+                    *previous.borrow_mut() = value.text.clone();
+                    changed(&value.text);
+                }
+            }));
+        }
+    }
+
     fn inherited_contexts_for(
         &self,
         parent: Option<ElementId>,
@@ -278,6 +302,8 @@ impl WidgetTree {
             sliver_overlay_ids: HashSet::new(),
             advanced_child_keys: Vec::new(),
             notification_subscriptions: Vec::new(),
+            edit_transform_subscription: None,
+            edit_changed_subscription: None,
             sliver_delegate_revision: 0,
             sliver_scroll_revision: 0,
             wheel_scroll_revision: 0,
@@ -301,6 +327,7 @@ impl WidgetTree {
         if let WidgetKind::SelectionListener { notifier, .. } = widget.kind() {
             notifier.register();
         }
+        self.sync_edit_callbacks(id);
         if let Some(binding) = platform_menu_binding {
             binding.install_if_bound();
         }
@@ -579,6 +606,7 @@ impl WidgetTree {
             }
             element.dirty.remove(DirtyFlags::BUILD);
         }
+        self.sync_edit_callbacks(id);
         // Carry hover presence across a focus-behavior swap without
         // replaying transitions: replacement callbacks learn only
         // subsequent changes, matching focus-callback policy, while

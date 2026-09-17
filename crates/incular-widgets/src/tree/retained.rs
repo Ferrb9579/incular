@@ -1020,6 +1020,13 @@ impl WidgetTree {
             .iter()
             .find_map(|(raw, element)| (element.render == render).then_some(ElementId(raw)))
     }
+    pub fn release_edit_subscriptions(&mut self) {
+        for (_, element) in self.elements.iter_mut() {
+            element.edit_transform_subscription = None;
+            element.edit_changed_subscription = None;
+        }
+    }
+
     #[must_use]
     pub fn action_for_element(&self, id: ElementId) -> Option<ActionId> {
         match self.elements.get(id.0)?.widget.kind() {

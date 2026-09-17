@@ -621,6 +621,7 @@ impl Runtime {
         } else {
             self.sync_text_input_client();
         }
+        self.tree.release_edit_subscriptions();
         let _ = self.transition_lifecycle(ApplicationLifecycle::Stopping);
         for (_, scope) in self.owner_scopes.drain() {
             scope.cancel();
@@ -638,6 +639,7 @@ impl Runtime {
         } else {
             self.sync_text_input_client();
         }
+        self.tree.release_edit_subscriptions();
         self.window_scope.cancel();
         for (_, scope) in self.owner_scopes.drain() {
             scope.cancel();

@@ -250,6 +250,7 @@ pub enum SelectionChangedCause {
 }
 
 type Listener = Rc<dyn Fn(&TextEditingValue)>;
+type EditTransform = Rc<dyn Fn(&TextEditingValue, &TextEditingValue) -> TextEditingValue>;
 
 #[derive(Default)]
 struct ControllerState {
@@ -277,6 +278,7 @@ struct TextRestoration {
 #[derive(Clone, Default)]
 pub struct TextEditingController {
     changes: incular_core::reactivity::DependencySource,
+    transforms: incular_core::reactivity::DependencySource,
     inner: Rc<RefCell<ControllerState>>,
 }
 
@@ -354,6 +356,7 @@ impl TextEditingController {
     pub fn from_value(value: TextEditingValue) -> Self {
         Self {
             changes: incular_core::reactivity::DependencySource::default(),
+            transforms: incular_core::reactivity::DependencySource::default(),
             inner: Rc::new(RefCell::new(ControllerState {
                 value,
                 ..ControllerState::default()
@@ -435,6 +438,15 @@ impl TextEditingController {
                 }
             }),
         }
+    }
+
+    #[doc(hidden)]
+    pub fn register_edit_transform(
+        &self,
+        transform: impl Fn(&TextEditingValue, &TextEditingValue) -> TextEditingValue + 'static,
+    ) -> incular_core::reactivity::Subscription {
+        let transform: EditTransform = Rc::new(transform);
+        self.transforms.subscribe(transform, || {})
     }
 
     /// Low-level manual registration for backend integrations. Prefer `observe`.
@@ -561,6 +573,7 @@ impl TextEditingController {
 
     /// Sets transient IME preedit text without changing committed content.
     pub fn set_preedit(&self, text: impl Into<String>, selection: Option<TextRange>) {
+        incular_core::reactivity::assert_mutation_allowed();
         let text = text.into();
         let mut state = self.inner.borrow_mut();
         state.preedit_selection = selection.map(|range| range.clamp_to(&text));
@@ -577,6 +590,7 @@ impl TextEditingController {
     }
 
     pub fn clear_preedit(&self) {
+        incular_core::reactivity::assert_mutation_allowed();
         let mut state = self.inner.borrow_mut();
         if state.preedit.take().is_some() {
             state.preedit_selection = None;
@@ -740,6 +754,25 @@ impl TextEditingController {
     }
 
     fn update_committed(&self, value: TextEditingValue, content_changed: bool, end_preedit: bool) {
+        incular_core::reactivity::assert_mutation_allowed();
+        let (old, revision) = {
+            let state = self.inner.borrow();
+            (state.value.clone(), state.visual_revision)
+        };
+        let value = {
+            let transforms = self.transforms.subscribers::<EditTransform>();
+            let mut next = value;
+            for transform in transforms {
+                let _guard = incular_core::reactivity::ReadOnlyGuard::enter();
+                next = transform(&old, &next);
+                if self.inner.borrow().visual_revision != revision {
+                    return;
+                }
+            }
+            next.selection = next.selection.clamp_to(&next.text);
+            next.composing = next.composing.map(|range| range.clamp_to(&next.text));
+            next
+        };
         let listeners = {
             let mut state = self.inner.borrow_mut();
             if state.value == value && !(end_preedit && state.preedit.is_some()) {
