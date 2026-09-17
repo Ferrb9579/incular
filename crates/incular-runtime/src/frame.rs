@@ -1861,7 +1861,9 @@ impl Runtime {
     }
 
     fn ime_focused_target(&self) -> Option<ImeCompositionOwner> {
-        let field = self.focused.filter(|id| self.tree.text_field_is_editable(*id))?;
+        let field = self
+            .focused
+            .filter(|id| self.tree.text_field_is_editable(*id))?;
         Some(ImeCompositionOwner {
             field,
             controller: self.tree.text_controller(field)?,
@@ -1888,7 +1890,9 @@ impl Runtime {
                 if self.ime_composition.is_none() {
                     self.ime_composition = self.ime_focused_target();
                 }
-                self.ime_composition.as_ref().map(|owner| owner.controller.clone())
+                self.ime_composition
+                    .as_ref()
+                    .map(|owner| owner.controller.clone())
             }
             ImeEvent::Commit(_) => self
                 .ime_composition

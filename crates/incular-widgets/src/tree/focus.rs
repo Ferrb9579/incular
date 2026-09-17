@@ -37,9 +37,18 @@ impl WidgetTree {
             };
             match ancestor.widget.kind() {
                 WidgetKind::IndexedStack { index, .. }
-                    if ancestor.children.get(*index) != Some(&current) => return false,
+                    if ancestor.children.get(*index) != Some(&current) =>
+                {
+                    return false;
+                }
                 WidgetKind::Gesture { callbacks, .. }
-                    if callbacks.focus_node.as_ref().is_some_and(|node| !node.descendants_are_focusable()) => return false,
+                    if callbacks
+                        .focus_node
+                        .as_ref()
+                        .is_some_and(|node| !node.descendants_are_focusable()) =>
+                {
+                    return false;
+                }
                 _ => {}
             }
             current = parent;

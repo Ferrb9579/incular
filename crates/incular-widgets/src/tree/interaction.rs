@@ -420,8 +420,7 @@ impl WidgetTree {
         let Some(controller) = self.viewport_controller(candidate.element) else {
             return false;
         };
-        controller == bracket.controller
-            && controller.attachment_id() == Some(bracket.attachment)
+        controller == bracket.controller && controller.attachment_id() == Some(bracket.attachment)
     }
 
     /// Opens the scroll bracket for an accepted motion action on this

@@ -245,21 +245,27 @@ fn ime_controller_replacement_cancels_composition() {
 fn retained_editability_changes_cancel_composition_without_native_events() {
     for read_only in [false, true] {
         let controller = TextEditingController::with_text("ab");
-        let mut runtime = mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
+        let mut runtime =
+            mount_focused(controller.clone(), |field| field.size(Size::new(180., 32.)));
         let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
             text: "xy".into(),
             selection: None,
         }));
         let field = runtime.focused_element().unwrap();
-        runtime.tree_mut().update(
-            field,
-            EditableText::new(controller.clone())
-                .enabled(read_only)
-                .read_only(read_only)
-                .size(Size::new(180., 32.))
-                .into(),
-        ).unwrap();
-        runtime.run_frame(Constraints::tight(Size::new(180., 100.))).unwrap();
+        runtime
+            .tree_mut()
+            .update(
+                field,
+                EditableText::new(controller.clone())
+                    .enabled(read_only)
+                    .read_only(read_only)
+                    .size(Size::new(180., 32.))
+                    .into(),
+            )
+            .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(180., 100.)))
+            .unwrap();
         assert_eq!(controller.preedit(), None);
         assert_eq!(controller.text(), "ab");
     }

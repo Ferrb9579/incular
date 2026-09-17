@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use super::{
@@ -13,7 +13,7 @@ use incular_controls::{ButtonStyle, ControlIcon, current_control_theme};
 use incular_core::{Color, Size};
 use incular_text::TextEditingController;
 use incular_widgets::internal::ActionSurface;
-use incular_widgets::{Column, Container, Row, SizedBox, Text, TransientPlacement, Widget};
+use incular_widgets::{Column, Container, Form, Row, SizedBox, Text, TransientPlacement, Widget};
 use typed_builder::TypedBuilder;
 
 type DropdownValidator<T> = Rc<dyn Fn(Option<&T>) -> Option<String> + 'static>;
@@ -423,6 +423,49 @@ impl<T> DropdownButtonFormField<T> {
         self.on_saved = Some(Rc::new(value));
         self
     }
+
+    /// Registers this descriptor's selection with a core [`Form`].
+    ///
+    /// The form field stores the selected entry's rendered text, so
+    /// [`Form::save`] revalidates and dispatches [`Self::on_saved`] with the
+    /// currently selected value. Unselected fields save `None`.
+    pub fn register_with_form(&self, form: &Form) -> incular_widgets::FormField
+    where
+        T: Clone + PartialEq + 'static,
+    {
+        let selected_text = self.dropdown.value.as_ref().and_then(|selected| {
+            self.dropdown
+                .items
+                .iter()
+                .find(|item| item.item_value() == Some(selected))
+                .and_then(|item| item.item_child().text_if_any())
+        });
+        let controller = TextEditingController::with_text(selected_text.unwrap_or_default());
+        let saved = self.on_saved.clone();
+        let validator = self.validator.clone();
+        let items = self.dropdown.items.clone();
+        let mut field = form.register(controller);
+        if let Some(validator) = validator {
+            let items = items.clone();
+            field = field.validator(move |text| {
+                let selected = items
+                    .iter()
+                    .find(|item| item.item_child().text_if_any().as_deref() == Some(text))
+                    .and_then(PopupMenuItem::item_value);
+                validator(selected)
+            });
+        }
+        if let Some(callback) = saved {
+            field = field.on_saved(move |text| {
+                let selected = items
+                    .iter()
+                    .find(|item| item.item_child().text_if_any().as_deref() == Some(&text))
+                    .and_then(PopupMenuItem::item_value);
+                callback(selected)
+            });
+        }
+        field
+    }
 }
 
 impl<T: Clone + PartialEq + 'static> From<DropdownButtonFormField<T>> for Widget {
@@ -477,8 +520,8 @@ pub struct DropdownMenu<T> {
     open: Rc<Cell<bool>>,
     #[builder(default = Rc::new(Cell::new(None)), setter(skip))]
     selected: Rc<Cell<Option<usize>>>,
-    #[builder(default = Cell::new(false), setter(skip))]
-    controller_listener_attached: Cell<bool>,
+    #[builder(default = Rc::new(RefCell::new(None)), setter(skip))]
+    controller_listener: Rc<RefCell<Option<incular_text::TextEditingSubscription>>>,
     #[builder(default = true)]
     enabled: bool,
     #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
@@ -535,16 +578,16 @@ impl<T> DropdownMenu<T> {
         let controller = TextEditingController::new();
         let revision: Rc<Cell<u64>> = Rc::new(Cell::new(0));
         let observed = revision.clone();
-        controller.add_listener(move |_| {
+        let listener = Rc::new(RefCell::new(Some(controller.observe(move |_| {
             observed.set(observed.get().wrapping_add(1));
-        });
-        let menu = Self {
+        }))));
+        Self {
             entries: entries.into_iter().collect(),
             controller,
             revision,
             open: Rc::new(Cell::new(false)),
             selected: Rc::new(Cell::new(None)),
-            controller_listener_attached: Cell::new(false),
+            controller_listener: listener,
             enabled: true,
             width: None,
             menu_height: None,
@@ -564,28 +607,18 @@ impl<T> DropdownMenu<T> {
             menu_style: None,
             close_behavior: DropdownMenuCloseBehavior::All,
             on_selected: None,
-        };
-        menu.controller_listener_attached.set(true);
-        menu
+        }
     }
 
     #[must_use]
     pub fn controller(mut self, value: TextEditingController) -> Self {
+        *self.controller_listener.borrow_mut() = None;
         self.controller = value;
-        self.controller_listener_attached.set(false);
-        self.attach_controller_listener();
-        self
-    }
-
-    fn attach_controller_listener(&self) {
-        if self.controller_listener_attached.get() {
-            return;
-        }
         let revision = self.revision.clone();
-        self.controller.add_listener(move |_| {
+        *self.controller_listener.borrow_mut() = Some(self.controller.observe(move |_| {
             revision.set(revision.get().wrapping_add(1));
-        });
-        self.controller_listener_attached.set(true);
+        }));
+        self
     }
 
     #[must_use]
@@ -722,7 +755,6 @@ impl<T> DropdownMenu<T> {
 
 impl<T: Clone + PartialEq + 'static> From<DropdownMenu<T>> for Widget {
     fn from(value: DropdownMenu<T>) -> Self {
-        value.attach_controller_listener();
         let value = Rc::new(value);
         Widget::stateful_layout_builder(value.revision.clone(), move |context, _| {
             value.build(context)

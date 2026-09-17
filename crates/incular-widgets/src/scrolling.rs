@@ -16,7 +16,7 @@ use typed_builder::TypedBuilder;
 
 use crate::drag_drop::DragDropContext;
 use crate::tree::WidgetKind;
-use crate::{Column, DecoratedBox, DragTarget, Draggable, Padding, Row, SizedBox, Widget};
+use crate::{Column, DragTarget, Draggable, Padding, Row, SizedBox, Widget};
 
 type SliverLayoutBuilderFn = Rc<dyn Fn(SliverConstraints) -> Widget>;
 

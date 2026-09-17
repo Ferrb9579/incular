@@ -145,6 +145,28 @@ fn material_slider_uses_retained_keyboard_focus_and_range_constraints() {
 }
 
 #[test]
+fn material_text_form_field_default_controller_is_shared_with_registration() {
+    let form = Form::new();
+    let saved = Rc::new(Cell::new(String::new()));
+    let output = saved.clone();
+    let descriptor = TextFormField::new().on_saved(move |text| output.set(text));
+    let registration = descriptor.register_with_form(&form);
+    registration.set_text("Ada");
+    let mut tree = WidgetTree::new();
+    tree.mount(descriptor.into()).expect("mount");
+    tree.layout(Constraints::loose(Size::new(320.0, 80.0)))
+        .expect("layout");
+    let field = tree
+        .text_field_at(incular::prelude::Offset::new(20.0, 20.0))
+        .expect("editor");
+    let controller = tree.text_controller(field).expect("controller");
+    assert_eq!(controller.text(), "Ada");
+    controller.set_text("Grace");
+    assert!(form.save());
+    assert_eq!(saved.take(), "Grace");
+}
+
+#[test]
 fn material_text_form_field_registers_validation_and_save_callbacks() {
     let controller = TextEditingController::with_text("Ada");
     let form = Form::new();

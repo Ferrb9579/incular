@@ -407,7 +407,11 @@ pub(super) fn semantic_action_is_executable(
     match action {
         SemanticActionKind::Focus => false,
         SemanticActionKind::Activate => {
-            matches!(kind, WidgetKind::Button(spec) if spec.has_callback && spec.enabled)
+            matches!(
+                kind,
+                WidgetKind::Button(spec)
+                    if spec.enabled && (spec.has_callback || spec.action != ActionId(0))
+            )
         }
         SemanticActionKind::SetText | SemanticActionKind::SetSelection => {
             matches!(kind, WidgetKind::TextField(_))

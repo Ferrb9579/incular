@@ -129,7 +129,9 @@ fn manual_reentrant_listeners_cannot_restore_older_history_current() {
                 nested.set_text("reentrant");
             }
         });
-        let history = history.take().unwrap_or_else(|| UndoHistoryController::new(editor.clone()));
+        let history = history
+            .take()
+            .unwrap_or_else(|| UndoHistoryController::new(editor.clone()));
         editor.set_text("first");
         assert_eq!(editor.text(), "reentrant");
         editor.set_text("last");
@@ -148,7 +150,11 @@ fn manual_reentrant_listeners_cannot_restore_older_history_current() {
 
 #[test]
 fn panic_during_undo_does_not_suppress_subsequent_edits() {
-    use std::{cell::Cell, panic::{AssertUnwindSafe, catch_unwind}, rc::Rc};
+    use std::{
+        cell::Cell,
+        panic::{AssertUnwindSafe, catch_unwind},
+        rc::Rc,
+    };
     let editor = TextEditingController::with_text("a");
     let panic_once = Rc::new(Cell::new(false));
     let observed = panic_once.clone();

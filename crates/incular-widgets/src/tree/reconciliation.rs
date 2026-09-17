@@ -36,7 +36,8 @@ impl WidgetTree {
         };
         if let Some(transform) = spec.edit_transform.clone() {
             element.edit_transform_subscription = Some(
-                spec.controller.register_edit_transform(move |old, next| transform(old, next)),
+                spec.controller
+                    .register_edit_transform(move |old, next| transform(old, next)),
             );
         }
         if let Some(changed) = spec.edit_changed.clone() {

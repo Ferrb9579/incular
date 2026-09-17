@@ -99,6 +99,23 @@ mod p0_controls_tests {
     }
 
     #[test]
+    fn standalone_disabled_tab_excludes_interaction_and_semantics() {
+        let widget: Widget = Tab::text("Locked").enabled(false).into();
+        let mut tree = incular_widgets::internal::WidgetTree::new();
+        tree.mount(widget).expect("mount disabled tab");
+        tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
+            120.0, 48.0,
+        )))
+        .expect("layout");
+        tree.update_semantics();
+        assert!(
+            tree.semantics()
+                .iter()
+                .all(|(_, node)| !matches!(node.role, incular_semantics::Role::Button))
+        );
+    }
+
+    #[test]
     fn typed_builders_keep_material_defaults_and_accept_widgets() {
         let checkbox = Checkbox::builder().build();
         assert_eq!(checkbox.is_checked(), None);
@@ -555,6 +572,25 @@ mod menu_tests {
         assert_eq!(entry.value, 7);
         assert_eq!(entry.label, "Seven");
         assert!(!entry.enabled);
+    }
+
+    #[test]
+    fn dropdown_form_field_registration_saves_the_selected_entry() {
+        let form = incular_widgets::Form::new();
+        let saved = Rc::new(Cell::new(None::<u32>));
+        let observed = saved.clone();
+        let descriptor = DropdownButtonFormField::new([
+            PopupMenuItem::label("One").value(1_u32),
+            PopupMenuItem::label("Two").value(2_u32),
+        ])
+        .value(2_u32)
+        .on_saved(move |value| observed.set(value.copied()));
+        let registration = descriptor.register_with_form(&form);
+        assert_eq!(form.field_count(), 1);
+        assert!(form.save());
+        assert_eq!(saved.get(), Some(2));
+        drop(registration);
+        assert_eq!(form.field_count(), 0);
     }
 
     #[test]

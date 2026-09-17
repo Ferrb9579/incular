@@ -1730,6 +1730,54 @@ fn dynamic_keyed_type_change_remounts() {
 }
 
 #[test]
+fn decorated_sliver_paints_its_background_and_border() {
+    let decoration = incular_rendering::Decoration {
+        background: Some(incular_rendering::Brush::Solid(Color::rgba(
+            10, 20, 30, 255,
+        ))),
+        border: Some(incular_rendering::Border::new(
+            3.0,
+            Color::rgba(200, 10, 10, 255),
+        )),
+        ..incular_rendering::Decoration::default()
+    };
+    let sliver = DecoratedSliver::new(
+        decoration,
+        SliverToBoxAdapter::new(Widget::box_(Size::new(40., 40.), Color::WHITE)),
+    );
+    let mut tree = WidgetTree::new();
+    tree.mount(CustomScrollView::new(vec![Box::new(sliver) as Box<dyn Sliver>]).into())
+        .expect("mount decorated sliver");
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
+    let list = tree.paint();
+    assert!(
+        list.commands().iter().any(|command| {
+            matches!(
+                command,
+                PaintCommand::RRect {
+                    brush: incular_rendering::Brush::Solid(color),
+                    ..
+                } if *color == Color::rgba(10, 20, 30, 255)
+            )
+        }),
+        "configured background must paint"
+    );
+    assert!(
+        list.commands().iter().any(|command| {
+            matches!(
+                command,
+                PaintCommand::Border { border, .. }
+                    if border.color == Color::rgba(200, 10, 10, 255) && border.width == 3.0
+            )
+        }),
+        "configured border must paint"
+    );
+}
+
+#[test]
 fn dynamic_removed_children_unmount_exactly_once() {
     // Removal unmounts each dropped child once, and a later sibling
     // set never resurrects the dead ids: the returning key mounts

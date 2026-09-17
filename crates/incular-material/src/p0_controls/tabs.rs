@@ -3,7 +3,9 @@ use crate::{TabAlignment, TabBarIndicatorSize};
 use incular_config::{CrossAxisAlignment, MainAxisAlignment};
 use incular_core::Color;
 use incular_text::TextStyle;
-use incular_widgets::{Column, Container, PageView, Row, Text, Widget};
+use incular_widgets::{
+    Column, Container, ExcludeSemantics, IgnorePointer, PageView, Row, Text, Widget,
+};
 use std::cell::Cell;
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
@@ -89,8 +91,12 @@ impl Tab {
 
 impl From<Tab> for Widget {
     fn from(value: Tab) -> Self {
-        let _ = (value.icon, value.text, value.enabled);
-        value.child
+        let _ = (value.icon, value.text);
+        if value.enabled {
+            value.child
+        } else {
+            IgnorePointer::new(ExcludeSemantics::new(value.child)).into()
+        }
     }
 }
 

@@ -123,7 +123,10 @@ impl Inner {
         }
 
         let previous = self.applying.replace(true);
-        let _guard = RestorePrevious { inner: self, previous };
+        let _guard = RestorePrevious {
+            inner: self,
+            previous,
+        };
         self.editor.set_value(value);
     }
 }

@@ -732,17 +732,26 @@ impl TextField {
         let transform = if formatters.is_empty() && limit.is_none() {
             None
         } else {
-            Some(Rc::new(move |old: &incular_text::TextEditingValue, current: &incular_text::TextEditingValue| {
-                let mut next = current.clone();
-                for formatter in &formatters {
-                    next = formatter.format_edit_update(old, &next);
-                }
-                if let Some(limit) = limit {
-                    next = incular_widgets::LengthLimitingTextInputFormatter::new(limit)
-                        .format_edit_update(old, &next);
-                }
-                next
-            }) as Rc<dyn Fn(&incular_text::TextEditingValue, &incular_text::TextEditingValue) -> incular_text::TextEditingValue>)
+            Some(Rc::new(
+                move |old: &incular_text::TextEditingValue,
+                      current: &incular_text::TextEditingValue| {
+                    let mut next = current.clone();
+                    for formatter in &formatters {
+                        next = formatter.format_edit_update(old, &next);
+                    }
+                    if let Some(limit) = limit {
+                        next = incular_widgets::LengthLimitingTextInputFormatter::new(limit)
+                            .format_edit_update(old, &next);
+                    }
+                    next
+                },
+            )
+                as Rc<
+                    dyn Fn(
+                        &incular_text::TextEditingValue,
+                        &incular_text::TextEditingValue,
+                    ) -> incular_text::TextEditingValue,
+                >)
         };
         let mut editor = Widget::from(raw).with_edit_callbacks(transform, self.on_changed.clone());
         if let Some(callback) = self.on_tap.clone() {
@@ -868,7 +877,7 @@ impl From<TextField> for Widget {
 /// on the descriptor so applications can attach them while composing a form.
 #[derive(Clone)]
 pub struct TextFormField {
-    controller: Option<TextEditingController>,
+    controller: TextEditingController,
     validator: Option<Validator>,
     on_saved: Option<Rc<dyn Fn(String)>>,
     on_submit: Option<Rc<dyn Fn(String)>>,
@@ -914,7 +923,7 @@ impl TextFormField {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            controller: None,
+            controller: TextEditingController::new(),
             validator: None,
             on_saved: None,
             on_submit: None,
@@ -953,7 +962,7 @@ impl TextFormField {
 
     #[must_use]
     pub fn controller(mut self, controller: TextEditingController) -> Self {
-        self.controller = Some(controller);
+        self.controller = controller;
         self
     }
 
@@ -983,7 +992,7 @@ impl TextFormField {
     /// and keeps registration independent of widget rebuilds.
     #[must_use]
     pub fn register_with_form(&self, form: &Form) -> FormField {
-        let controller = self.controller.clone().unwrap_or_default();
+        let controller = self.controller.clone();
         let mut field = form.register(controller);
         if let Some(validator) = self.validator.clone() {
             field = field.validator(move |text| validator(text));
@@ -1195,7 +1204,7 @@ impl TextFormField {
 
 impl From<TextFormField> for Widget {
     fn from(value: TextFormField) -> Self {
-        let controller = value.controller.unwrap_or_default();
+        let controller = value.controller;
         let validation_error = if matches!(
             value.autovalidate_mode,
             AutovalidateMode::Always | AutovalidateMode::OnUserInteraction

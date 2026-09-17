@@ -1414,8 +1414,13 @@ impl DecoratedSliver {
 
 impl Sliver for DecoratedSliver {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let child = self.sliver.build(controller);
-        DecoratedBox::new(child).into()
+        Widget::decorated(
+            None,
+            self.decoration.background.clone(),
+            self.decoration.border,
+            self.decoration.border_radius,
+            self.sliver.build(controller),
+        )
     }
 
     fn create_render_sliver(
@@ -1428,12 +1433,14 @@ impl Sliver for DecoratedSliver {
         let inner = self.sliver.create_render_sliver(controller, axis, reverse);
         Box::new(WidgetWrapRenderSliver {
             inner: RefCell::new(inner),
-            // `Decoration` is renderer-owned and the existing DecoratedBox
-            // widget accepts BoxDecoration. Preserve the sliver geometry and
-            // retain the child while that richer decoration bridge is added.
             wrap: Rc::new(move |widget| {
-                let _ = &decoration;
-                DecoratedBox::new(widget).into()
+                Widget::decorated(
+                    None,
+                    decoration.background.clone(),
+                    decoration.border,
+                    decoration.border_radius,
+                    widget,
+                )
             }),
         })
     }

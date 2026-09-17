@@ -159,6 +159,35 @@ fn submit_callback_replacement_takes_effect() {
 }
 
 #[test]
+fn edit_callbacks_transform_notify_and_detach() {
+    use std::{cell::RefCell, rc::Rc};
+    let controller = TextEditingController::new();
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let changed = observed.clone();
+    let widget = Widget::from(EditableText::new(controller.clone())).with_edit_callbacks(
+        Some(Rc::new(|_, next| {
+            incular_text::TextEditingValue::new(next.text.to_uppercase())
+        })),
+        Some(Rc::new(move |text| {
+            changed.borrow_mut().push(text.to_owned())
+        })),
+    );
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(widget).expect("mount");
+    controller.replace_selection("hello");
+    assert_eq!(controller.text(), "HELLO");
+    assert_eq!(*observed.borrow(), ["HELLO"]);
+    tree.update(
+        root,
+        Widget::from(EditableText::new(controller.clone())).with_edit_callbacks(None, None),
+    )
+    .expect("remove callbacks");
+    controller.set_text("next");
+    assert_eq!(controller.text(), "next");
+    assert_eq!(*observed.borrow(), ["HELLO"]);
+}
+
+#[test]
 fn input_hints_update_while_focused() {
     let controller = TextEditingController::with_text("hi");
     let (mut tree, root) =

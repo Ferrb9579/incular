@@ -4,6 +4,7 @@
 
 use super::super::*;
 use super::{Widget, WidgetChildren, WidgetNode};
+use crate::tree::specs::{EditChanged, EditTransform};
 
 impl Widget {
     fn from_node(node: WidgetNode) -> Self {
@@ -227,7 +228,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub(in crate::tree) fn decorated(
+    pub fn decorated(
         size: Option<Size>,
         background: Option<Brush>,
         border: Option<Border>,
@@ -529,8 +530,8 @@ impl Widget {
     #[must_use]
     pub fn with_edit_callbacks(
         mut self,
-        transform: Option<Rc<dyn Fn(&incular_text::TextEditingValue, &incular_text::TextEditingValue) -> incular_text::TextEditingValue>>,
-        changed: Option<Rc<dyn Fn(&str)>>,
+        transform: Option<EditTransform>,
+        changed: Option<EditChanged>,
     ) -> Self {
         if let WidgetKind::TextField(spec) = self.kind_mut() {
             spec.edit_transform = transform;
