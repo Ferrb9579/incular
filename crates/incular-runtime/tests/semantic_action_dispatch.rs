@@ -298,12 +298,18 @@ fn semantic_activate_respects_button_enabled_gate() {
     let tree = runtime.tree();
     let root = tree.root().expect("root");
     let kids: Vec<_> = tree.children(root).expect("children").to_vec();
-    let enabled_node = tree
-        .semantic_node_for_element(kids[0])
-        .expect("enabled node");
-    let disabled_node = tree
-        .semantic_node_for_element(kids[1])
-        .expect("disabled node");
+    let control_node = |root| {
+        let mut pending = vec![root];
+        while let Some(element) = pending.pop() {
+            if tree.action_for_element(element).is_some() {
+                return tree.semantic_node_for_element(element).expect("button node");
+            }
+            pending.extend(tree.children(element).unwrap_or_default().iter().copied());
+        }
+        panic!("retained button missing");
+    };
+    let enabled_node = control_node(kids[0]);
+    let disabled_node = control_node(kids[1]);
     // Advertisement already agrees: only the enabled button offers Activate.
     assert!(node_actions(&runtime, enabled_node).contains(&SemanticActionKind::Activate));
     assert!(!node_actions(&runtime, disabled_node).contains(&SemanticActionKind::Activate));
@@ -391,11 +397,99 @@ fn semantic_action_after_unmount_resolves_false() {
         .tree_mut()
         .update(
             root,
-            Stack::new([Widget::from(Text::new("sibling"))]).into(),
+            Stack::new(Vec::<Widget>::new()).into(),
         )
         .expect("unmount");
     assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Activate));
     assert_eq!(calls.get(), 0);
+}
+
+#[test]
+fn focus_accepts_only_current_eligible_targets() {
+    let editor = TextEditingController::new();
+    let mut runtime = Runtime::new(Stack::new([
+        Widget::from(EditableText::new(editor.clone()).size(Size::new(180., 32.))),
+        Semantics::new(Text::new("plain"))
+            .label("plain").action(SemanticAction::Focus).into(),
+    ]).into()).unwrap();
+    let constraints = Constraints::tight(Size::new(200., 100.));
+    runtime.run_frame(constraints).unwrap();
+    let root = runtime.tree().root().unwrap();
+    let children = runtime.tree().children(root).unwrap().to_vec();
+    let field = children[0];
+    let node = runtime.tree().semantic_node_for_element(field).unwrap();
+    let plain = runtime.tree().semantic_node_for_element(children[1]).unwrap();
+    assert!(node_actions(&runtime, node).contains(&SemanticActionKind::Focus));
+    assert!(runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+    assert!(runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+    assert_eq!(runtime.focused_element(), Some(field));
+    assert!(!node_actions(&runtime, plain).contains(&SemanticActionKind::Focus));
+    assert!(!runtime.dispatch_semantic_action(plain, SemanticAction::Focus));
+    assert_eq!(runtime.focused_element(), Some(field));
+    runtime.tree_mut().update(field, EditableText::new(editor).enabled(false)
+        .size(Size::new(180., 32.)).into()).unwrap();
+    assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+    runtime.run_frame(constraints).unwrap();
+    assert!(!node_actions(&runtime, node).contains(&SemanticActionKind::Focus));
+    runtime.tree_mut().update(root, Stack::new(Vec::<Widget>::new()).into()).unwrap();
+    assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+}
+
+#[test]
+fn focus_rejects_inactive_retained_children_before_projection_refresh() {
+    use incular_widgets::IndexedStack;
+    let first = TextEditingController::new();
+    let second = TextEditingController::new();
+    let build = |index| Widget::from(IndexedStack::new([
+        Widget::from(EditableText::new(first.clone()).size(Size::new(180., 32.))),
+        Widget::from(EditableText::new(second.clone()).size(Size::new(180., 32.))),
+    ]).index(index));
+    let mut runtime = Runtime::new(build(0)).unwrap();
+    let constraints = Constraints::tight(Size::new(200., 100.));
+    runtime.run_frame(constraints).unwrap();
+    let root = runtime.tree().root().unwrap();
+    let first_element = runtime.tree().children(root).unwrap()[0];
+    let node = runtime.tree().semantic_node_for_element(first_element).unwrap();
+    runtime.tree_mut().update(root, build(1)).unwrap();
+    assert!(runtime.tree().element_exists(first_element));
+    assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+    runtime.run_frame(constraints).unwrap();
+    assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+}
+
+#[test]
+fn direct_semantic_focus_is_not_tab_traversal() {
+    use incular_widgets::{ExcludeFocus, ExcludeFocusTraversal};
+    let field = || EditableText::new(TextEditingController::new()).size(Size::new(180., 32.));
+    let mut runtime = Runtime::new(Stack::new([
+        Widget::from(ExcludeFocusTraversal::new(field())),
+        Widget::from(ExcludeFocus::new(field())),
+    ]).into()).unwrap();
+    runtime.run_frame(Constraints::tight(Size::new(200., 100.))).unwrap();
+    let root = runtime.tree().root().unwrap();
+    let children = runtime.tree().children(root).unwrap().to_vec();
+    assert!(runtime.tree().focusable_elements().is_empty());
+    let direct = runtime.tree().semantic_node_for_element(children[0]).unwrap();
+    let excluded = runtime.tree().semantic_node_for_element(children[1]).unwrap();
+    assert!(node_actions(&runtime, direct).contains(&SemanticActionKind::Focus));
+    assert!(runtime.dispatch_semantic_action(direct, SemanticAction::Focus));
+    assert!(!node_actions(&runtime, excluded).contains(&SemanticActionKind::Focus));
+    assert!(!runtime.dispatch_semantic_action(excluded, SemanticAction::Focus));
+}
+
+#[test]
+fn explicit_activation_survives_focus_rejection() {
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let mut runtime = Runtime::new(Semantics::new(Text::new("custom"))
+        .enabled(false).action(SemanticAction::Focus)
+        .on_tap(move || observed.set(observed.get() + 1)).into()).unwrap();
+    runtime.run_frame(Constraints::tight(Size::new(200., 100.))).unwrap();
+    let root = runtime.tree().root().unwrap();
+    let node = runtime.tree().semantic_node_for_element(root).unwrap();
+    assert!(!runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+    assert!(runtime.dispatch_semantic_action(node, SemanticAction::Activate));
+    assert_eq!(calls.get(), 1);
 }
 
 #[test]

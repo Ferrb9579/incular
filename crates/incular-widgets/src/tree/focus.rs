@@ -4,6 +4,49 @@ use super::*;
 
 impl WidgetTree {
     #[must_use]
+    pub fn can_request_focus(&self, id: ElementId) -> bool {
+        let Some(element) = self.elements.get(id.0) else {
+            return false;
+        };
+        let eligible = match element.widget.kind() {
+            WidgetKind::Button(spec) => spec.enabled || spec.focusable_when_disabled,
+            WidgetKind::TextField(spec) => spec.enabled,
+            WidgetKind::SelectableText { .. } => true,
+            WidgetKind::Gesture { callbacks, .. } => callbacks
+                .focus_node
+                .as_ref()
+                .is_some_and(|node| node.can_request_focus()),
+            _ => false,
+        };
+        if !eligible {
+            return false;
+        }
+        let mut current = id;
+        loop {
+            let Some(entry) = self.elements.get(current.0) else {
+                return false;
+            };
+            if entry.widget.semantic_properties().exclude_focus {
+                return false;
+            }
+            let Some(parent) = entry.parent else {
+                return self.root == Some(current);
+            };
+            let Some(ancestor) = self.elements.get(parent.0) else {
+                return false;
+            };
+            match ancestor.widget.kind() {
+                WidgetKind::IndexedStack { index, .. }
+                    if ancestor.children.get(*index) != Some(&current) => return false,
+                WidgetKind::Gesture { callbacks, .. }
+                    if callbacks.focus_node.as_ref().is_some_and(|node| !node.descendants_are_focusable()) => return false,
+                _ => {}
+            }
+            current = parent;
+        }
+    }
+
+    #[must_use]
     pub fn focusable_elements(&self) -> Vec<ElementId> {
         with_recursive_tree_stack(|| self.focusable_elements_recursive())
     }
@@ -337,16 +380,7 @@ impl WidgetTree {
             }
             let excluded_focus =
                 excluded_focus || element.widget.semantic_properties().exclude_focus;
-            let focusable = match element.widget.kind() {
-                WidgetKind::Button(spec) => spec.enabled || spec.focusable_when_disabled,
-                WidgetKind::TextField(spec) => spec.enabled,
-                WidgetKind::SelectableText { .. } => true,
-                WidgetKind::Gesture { callbacks, .. } => callbacks
-                    .focus_node
-                    .as_ref()
-                    .is_some_and(|node| node.can_request_focus()),
-                _ => false,
-            };
+            let focusable = self.can_request_focus(id);
             if focusable && !excluded_focus {
                 let bounds = self.element_bounds(id).unwrap_or_default();
                 let order = element.widget.semantic_properties().focus_traversal_order;

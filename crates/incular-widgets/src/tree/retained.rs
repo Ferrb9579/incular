@@ -1037,9 +1037,8 @@ impl WidgetTree {
     /// Whether a semantic Activate may execute on this element right now.
     /// This is the single advertisement/execution predicate shared with
     /// semantic collection: explicit callbacks always qualify, otherwise
-    /// only an enabled button with a bound callback does. Dispatch checks
-    /// this instead of re-stating the rule, so execution can never drift
-    /// from what native adapters were told the node offers.
+    /// only an enabled button with a bound callback does. Dispatch rechecks
+    /// current eligibility; native projections may describe an earlier frame.
     #[must_use]
     pub fn semantic_activate_executable(&self, id: ElementId) -> bool {
         self.elements.get(id.0).is_some_and(|element| {

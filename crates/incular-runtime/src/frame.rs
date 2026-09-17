@@ -91,7 +91,7 @@ pub struct EditingDiagnostics {
 /// controller handle is retained so cleanup always addresses the
 /// composition's own editor, never the currently focused one.
 ///
-/// Preedit → update → Commit → End: all three reach the owner.
+/// Preedit → update → Commit → End: Commit retires the owner; End is ignored.
 /// Preedit → End: cancellation; the owner's preedit clears, no text changes.
 /// Preedit → focus moves: focus change cancels first; later events start fresh.
 /// Preedit → controller replaced, field unmounted, or field no longer
@@ -749,8 +749,12 @@ impl Runtime {
     /// keyboard paths, which never see a disabled button past their own
     /// enabled gate. SetText requires an editable field while SetSelection
     /// requires only a controller — selection stays available in read-only
-    /// and disabled fields on every input path. Focus acceptance is
-    /// `set_focus` running, the single focus owner for all paths.
+    /// and disabled fields on every input path. Focus accepts only targets
+    /// the tree's own focusability owner admits (`can_request_focus`:
+    /// enabled controls, selectable text, or a focus node, unobstructed by
+    /// `exclude_focus` or a hidden IndexedStack slot), with an
+    /// already-focused valid target still reporting success; `set_focus`
+    /// remains the single focus owner for all paths.
     pub fn dispatch_semantic_action(
         &mut self,
         node: SemanticNodeId,
@@ -762,8 +766,12 @@ impl Runtime {
         self.tree.note_semantic_action();
         let handled = match action {
             SemanticAction::Focus => {
-                self.set_focus(Some(element));
-                true
+                if self.tree.can_request_focus(element) {
+                    self.set_focus(Some(element));
+                    true
+                } else {
+                    false
+                }
             }
             SemanticAction::Activate => {
                 if let Some(callback) = self.tree.semantic_action_callback(

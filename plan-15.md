@@ -3142,7 +3142,7 @@ while repository-wide validation remains incomplete.
 Exit: keyboard/pointer/accessibility invoke the same action once; editing survives
 composition/undo/restoration; no stale focus/capture/semantic owner remains.
 
-First batch — entry points and authoritative owners (implemented):
+First batch — source changes (superseded findings corrected below; unexecuted):
 - IME events enter at `Runtime::handle_input(InputEvent::Ime)` and route in
   `Runtime::handle_ime`; the retained `(field, controller)` composition owner
   decides Commit/End targets. Text/range normalization stays in
@@ -3160,7 +3160,7 @@ First batch — entry points and authoritative owners (implemented):
   brackets, captures, leases, semantic ids), `dispose_window`/`shutdown`
   (focus, histories, clients, scopes). No new registries or managers.
 
-Concrete defects fixed (each reproduced in analysis before changing code):
+Source-level defects identified (not executable reproductions):
 - Commits after a focus move landed in the wrong editor while the old editor
   kept a stale preedit; replacement, unmount, and editable-to-frozen
   transitions orphaned preedit the same way. Fixed with the retained owner,
@@ -3170,22 +3170,27 @@ Concrete defects fixed (each reproduced in analysis before changing code):
   pointer, keyboard, and advertisement refused it. Fixed by gating the
   fallback on the shared predicate (widgets `retained.rs`, runtime dispatch).
 
-Composition/history policies (specified, implementation already followed them):
+Composition/history policies (corrected by the corrective batch):
 - Preedit set/clear, selection/caret moves, and the composing marker are
-  transient and never enter history; every committed text change is exactly
-  one step, with one committed composition collapsing to its single replace
-  step; any committed value change clears the transient overlay.
+  transient and never enter history. History records observed committed
+  transitions; earlier reentrant listeners can coalesce intermediate values.
+  A committed composition uses one replacement with overlay retirement before
+  notification; listener-created preedit survives. Value changes clear the old overlay.
 - Redo clears on the next committed text change including after undo;
   controller replacement starts fresh; reentrant listener edits commit
   normally (newer wins, snapshots never restored over them); edits during
   undo/redo dispatch absorb into current without creating steps.
-- No input-formatter layer exists: every edit funnels through `update()`.
-- Post-divergence IME events process as ownerless (attributed to the focused
-  field); the triggering event is never silently dropped nor specially routed.
+- Widgets owns `TextInputFormatter`; Material supplies formatter configuration.
+  The previous claim that no formatter layer existed was incorrect.
+- Ownerless Commit applies to the focused editable field as a compatibility
+  policy for direct-commit IMEs. Without event session/client identity, a late
+  Commit after focus changes cannot be distinguished reliably from a legitimate
+  direct Commit. This is not stale-commit protection. Ownerless End is ignored.
 
-Behavior inspected and left unchanged (sound, documented where pinned):
-- Focus dispatch returning true (acceptance is `set_focus` running, the
-  single owner); SetText/SetSelection asymmetry (mutation editable-only,
+Behavior inspected, not execution-validated:
+- The claim that Focus acceptance means `set_focus` ran was incorrect and is
+  replaced by the shared focus eligibility owner below. SetText/SetSelection
+  retains its asymmetry (mutation editable-only,
   selection controller-only — pointer and keyboard agree, including disabled
   fields); scroll/increment/decrement callback-first with shared fallback
   predicates; exactly-once activation through the single `activate_action`
@@ -3208,8 +3213,73 @@ cancel traceless, committed composition as one step, undo-then-edit clears
 redo, reentrant edit consistency), runtime `semantic_action_dispatch.rs`
 (enabled/disabled built-in Activate, disabled-field SetSelection,
 post-unmount refusal). A runtime dev-dependency on `incular-controls` was
-added for the button-gate test with the Cargo.lock edge hand-matched; the
-next cargo run heals the lockfile if the entries differ.
+added for the button-gate test. Source review matches its workspace path/version
+and runtime dev-dependency to the existing `incular-controls` lockfile edge.
+Cargo resolution has NOT been run; no automatic lockfile repair is promised.
+
+Corrective batch after `e274ea0` (A–D, source only, W6 remains open):
+
+- A (`8959d01`): retained runtime owner is validated after build and layout,
+  including direct tree updates followed by a frame. Replacement and disabling
+  no longer await native IME input. Commit/End take the owner before controller
+  notifications; ownerless End leaves unrelated preedit alone. Focused-editor
+  lookup is shared. The direct-Commit protocol ambiguity above is intentional.
+  Regression source: replacement and disabled/read-only transitions without later
+  IME input, ownerless End; existing direct-Commit and shutdown cases retained.
+  Uncertainty: native client sequencing and direct tree mutation without a frame.
+- B (`0ef32d7`): commit_preedit previously notified replacement listeners and then
+  cleared their newly created preedit. Overlay retirement now belongs to the
+  controller update, including equal-value terminal commits. History's scoped
+  guard restores the prior applying flag across nested undo/redo and unwinding;
+  it refreshes current from the editor, not historical notification arguments.
+  Both manual listener orders are represented. Earlier reentrant listeners may
+  coalesce an intermediate state; later listeners may expose it as an undo step.
+  Regression source: new composition during commit, panic during undo followed
+  by ordinary edits, nested redo during undo, both manual registration orders.
+  Uncertainty: panic-time availability signal is not published while unwinding;
+  the next ordinary transition resynchronizes it. No event queue was introduced.
+- C (`f9f757c`): Material conversion registered an unremoved listener capturing a
+  strong controller clone (controller -> listener -> controller). Rebuilds could
+  accumulate old formatter/callback configurations. The retained TextField
+  element now owns existing RAII transform/observation tokens; conversion alone
+  registers nothing. Replacement drops old tokens, unmount/tree drop releases
+  them, and runtime shutdown/window disposal explicitly releases them.
+  Text's pre-commit transform boundary receives accepted old/current proposals,
+  clamps final ranges, and notifies history only after acceptance. Widgets keeps
+  formatter algorithms; Material supplies configuration through a narrow bridge.
+  The old normalization flag is removed: existing ReadOnlyGuard rejects committed
+  mutation inside formatters before writing, unwinds on panic, and is gone before
+  changed callbacks run. Nested changed-callback edits undergo their own formatting.
+  Regression source in existing length-formatting fixture: mount-aware original
+  tests, repeated rebuild, replacement, unmount with retained descriptor, callback
+  counts, accepted previous values, formatter panic, length-changing undo, nested
+  callbacks, shutdown and tree drop. All NOT EXECUTED.
+  Uncertainty: simultaneous mounts sharing a controller compose registrations in
+  subscription order; that policy and restoration binding need broader coverage.
+- D: Focus unconditionally returned success and advertised Focus even for nodes
+  with no focus mechanism. `can_request_focus` extracts the existing tree focus
+  rules and is reused by traversal, semantic collection and runtime dispatch.
+  Enabled controls/selectable text/requestable FocusNodes qualify; disabled fields
+  and ordinary disabled buttons do not. The existing explicit
+  `focusable_when_disabled` button opt-in remains supported. Plain labels and
+  inactive IndexedStack branches do not qualify; detached semantic IDs fail lookup.
+  Already-focused eligible targets succeed. ExcludeFocus and ancestor descendant
+  restrictions apply, while ExcludeFocusTraversal remains tab-only. Custom
+  semantics cannot invent focus eligibility; supported explicit non-Focus callbacks
+  remain independent. There is currently no explicit semantic Focus callback API.
+  Native AccessKit/mobile translation continues to gate on projected actions;
+  runtime rechecks live focus eligibility when that projection is stale.
+  Regression source: eligible/already-focused/disabled/plain/stale targets,
+  inactive retained child before projection refresh, direct versus tab focus,
+  and explicit Activate after Focus rejection. Source review corrected the prior
+  button test to find the nested ActionSurface rather than its LayoutBuilder,
+  and the unmount test to remove all children rather than reuse an unkeyed Text.
+  Uncertainty: native adapters, focus transitions outside semantic dispatch,
+  traversal performance and all compilation/test behavior remain unvalidated.
+
+No tests, builds, Clippy, formatters or native runs were executed for this batch.
+Source inspection is not proof of passing tests. New bridge signatures and
+retained subscription teardown require the deferred workspace gates.
 
 Remaining W6 work (W6 stays open): execute the unexecuted tests plus full
 gates; multi-contact arbitration and captured-pointer cleanup across popup,

@@ -314,7 +314,15 @@ impl WidgetTree {
                 actions.push(action);
             }
         }
+        let focusable = self.can_request_focus(element);
+        state.focusable = focusable;
+        if focusable && !actions.contains(&SemanticActionKind::Focus) {
+            actions.push(SemanticActionKind::Focus);
+        }
         actions.retain(|action| {
+            if *action == SemanticActionKind::Focus {
+                return focusable;
+            }
             semantic_action_is_executable(
                 entry.widget.kind(),
                 *action,
@@ -397,7 +405,7 @@ pub(super) fn semantic_action_is_executable(
         return true;
     }
     match action {
-        SemanticActionKind::Focus => true,
+        SemanticActionKind::Focus => false,
         SemanticActionKind::Activate => {
             matches!(kind, WidgetKind::Button(spec) if spec.has_callback && spec.enabled)
         }
