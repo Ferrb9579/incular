@@ -34,6 +34,14 @@ pub const DEFAULT_RESTORATION_DEBOUNCE: Duration = Duration::from_millis(250);
 /// not a database or a place for files, images, credentials, or tokens.
 pub const DEFAULT_RESTORATION_SNAPSHOT_LIMIT: usize = 8 * 1024 * 1024;
 
+/// Maximum number of automatic retry attempts after a failed save. Retries
+/// use bounded exponential backoff; a new mutation always schedules a normal
+/// debounced save regardless of this counter.
+pub const MAX_RESTORATION_SAVE_RETRIES: u32 = 3;
+
+/// Base delay for the bounded retry backoff.
+pub const RESTORATION_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+
 /// Error reported by a persistence store. Store errors are diagnostics, not
 /// application-fatal failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,8 +167,11 @@ impl FileRestorationStore {
 
     /// Derives an application-specific user state path with the operating
     /// system's standard project-directory conventions. `application_id` must
-    /// be stable across launches.
+    /// be stable across launches and filesystem-safe: empty, path-separator,
+    /// current/parent-directory, NUL, and control-character ids are rejected
+    /// rather than escaping the application data directory.
     pub fn for_application(application_id: &str) -> Result<Self, RestorationStoreError> {
+        validate_application_id(application_id)?;
         let base = incular_platform::application_data_local_directory(application_id).ok_or_else(
             || {
                 RestorationStoreError::new(
@@ -350,7 +361,11 @@ impl SnapshotDocument {
 }
 
 /// Value-free restoration health and write-coalescing diagnostics.
+///
+/// Non-exhaustive so future counters do not break downstream construction;
+/// read the fields and compare with `==` as before.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RestorationDiagnostics {
     pub restoration_loads: u64,
     pub restoration_load_failures: u64,
@@ -372,6 +387,10 @@ pub struct RestorationDiagnostics {
     pub invalid_routes: u64,
     pub restored_scroll_positions: u64,
     pub stale_or_invalid_values: u64,
+    /// Message of the most recent save failure, if any. Cleared after the
+    /// next successful save. This makes permanent conditions such as an
+    /// oversized snapshot diagnosable without a debugger.
+    pub last_save_error: Option<String>,
 }
 
 struct ManagerState {
@@ -380,6 +399,9 @@ struct ManagerState {
     dirty: bool,
     debounce_pending: bool,
     save_in_flight: bool,
+    consecutive_save_failures: u32,
+    retry_pending: bool,
+    persist_migrated_snapshot: bool,
     active_scope_paths: HashSet<String>,
 }
 
@@ -430,6 +452,17 @@ impl RestorationHandle {
             .note_navigation_restore(restored_routes, invalid_routes);
     }
 
+    /// Claims one stable scope path for the guard's lifetime. A second live
+    /// claim of the same path fails instead of silently sharing persistence
+    /// state; windows already hold claims for their own scopes, so use this
+    /// for application-owned dynamic scopes that must stay unique while
+    /// mounted. Dropping the guard releases the path.
+    pub fn claim_scope(&self, scope: &RestorationScope) -> Result<ClaimedRestorationScope, String> {
+        self.manager
+            .acquire_scope(scope.path())
+            .map(|lease| ClaimedRestorationScope { _lease: lease })
+    }
+
     #[must_use]
     pub fn diagnostics(&self) -> RestorationDiagnostics {
         self.manager.diagnostics()
@@ -441,6 +474,13 @@ impl RestorationHandle {
     }
 }
 
+/// Live claim on one stable restoration scope path. Dropping releases the
+/// path so a later mount may claim it; see
+/// [`RestorationHandle::claim_scope`].
+pub struct ClaimedRestorationScope {
+    _lease: ScopeLease,
+}
+
 impl RestorationManager {
     pub(crate) fn load(config: RestorationConfig) -> Self {
         let mut diagnostics = RestorationDiagnostics::default();
@@ -448,11 +488,18 @@ impl RestorationManager {
         match config.store.load() {
             Ok(Some(bytes)) => {
                 diagnostics.restoration_loads = 1;
-                diagnostics.snapshot_bytes = bytes.len();
-                diagnostics.peak_snapshot_bytes = bytes.len();
-                match decode_snapshot(&config, &bytes, &mut diagnostics) {
-                    Ok(decoded) => snapshot = decoded,
-                    Err(()) => diagnostics.restoration_load_failures += 1,
+                if bytes.len() > config.snapshot_limit {
+                    // Fail safe without destroying data: an oversized snapshot
+                    // cannot be reasoned about in memory, so expose defaults
+                    // and let the next debounced save report the size error.
+                    diagnostics.restoration_load_failures = 1;
+                } else {
+                    diagnostics.snapshot_bytes = bytes.len();
+                    diagnostics.peak_snapshot_bytes = bytes.len();
+                    match decode_snapshot(&config, &bytes, &mut diagnostics) {
+                        Ok(decoded) => snapshot = decoded,
+                        Err(()) => diagnostics.restoration_load_failures += 1,
+                    }
                 }
             }
             Ok(None) => diagnostics.restoration_loads = 1,
@@ -465,6 +512,7 @@ impl RestorationManager {
         diagnostics.restoration_scopes = scope_count(&snapshot.state);
         diagnostics.dirty_generation = snapshot.snapshot_generation;
         diagnostics.persisted_generation = snapshot.snapshot_generation;
+        let migrated = diagnostics.restoration_migrations > 0;
         Self {
             inner: Rc::new(RestorationManagerInner {
                 config,
@@ -474,6 +522,9 @@ impl RestorationManager {
                     dirty: false,
                     debounce_pending: false,
                     save_in_flight: false,
+                    consecutive_save_failures: 0,
+                    retry_pending: false,
+                    persist_migrated_snapshot: migrated,
                     active_scope_paths: HashSet::new(),
                 }),
                 scheduler: std::cell::RefCell::new(None),
@@ -486,6 +537,13 @@ impl RestorationManager {
         scheduler: &Rc<std::cell::RefCell<tasks::TaskScheduler>>,
     ) {
         *self.inner.scheduler.borrow_mut() = Some(Rc::downgrade(scheduler));
+        // A load-time migration produced a document the store does not yet
+        // hold; persist it once so a write-less session does not re-run the
+        // migration on every launch.
+        if self.inner.state.borrow().persist_migrated_snapshot {
+            self.inner.state.borrow_mut().persist_migrated_snapshot = false;
+            self.mark_dirty();
+        }
     }
 
     pub(crate) fn read(&self, path: &[RestorationKey]) -> Option<Value> {
@@ -591,6 +649,30 @@ impl RestorationManager {
         state.diagnostics.invalid_routes += invalid_routes;
     }
 
+    pub(crate) fn record_restoration_outcome(&self, restored: u64, invalid: u64) {
+        let mut state = self.inner.state.borrow_mut();
+        state.diagnostics.restored_scroll_positions += restored;
+        state.diagnostics.stale_or_invalid_values += invalid;
+    }
+
+    /// Removes one persisted auxiliary-window descriptor by stable id.
+    /// Returns true when a descriptor was removed and persistence was marked
+    /// dirty; unopened descriptors are otherwise left intact.
+    pub(crate) fn remove_window_descriptor(&self, restoration_id: &str) -> bool {
+        let mut state = self.inner.state.borrow_mut();
+        let before = state.snapshot.windows.len();
+        state
+            .snapshot
+            .windows
+            .retain(|window| window.restoration_id != restoration_id);
+        let removed = state.snapshot.windows.len() != before;
+        drop(state);
+        if removed {
+            self.mark_dirty();
+        }
+        removed
+    }
+
     pub(crate) fn scope(&self) -> RestorationScope {
         RestorationScope::root(Rc::new(self.clone()))
     }
@@ -622,6 +704,7 @@ impl RestorationManager {
             state.diagnostics.dirty_generation = state.diagnostics.dirty_generation.wrapping_add(1);
             state.snapshot.snapshot_generation = state.diagnostics.dirty_generation;
             state.diagnostics.save_requests += 1;
+            state.retry_pending = false;
             if state.save_in_flight || state.debounce_pending {
                 state.diagnostics.save_coalesced += 1;
                 return;
@@ -737,6 +820,9 @@ impl RestorationManager {
             match result {
                 Ok(()) => {
                     state.diagnostics.saves_completed += 1;
+                    state.diagnostics.last_save_error = None;
+                    state.consecutive_save_failures = 0;
+                    state.retry_pending = false;
                     state.diagnostics.snapshot_bytes = bytes;
                     state.diagnostics.peak_snapshot_bytes =
                         state.diagnostics.peak_snapshot_bytes.max(bytes);
@@ -744,20 +830,68 @@ impl RestorationManager {
                     state.dirty = state.diagnostics.dirty_generation != generation;
                     needs_latest = state.dirty;
                 }
-                Err(_) => {
+                Err(error) => {
                     state.diagnostics.save_failures += 1;
+                    state.diagnostics.last_save_error = Some(error.to_string());
                     state.dirty = true;
-                    // Preserve the last known-good file and await an explicit
-                    // later mutation or lifecycle flush. Retrying an unknown
-                    // filesystem failure in a tight loop would both defeat
-                    // coalescing and obscure crash-safety diagnostics.
-                    needs_latest = false;
+                    // Preserve the last known-good file and retry with bounded
+                    // backoff. A tight retry loop would defeat coalescing and
+                    // obscure crash-safety diagnostics, so a retry is scheduled
+                    // only while the bounded budget remains.
+                    state.consecutive_save_failures += 1;
+                    needs_latest = state.consecutive_save_failures <= MAX_RESTORATION_SAVE_RETRIES;
                 }
             }
         }
         if needs_latest {
-            self.schedule_after_in_flight();
+            let retry = {
+                let mut state = self.inner.state.borrow_mut();
+                if !state.dirty || state.debounce_pending || state.save_in_flight {
+                    return;
+                }
+                let failed = state.consecutive_save_failures > 0;
+                state.retry_pending = failed;
+                failed
+            };
+            if retry {
+                self.schedule_retry();
+            } else {
+                self.schedule_after_in_flight();
+            }
         }
+    }
+
+    fn schedule_retry(&self) {
+        let attempt = self
+            .inner
+            .state
+            .borrow()
+            .consecutive_save_failures
+            .clamp(1, MAX_RESTORATION_SAVE_RETRIES);
+        let delay = RESTORATION_RETRY_BACKOFF * attempt;
+        let Some(scheduler) = self
+            .inner
+            .scheduler
+            .borrow()
+            .as_ref()
+            .and_then(Weak::upgrade)
+        else {
+            return;
+        };
+        let manager = self.clone();
+        tasks::TaskScheduler::spawner(&scheduler).spawn_into(
+            async move { tokio::time::sleep(delay).await },
+            move |result, _runtime| {
+                if result.is_ok() {
+                    let mut state = manager.inner.state.borrow_mut();
+                    state.retry_pending = false;
+                    if state.dirty && !state.save_in_flight && !state.debounce_pending {
+                        drop(state);
+                        manager.start_save();
+                    }
+                }
+            },
+        );
     }
 
     fn schedule_after_in_flight(&self) {
@@ -814,6 +948,21 @@ impl Drop for ScopeLease {
                 .remove(&self.path);
         }
     }
+}
+
+fn validate_application_id(application_id: &str) -> Result<(), RestorationStoreError> {
+    let rejected = application_id.trim().is_empty()
+        || application_id.contains(['/', '\\', '\0'])
+        || application_id.chars().any(char::is_control)
+        || application_id
+            .split(['/', '\\'])
+            .any(|segment| segment == "." || segment == "..");
+    if rejected {
+        return Err(RestorationStoreError::new(
+            "restoration application id must be a stable filesystem-safe identifier",
+        ));
+    }
+    Ok(())
 }
 
 fn decode_snapshot(
@@ -896,13 +1045,21 @@ where
 
     /// Reads `key` before returning the normal reactive signal wrapper. A
     /// missing, corrupt, or type-incompatible stored value exposes `default`
-    /// without failing the build that requested it.
+    /// without failing the build that requested it; a present but
+    /// type-incompatible value is additionally counted as stale.
     #[must_use]
     pub fn from_scope(scope: RestorationScope, key: RestorationKey, default: T) -> Self {
-        let initial = scope
-            .get_json(&key)
-            .and_then(|value| serde_json::from_value(value).ok())
-            .unwrap_or(default);
+        let stored = scope.get_json(&key);
+        let initial = match stored {
+            None => default,
+            Some(value) => match serde_json::from_value(value) {
+                Ok(initial) => initial,
+                Err(_) => {
+                    scope.note_restoration_outcome(0, 1);
+                    default
+                }
+            },
+        };
         let write_scope = scope.clone();
         let write_key = key.clone();
         let remove_scope = scope;
@@ -960,5 +1117,9 @@ impl RestorationBackend for RestorationManager {
 
     fn remove_value(&self, path: &[RestorationKey]) {
         let _ = self.remove(path);
+    }
+
+    fn note_restoration_outcome(&self, restored: u64, invalid: u64) {
+        self.record_restoration_outcome(restored, invalid);
     }
 }

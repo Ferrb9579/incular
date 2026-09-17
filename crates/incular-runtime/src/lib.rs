@@ -114,10 +114,11 @@ pub use profiling::{
 };
 pub use reactive::{Action, ActionDispatchError, ActionError, ActionState, Effect, Memo};
 pub use restoration::{
-    DEFAULT_RESTORATION_DEBOUNCE, DEFAULT_RESTORATION_SNAPSHOT_LIMIT,
+    ClaimedRestorationScope, DEFAULT_RESTORATION_DEBOUNCE, DEFAULT_RESTORATION_SNAPSHOT_LIMIT,
     FRAMEWORK_RESTORATION_FORMAT_VERSION, FileRestorationStore, InMemoryRestorationStore,
-    Restorable, RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
-    RestorationStore, RestorationStoreError,
+    MAX_RESTORATION_SAVE_RETRIES, RESTORATION_RETRY_BACKOFF, Restorable, RestorationConfig,
+    RestorationDiagnostics, RestorationHandle, RestorationMigration, RestorationStore,
+    RestorationStoreError,
 };
 pub use route_focus::{RouteFocusOwner, RouteFocusState};
 pub use route_outlet::{OutletAttachError, OutletError, OutletId, OutletPlacement, RouteOutlet};

@@ -120,6 +120,12 @@ pub trait RestorationBackend {
 
     /// Removes a value at the fully-qualified path.
     fn remove_value(&self, path: &[RestorationKey]);
+
+    /// Records restoration recovery outcomes observed outside the runtime
+    /// (scroll offsets, type-incompatible values). The default implementation
+    /// ignores them so test backends stay trivial; the runtime counts
+    /// `restored` as recovered positions and `invalid` as stale values.
+    fn note_restoration_outcome(&self, _restored: u64, _invalid: u64) {}
 }
 
 /// A restoration location supplied by the runtime to an opt-in state owner.
@@ -181,9 +187,11 @@ impl RestorationScope {
 
     /// Extends this scope with one stable child segment.
     ///
-    /// The runtime performs duplicate-scope validation; this convenience name
-    /// makes the namespacing operation discoverable to application-owned
-    /// state without implying position-based identity.
+    /// This is pure namespacing: it performs no duplicate-scope validation.
+    /// The runtime claims window scopes automatically, but application-owned
+    /// dynamic scopes that must be unique while mounted should additionally
+    /// hold a runtime scope claim (see `RestorationHandle::claim_scope`);
+    /// two live writers to one path otherwise collide last-write-wins.
     #[must_use]
     pub fn child(&self, key: RestorationKey) -> Self {
         self.child_unchecked(key)
@@ -217,6 +225,13 @@ impl RestorationScope {
     /// Removes the JSON value stored under a stable value key.
     pub fn remove(&self, key: &RestorationKey) {
         self.backend.remove_value(&self.value_path(key));
+    }
+
+    /// Forwards a recovery outcome to the backend. Scroll restoration and
+    /// typed-value fallbacks report here; backends that do not count outcomes
+    /// ignore the call.
+    pub fn note_restoration_outcome(&self, restored: u64, invalid: u64) {
+        self.backend.note_restoration_outcome(restored, invalid);
     }
 
     fn value_path(&self, key: &RestorationKey) -> Vec<RestorationKey> {

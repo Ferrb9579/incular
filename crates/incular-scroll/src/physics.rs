@@ -600,6 +600,9 @@ impl ScrollController {
             // with a temporary short-content clamp.
             if restored <= state.max_offset {
                 state.pending_restored_offset = None;
+                if let Some(restoration) = state.restoration.clone() {
+                    restoration.scope.note_restoration_outcome(1, 0);
+                }
             }
             None
         } else {

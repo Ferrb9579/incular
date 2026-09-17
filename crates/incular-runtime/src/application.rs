@@ -44,6 +44,7 @@ use incular_accessibility::{
     AccessKitProjection, AccessibilityDiagnostics, NativeAccessibilityUpdate, SemanticActionRequest,
 };
 use incular_config::{Constraints, RuntimeEnvironment};
+use incular_core::RestorationKey;
 use incular_platform::{
     ApplicationActivation, Clipboard, DisplayId, DisplaySnapshot, ExternalDragEvent,
     ExternalDragResponse, FileDialogError, FileDialogOutcome, FileDialogRequest,
@@ -320,8 +321,9 @@ impl Application {
     }
 
     /// Opens an auxiliary window with a stable restoration ID. A normal user
-    /// close removes this descriptor from the next session; application
-    /// shutdown preserves currently active restorable windows.
+    /// close removes this descriptor and its window-scoped values from the
+    /// next session; application shutdown preserves currently active
+    /// restorable windows.
     pub fn open_restorable_window_with(
         &mut self,
         restoration_id: WindowRestorationId,
@@ -355,12 +357,14 @@ impl Application {
     /// Restores all persisted auxiliary windows whose stable factories have
     /// been registered. Call this after registration and before entering the
     /// native runner; it therefore cannot flash a default auxiliary UI before
-    /// restore. Unknown kinds are skipped safely and counted in diagnostics.
+    /// restore. Unknown kinds, unparseable ids, and duplicate descriptors are
+    /// skipped safely and counted in diagnostics; only a genuine window-open
+    /// failure aborts the remaining restores.
     pub fn restore_restorable_windows(&mut self) -> Result<usize, WindowError> {
         let Some(restoration) = self.restoration.clone() else {
             return Ok(0);
         };
-        let active = self
+        let mut active = self
             .registry
             .borrow()
             .slots
@@ -372,9 +376,16 @@ impl Application {
         let descriptors = restoration.windows();
         let mut restored = 0;
         for descriptor in descriptors {
-            if active.contains(&descriptor.restoration_id) {
+            if !active.insert(descriptor.restoration_id.clone()) {
                 continue;
             }
+            let restoration_id = match WindowRestorationId::new(descriptor.restoration_id) {
+                Ok(id) => id,
+                Err(_) => {
+                    restoration.note_skipped_window();
+                    continue;
+                }
+            };
             let Some((options, factory)) = self
                 .restoration_window_factories
                 .get(&descriptor.kind)
@@ -383,8 +394,6 @@ impl Application {
                 restoration.note_skipped_window();
                 continue;
             };
-            let restoration_id = WindowRestorationId::new(descriptor.restoration_id)
-                .map_err(|error| WindowError::Restoration(error.to_string()))?;
             let kind = descriptor.kind;
             let factory = factory.clone();
             self.manager
@@ -1403,7 +1412,7 @@ impl Application {
             });
         }
         if matches!(lifecycle, PlatformLifecycle::Suspended) {
-            let _ = self.flush_restoration();
+            self.flush_restoration_and_wait();
         }
     }
 
@@ -1874,9 +1883,19 @@ impl Application {
                 window_id,
                 WindowOperation::Close,
             )));
-        // Explicit user close removes the auxiliary descriptor; shutdown
-        // bypasses this method and therefore preserves active descriptors.
-        self.manager.sync_restorable_windows(false);
+        // Explicit user close removes the auxiliary descriptor and its
+        // window-scoped values; shutdown bypasses this method and therefore
+        // preserves active descriptors. Not-yet-restored descriptors for other
+        // windows are retained.
+        let closed_restoration = record.restoration.clone();
+        if let (Some(metadata), Some(restoration)) = (&closed_restoration, &self.restoration) {
+            restoration.remove_window_descriptor(metadata.id.as_key().as_str());
+            restoration.remove_scope(&[
+                RestorationKey::new("window").expect("static key"),
+                metadata.id.as_key().clone(),
+            ]);
+        }
+        self.manager.sync_restorable_windows(true);
         if self.registry.borrow().visible_count() == 0
             && self.last_window_policy == LastWindowPolicy::ExitOnLastWindow
         {
@@ -2539,6 +2558,21 @@ impl Application {
         true
     }
 
+    /// Flushes restoration and bounded-waits for the blocking save to settle,
+    /// mirroring the shutdown handoff. Used when the host may freeze or kill
+    /// the process after the lifecycle event (for example mobile suspend).
+    fn flush_restoration_and_wait(&mut self) {
+        let Some(restoration) = self.restoration.clone() else {
+            return;
+        };
+        restoration.flush();
+        let deadline = Instant::now() + std::time::Duration::from_millis(100);
+        while !restoration.is_clean() && Instant::now() < deadline {
+            self.process_runtime_work();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     #[must_use]
     pub fn debug_dump(&self) -> String {
         let mut lines = vec!["Application".to_owned()];
@@ -2589,21 +2623,16 @@ impl Application {
     }
 
     fn flush_restoration_before_shutdown(&mut self) {
-        let Some(restoration) = self.restoration.clone() else {
-            return;
-        };
-        restoration.flush();
-        let deadline = Instant::now() + std::time::Duration::from_millis(100);
-        while !restoration.is_clean() && Instant::now() < deadline {
-            self.process_runtime_work();
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        self.flush_restoration_and_wait();
     }
 
     /// Compatibility escape hatch for existing single-window embedders and
     /// tests. Extra windows are cancelled; desktop `run` retains all windows.
+    /// Pending restoration state is flushed with the same bounded wait as
+    /// shutdown so the extracted runtime does not silently drop it.
     #[must_use]
     pub fn into_runtime(mut self) -> Runtime {
+        self.flush_restoration_and_wait();
         self.manager.bridge.stop();
         self.fail_all_file_dialog_requests(FileDialogError::ApplicationStopped);
         self.fail_all_global_shortcut_requests();

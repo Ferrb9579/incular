@@ -75,6 +75,27 @@ mutation already satisfies them. Stages C–H implement the listed contracts and
 Stage I verifies the historical member manifests. A migration is complete only
 when its consumers, examples, rustdoc, error outcomes and tests agree.
 
+## Restoration persistence hardening
+
+Changed. Failed saves retry with bounded backoff (500ms/1s/1.5s, three
+retries); the last error is observable as `RestorationDiagnostics::last_save_error`
+(cleared on success). Suspend and `into_runtime` flush with the same bounded
+wait as shutdown. Load-time migrations persist once on attach instead of
+re-running every launch, and oversized snapshots fail safe on both load and
+save. `RestorationHandle::claim_scope` returns a `ClaimedRestorationScope`
+guard so application-owned dynamic scopes can opt into the duplicate-mount
+rejection windows already had; bare `RestorationScope::child` remains pure
+namespacing. `restore_restorable_windows` skips unparseable, duplicate, and
+unknown-kind descriptors (counted as skipped) instead of aborting the whole
+restore. User-closing a restorable window now also purges its
+`window/<id>/*` values while retaining not-yet-restored descriptors for other
+windows. `FileRestorationStore::for_application` rejects filesystem-unsafe
+application ids. Scroll restoration and type-incompatible `Restorable` values
+now populate `restored_scroll_positions` / `stale_or_invalid_values` through
+the (default-ignoring) `RestorationBackend::note_restoration_outcome` hook.
+`RestorationDiagnostics` is `#[non_exhaustive]`: construct it with
+`..Default::default()` rather than a struct literal.
+
 ## Stage E desktop migration
 
 - Import Winit conversion helpers (`key_event`, `ime_event`, pointer/touch/wheel/

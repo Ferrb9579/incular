@@ -134,9 +134,9 @@ pub mod prelude {
     };
     pub use incular_runtime::{
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
-        AsyncState, AsyncValue, BudgetStatistics, BuildContext, EditingDiagnostics,
-        FileRestorationStore, FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics,
-        GpuSample, InMemoryRestorationStore, LastWindowPolicy, Memo,
+        AsyncState, AsyncValue, BudgetStatistics, BuildContext, ClaimedRestorationScope,
+        EditingDiagnostics, FileRestorationStore, FocusDiagnostics, FrameHistory, FrameRecord,
+        FrameStatistics, GpuSample, InMemoryRestorationStore, LastWindowPolicy, Memo,
         NativeOperationCompletionStatus, NativeOperationRequest, NativeWindowCommand,
         OutletAttachError, OutletError, OutletId, OutletPlacement, PerformanceHub,
         PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable, RestorableWindowFactory,

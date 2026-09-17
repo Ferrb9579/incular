@@ -99,7 +99,17 @@ impl ScrollController {
     /// written until a position actually changes, so defaults remain defaults
     /// when an application never scrolls the viewport.
     pub fn bind_restoration(&self, scope: RestorationScope, key: RestorationKey) {
-        let pending_restored_offset = scope.get_json(&key).and_then(restored_scroll_offset);
+        let stored = scope.get_json(&key);
+        let pending_restored_offset = match stored {
+            None => None,
+            Some(value) => match restored_scroll_offset(value) {
+                Some(offset) => Some(offset),
+                None => {
+                    scope.note_restoration_outcome(0, 1);
+                    None
+                }
+            },
+        };
         let mut state = self.state.borrow_mut();
         state.restoration = Some(ScrollRestoration { scope, key });
         state.pending_restored_offset = pending_restored_offset;

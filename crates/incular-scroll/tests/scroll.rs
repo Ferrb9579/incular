@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    rc::Rc,
+};
 
 use incular_core::{RestorationKey, RestorationScope, Size};
 use serde_json::{Value, json};
@@ -30,6 +34,74 @@ fn restoration_scope() -> RestorationScope {
     RestorationScope::root(Rc::new(MemoryRestorationBackend::default()))
         .child_unchecked(restoration_key("window"))
         .child_unchecked(restoration_key("main"))
+}
+
+#[derive(Default)]
+struct OutcomeBackend {
+    values: RefCell<BTreeMap<Vec<RestorationKey>, Value>>,
+    restored: Cell<u64>,
+    invalid: Cell<u64>,
+}
+
+impl incular_core::RestorationBackend for OutcomeBackend {
+    fn read_value(&self, path: &[RestorationKey]) -> Option<Value> {
+        self.values.borrow().get(path).cloned()
+    }
+
+    fn write_value(&self, path: &[RestorationKey], value: Value) {
+        self.values.borrow_mut().insert(path.to_vec(), value);
+    }
+
+    fn remove_value(&self, path: &[RestorationKey]) {
+        self.values.borrow_mut().remove(path);
+    }
+
+    fn note_restoration_outcome(&self, restored: u64, invalid: u64) {
+        self.restored.set(self.restored.get() + restored);
+        self.invalid.set(self.invalid.get() + invalid);
+    }
+}
+
+fn outcome_scope(backend: Rc<OutcomeBackend>) -> RestorationScope {
+    RestorationScope::root(backend)
+        .child_unchecked(restoration_key("window"))
+        .child_unchecked(restoration_key("main"))
+}
+
+#[test]
+fn invalid_scroll_values_count_as_stale_without_a_pending_offset() {
+    let backend = Rc::new(OutcomeBackend::default());
+    let scope = outcome_scope(backend.clone());
+    let key = restoration_key("sidebar");
+    scope.set_json(&key, json!({ "offset": -4. }));
+    let controller = ScrollController::restored(scope, key);
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(backend.invalid.get(), 1);
+    assert_eq!(backend.restored.get(), 0);
+}
+
+#[test]
+fn applied_scroll_offsets_count_exactly_once() {
+    let backend = Rc::new(OutcomeBackend::default());
+    let scope = outcome_scope(backend.clone());
+    let key = restoration_key("sidebar");
+    scope.set_json(&key, json!({ "offset": 80. }));
+    let controller = ScrollController::restored(scope, key);
+    assert_eq!(backend.restored.get(), 0);
+    controller
+        .update_extents(40., 20.)
+        .expect("free controller publishes");
+    assert_eq!(controller.offset(), 20.);
+    assert_eq!(backend.restored.get(), 0);
+    controller
+        .update_extents(120., 20.)
+        .expect("free controller publishes");
+    assert_eq!(controller.offset(), 80.);
+    assert_eq!(backend.restored.get(), 1);
+    controller
+        .update_extents(120., 20.)
+        .expect("free controller publishes");
+    assert_eq!(backend.restored.get(), 1);
 }
 
 #[test]
