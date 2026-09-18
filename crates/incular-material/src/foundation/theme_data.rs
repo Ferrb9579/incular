@@ -12,7 +12,6 @@ use typed_builder::TypedBuilder;
 
 use super::helpers::alpha;
 use super::input::InputDecorationThemeData;
-use super::state::WidgetStates;
 use super::surfaces::{MaterialTapTargetSize, VisualDensity};
 use super::theme::*;
 
@@ -652,7 +651,6 @@ impl ThemeData {
     pub fn control_theme(&self) -> ControlTheme {
         let core = self.core();
         let colors = self.colors();
-        let selection = self.selection_controls();
         let mut controls = if core.brightness == Brightness::Light {
             ControlTheme::light()
         } else {
@@ -685,37 +683,19 @@ impl ThemeData {
             success: Color::rgba(30, 120, 60, 255),
             info: core.color_scheme.primary,
         });
-        controls.density = if core.visual_density == VisualDensity::COMPACT {
+        controls = controls.density(if core.visual_density == VisualDensity::COMPACT {
             incular_controls::ControlDensity::Compact
         } else if core.visual_density == VisualDensity::COMFORTABLE {
             incular_controls::ControlDensity::Comfortable
         } else {
             incular_controls::ControlDensity::Standard
-        };
+        });
+        let selection = self.selection_controls();
         if let Some(height) = selection.slider_theme.track_height {
             controls.slider.track_height = height.max(1.0);
         }
         if let Some(size) = selection.slider_theme.thumb_size {
             controls.slider.thumb_size = size.max(1.0);
-        }
-        if let Some(color) = selection
-            .slider_theme
-            .active_track_color
-            .as_ref()
-            .map(|property| property.resolve(WidgetStates::default()))
-        {
-            controls.colors.accent = color;
-        }
-        if let Some(color) = selection
-            .slider_theme
-            .inactive_track_color
-            .as_ref()
-            .map(|property| property.resolve(WidgetStates::default()))
-        {
-            controls.colors.border_strong = color;
-        }
-        if let Some(color) = selection.slider_theme.disabled_active_track_color {
-            controls.colors.disabled_foreground = color;
         }
         if let Some(size) = selection.checkbox_theme.icon_size {
             controls.checkbox.indicator_size = size.max(1.0);
@@ -731,22 +711,6 @@ impl ThemeData {
         }
         if let Some(size) = selection.switch_theme.thumb_size {
             controls.switch.thumb_size = size.max(1.0);
-        }
-        if let Some(fill) = selection
-            .checkbox_theme
-            .fill_color
-            .as_ref()
-            .map(|property| property.resolve(incular_controls::ControlState::empty()))
-        {
-            controls.colors.accent = fill;
-        }
-        if let Some(check) = selection
-            .checkbox_theme
-            .check_color
-            .as_ref()
-            .map(|property| property.resolve(incular_controls::ControlState::empty()))
-        {
-            controls.colors.accent_foreground = check;
         }
         controls.motion.reduced_motion = core.page_transitions_theme.reduced_motion;
         controls

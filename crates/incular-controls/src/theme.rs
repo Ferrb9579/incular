@@ -606,9 +606,12 @@ pub type ToggleGroupTheme = GroupTheme;
 /// Full generic design token theme.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ControlTheme {
-    /// Base UI-inspired semantic tokens. `colors` remains as a compatibility
-    /// alias for applications written against the first controls release.
-    pub palette: PaletteTokens,
+    /// Canonical semantic color tokens for controls.
+    ///
+    /// Older releases also stored a second public `palette` field containing
+    /// the same values. Keeping two independently writable copies made it
+    /// possible for them to diverge, so W7 keeps a single store and exposes
+    /// [`ControlTheme::palette`] as the compatibility read view.
     pub colors: ControlColors,
     pub typography: ControlTypography,
     pub spacing: SpacingTokens,
@@ -650,7 +653,6 @@ impl ControlTheme {
         let colors = ControlColors::light();
         let typography = ControlTypography::new(colors.foreground, colors.foreground_muted);
         Self {
-            palette: colors.clone(),
             colors,
             typography,
             spacing: SpacingTokens::default(),
@@ -692,7 +694,6 @@ impl ControlTheme {
         let colors = ControlColors::dark();
         let typography = ControlTypography::new(colors.foreground, colors.foreground_muted);
         Self {
-            palette: colors.clone(),
             colors,
             typography,
             spacing: SpacingTokens::default(),
@@ -738,13 +739,20 @@ impl ControlTheme {
         self
     }
 
-    /// Replaces the semantic palette while keeping the compatibility
-    /// `colors` view and default typography in sync.
+    /// Returns the semantic palette compatibility view.
+    #[must_use]
+    pub const fn palette(&self) -> &PaletteTokens {
+        &self.colors
+    }
+
+    /// Replaces the semantic palette.
+    ///
+    /// Typography is deliberately preserved. A palette update is a color-token
+    /// mutation, not permission to overwrite an explicitly configured text
+    /// theme.
     #[must_use]
     pub fn with_palette(mut self, palette: PaletteTokens) -> Self {
-        self.typography = ControlTypography::new(palette.foreground, palette.foreground_muted);
-        self.colors = palette.clone();
-        self.palette = palette;
+        self.colors = palette;
         self
     }
 }

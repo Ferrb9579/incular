@@ -29,7 +29,7 @@ impl ButtonSpec {
             semantic_label: Some(label.clone()),
             label: Some(label),
             child: None,
-            style: kind.default_style(),
+            style: incular_controls::ButtonStyle::new(),
             enabled: true,
             focusable_when_disabled: false,
             loading: false,
@@ -43,7 +43,7 @@ impl ButtonSpec {
             label: None,
             child: Some(child.into()),
             semantic_label: None,
-            style: kind.default_style(),
+            style: incular_controls::ButtonStyle::new(),
             enabled: true,
             focusable_when_disabled: false,
             loading: false,
@@ -130,6 +130,7 @@ impl ButtonSpec {
 
         if self.kind == ButtonKind::Outlined
             && resolved.background.is_none()
+            && resolved.background_property.is_none()
             && resolved.background_states.is_none()
         {
             resolved.background_states = Some(
@@ -144,10 +145,16 @@ impl ButtonSpec {
         }
 
         if self.kind == ButtonKind::FilledTonal {
-            if resolved.background.is_none() {
+            if resolved.background.is_none()
+                && resolved.background_property.is_none()
+                && resolved.background_states.is_none()
+            {
                 resolved.background = Some(theme.core().color_scheme.secondary_container);
             }
-            if resolved.foreground.is_none() {
+            if resolved.foreground.is_none()
+                && resolved.foreground_property.is_none()
+                && resolved.foreground_states.is_none()
+            {
                 resolved.foreground = Some(theme.core().color_scheme.on_secondary_container);
             }
         }

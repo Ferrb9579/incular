@@ -3,7 +3,7 @@
 use incular_config::{Alignment, EdgeInsets};
 use incular_controls::{
     ButtonLayerBuilder, ButtonStyle, ButtonVariant, ControlDensity, ControlState, SplashFactory,
-    StateColor, StateTable, StateValue, TapTargetSize,
+    StateValue, TapTargetSize,
 };
 use incular_core::{Color, Size};
 use incular_text::TextStyle;
@@ -348,45 +348,14 @@ pub fn style_from(config: ButtonStyleConfig) -> ButtonStyle {
 }
 
 fn apply_color_property(style: &mut ButtonStyle, value: StateValue<Color>, background: bool) {
-    match value {
-        StateValue::Value(value) => {
-            if background {
-                style.background = Some(value);
-            } else {
-                style.foreground = Some(value);
-            }
-        }
-        StateValue::States(table) => {
-            let colors = StateColorFromTable::from(table);
-            if background {
-                style.background_states = Some(colors.0);
-            } else {
-                style.foreground_states = Some(colors.0);
-            }
-        }
-        StateValue::Resolver(resolver) => {
-            if background {
-                style.background_property = Some(StateValue::Resolver(resolver));
-            } else {
-                style.foreground_property = Some(StateValue::Resolver(resolver));
-            }
-        }
-    }
-}
-
-struct StateColorFromTable(StateColor);
-
-impl From<StateTable<Color>> for StateColorFromTable {
-    fn from(table: StateTable<Color>) -> Self {
-        Self(incular_controls::StateColor {
-            normal: table.normal,
-            hovered: table.hovered,
-            pressed: table.pressed,
-            focused: table.focused,
-            disabled: table.disabled,
-            checked: table.checked,
-            selected: table.selected,
-        })
+    if background {
+        style.background = None;
+        style.background_states = None;
+        style.background_property = Some(value);
+    } else {
+        style.foreground = None;
+        style.foreground_states = None;
+        style.foreground_property = Some(value);
     }
 }
 

@@ -605,6 +605,8 @@ impl ButtonStyle {
     #[must_use]
     pub fn background(mut self, background: Color) -> Self {
         self.background = Some(background);
+        self.background_property = None;
+        self.background_states = None;
         self
     }
 
@@ -612,18 +614,24 @@ impl ButtonStyle {
     #[must_use]
     pub fn background_color(mut self, background: impl Into<StateValue<Color>>) -> Self {
         self.background_property = Some(background.into());
+        self.background = None;
+        self.background_states = None;
         self
     }
 
     #[must_use]
     pub fn background_states(mut self, background: StateColor) -> Self {
         self.background_states = Some(background);
+        self.background = None;
+        self.background_property = None;
         self
     }
 
     #[must_use]
     pub fn foreground(mut self, foreground: Color) -> Self {
         self.foreground = Some(foreground);
+        self.foreground_property = None;
+        self.foreground_states = None;
         self
     }
 
@@ -631,12 +639,16 @@ impl ButtonStyle {
     #[must_use]
     pub fn foreground_color(mut self, foreground: impl Into<StateValue<Color>>) -> Self {
         self.foreground_property = Some(foreground.into());
+        self.foreground = None;
+        self.foreground_states = None;
         self
     }
 
     #[must_use]
     pub fn foreground_states(mut self, foreground: StateColor) -> Self {
         self.foreground_states = Some(foreground);
+        self.foreground = None;
+        self.foreground_property = None;
         self
     }
 
@@ -816,12 +828,22 @@ impl ButtonStyle {
                 }
             };
         }
-        override_field!(background);
-        override_field!(background_property);
-        override_field!(background_states);
-        override_field!(foreground);
-        override_field!(foreground_property);
-        override_field!(foreground_states);
+        if other.background.is_some()
+            || other.background_property.is_some()
+            || other.background_states.is_some()
+        {
+            self.background = other.background;
+            self.background_property = other.background_property.clone();
+            self.background_states = other.background_states;
+        }
+        if other.foreground.is_some()
+            || other.foreground_property.is_some()
+            || other.foreground_states.is_some()
+        {
+            self.foreground = other.foreground;
+            self.foreground_property = other.foreground_property.clone();
+            self.foreground_states = other.foreground_states;
+        }
         override_field!(overlay_color);
         override_field!(shadow_color);
         override_field!(surface_tint_color);
@@ -860,10 +882,10 @@ impl ButtonStyle {
     /// Resolves background color against active state and theme.
     #[must_use]
     pub fn resolve_background(&self, state: ControlState, theme: &ControlTheme) -> Color {
-        if let Some(bg) = self.background_states {
+        if let Some(bg) = self.background_property.as_ref() {
             return bg.resolve(state);
         }
-        if let Some(bg) = self.background_property.as_ref() {
+        if let Some(bg) = self.background_states {
             return bg.resolve(state);
         }
         if let Some(bg) = self.background {
@@ -920,10 +942,10 @@ impl ButtonStyle {
     /// Resolves text foreground color against active state and theme.
     #[must_use]
     pub fn resolve_foreground(&self, state: ControlState, theme: &ControlTheme) -> Color {
-        if let Some(fg) = self.foreground_states {
+        if let Some(fg) = self.foreground_property.as_ref() {
             return fg.resolve(state);
         }
-        if let Some(fg) = self.foreground_property.as_ref() {
+        if let Some(fg) = self.foreground_states {
             return fg.resolve(state);
         }
         if let Some(fg) = self.foreground {
