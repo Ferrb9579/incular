@@ -1444,6 +1444,38 @@ impl Runtime {
         {
             self.set_focus(None);
         }
+        self.reconcile_button_tenure();
+    }
+
+    fn reconcile_button_tenure(&mut self) {
+        // Pressed tenure belongs to a still-pressable button element.
+        // `button_ancestor` already filters disabled and missing elements,
+        // so reuse it instead of restating button liveness here. A stale
+        // press clears its visual when still mounted and never activates.
+        if self.pressed_button.is_some_and(|pressed| {
+            self.tree
+                .button_ancestor(pressed)
+                .map(|(ancestor, _)| ancestor)
+                != Some(pressed)
+        }) {
+            if let Some(pressed) = self.pressed_button.take() {
+                let _ = self
+                    .tree
+                    .set_button_interaction(pressed, None, Some(false), None);
+                self.frame_requested = true;
+            }
+        }
+        // Hover tenure reuses the single `set_hover` owner so exit callbacks
+        // fire for still-mounted buttons; pruned handlers make unmounted exit
+        // a silent visual release.
+        if self.hovered_button.is_some_and(|hovered| {
+            self.tree
+                .button_ancestor(hovered)
+                .map(|(ancestor, _)| ancestor)
+                != Some(hovered)
+        }) {
+            self.set_hover(None);
+        }
     }
 
     fn ensure_text_history(&mut self, field: ElementId) -> Option<UndoHistoryController> {

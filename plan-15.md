@@ -3314,6 +3314,32 @@ Batch outcome (source-reviewed, NOT execution-validated):
   generic gesture capture across popup/route/window teardown, and native delivery
   remain follow-up work. No changes were made to restoration or scroll files.
 
+Next bounded W6 batch — button press/hover tenure retirement:
+
+1. Reuse the existing `button_ancestor` pressability owner (already filters
+   disabled and missing elements) to revalidate runtime hover/press tenure
+   after build and layout. Clear stale presses directly without activation;
+   clear stale hovers through `set_hover` so still-mounted exit callbacks run
+   and pruned unmounted exits stay silent.
+2. Add regression source in the existing `retained_interactions` fixture for
+   disable-mid-press and unmount-mid-press/hover. Review source only under the
+   continuing budget: no tests, builds, Clippy, formatters or native runs.
+   Do not advance W7 or claim W6 validation complete.
+
+Batch outcome (source-reviewed, NOT execution-validated):
+- `reconcile_button_tenure` runs inside the existing focus/capture
+  reconciliation after build and layout. A press whose button is no longer
+  pressable drops tenure, clears its visual when still mounted, requests a
+  frame and never reaches `activate_action` on the later Up.
+- Hover clears through the single `set_hover` owner, so exit callbacks keep
+  their established path; handler pruning keeps unmounted exits silent.
+- Added unexecuted source: disable-mid-press without activation, and
+  unmount-mid-press/hover without activation or second enter. No tests,
+  builds, Clippy, formatters or native runs were performed.
+- Scope remains: generic gesture/pointer-capture tenure across popup, route
+  and window teardown, external FocusNode mirroring, direct mutations before
+  the next frame, and native delivery remain follow-up work.
+
 Remaining W6 work (W6 stays open): execute the unexecuted tests plus full
 gates; multi-contact arbitration and captured-pointer cleanup across popup,
 route, and window teardown at runtime level; semantic bounds/checked-state

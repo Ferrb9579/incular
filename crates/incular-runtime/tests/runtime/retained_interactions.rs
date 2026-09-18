@@ -92,6 +92,93 @@ fn button_hover_callbacks_fire_once_on_enter_and_exit() {
 }
 
 #[test]
+fn disabled_mid_press_releases_tenure_without_activation() {
+    let hits = Rc::new(Cell::new(0_u32));
+    let build = |enabled: bool, hits: Rc<Cell<u32>>| {
+        Widget::from(
+            ActionSurface::new("Press")
+                .size(Size::new(100., 40.))
+                .enabled(enabled)
+                .on_press(move || hits.set(hits.get() + 1)),
+        )
+    };
+    let mut runtime = Runtime::new(build(true, hits.clone())).unwrap();
+    let constraints = Constraints::tight(Size::new(100., 40.));
+    runtime.run_frame(constraints).unwrap();
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Down,
+        position: Offset::new(10., 10.),
+    });
+    let root = runtime.tree().root().unwrap();
+    runtime
+        .tree_mut()
+        .update(root, build(false, hits.clone()))
+        .unwrap();
+    runtime.run_frame(constraints).unwrap();
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Up,
+        position: Offset::new(10., 10.),
+    });
+    assert_eq!(hits.get(), 0);
+}
+
+#[test]
+fn unmounted_mid_press_and_hover_release_tenure_silently() {
+    let hits = Rc::new(Cell::new(0_u32));
+    let enters = Rc::new(Cell::new(0_u32));
+    let exits = Rc::new(Cell::new(0_u32));
+    let mut runtime = Runtime::new(
+        Widget::from(
+            ActionSurface::new("HoverPress")
+                .size(Size::new(100., 40.))
+                .on_press({
+                    let hits = hits.clone();
+                    move || hits.set(hits.get() + 1)
+                })
+                .on_hover({
+                    let enters = enters.clone();
+                    move || enters.set(enters.get() + 1)
+                })
+                .on_exit({
+                    let exits = exits.clone();
+                    move || exits.set(exits.get() + 1)
+                }),
+        ),
+    )
+    .unwrap();
+    let constraints = Constraints::tight(Size::new(100., 40.));
+    runtime.run_frame(constraints).unwrap();
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Move,
+        position: Offset::new(10., 10.),
+    });
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Down,
+        position: Offset::new(10., 10.),
+    });
+    assert_eq!(enters.get(), 1);
+    let root = runtime.tree().root().unwrap();
+    runtime
+        .tree_mut()
+        .update(
+            root,
+            Widget::box_(Size::new(100., 40.), Color::WHITE),
+        )
+        .unwrap();
+    runtime.run_frame(constraints).unwrap();
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Up,
+        position: Offset::new(10., 10.),
+    });
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Move,
+        position: Offset::new(90., 30.),
+    });
+    assert_eq!(hits.get(), 0);
+    assert_eq!(enters.get(), 1);
+}
+
+#[test]
 fn wheel_updates_only_retained_scroll_transform() {
     let controller = incular_widgets::ScrollController::new();
     let child = Widget::from(incular_widgets::Column::new(
