@@ -114,7 +114,7 @@ fn checkbox_and_switch_have_uncontrolled_visual_state() {
 }
 
 #[test]
-fn slider_activation_advances_the_quantized_value() {
+fn slider_tap_uses_pointer_position_and_quantizes_value() {
     let observed = Signal::new(0.0_f32);
     let app_observed = observed.clone();
     let app = Application::new(move |_| {
@@ -135,9 +135,9 @@ fn slider_activation_advances_the_quantized_value() {
     let mut runtime = app.into_runtime();
     let constraints = Constraints::loose(Size::new(260., 80.));
     runtime.run_frame(constraints).expect("initial frame");
-    click(&mut runtime, Offset::new(20., 3.));
+    click(&mut runtime, Offset::new(140., 3.));
     runtime.run_frame(constraints).expect("slider frame");
-    assert_eq!(observed.get(), 0.25);
+    assert_eq!(observed.get(), 0.75);
 }
 
 #[test]
@@ -216,11 +216,93 @@ fn custom_slider_keeps_pointer_keyboard_and_semantic_actions() {
             .expect("custom slider semantics");
 
         if path == "pointer" {
-            click(&mut runtime, Offset::new(20.0, 12.0));
+            click(&mut runtime, Offset::new(50.0, 12.0));
         } else {
             assert!(runtime.dispatch_semantic_action(semantic, SemanticAction::Increment));
         }
         runtime.run_frame(constraints).expect("updated frame");
         assert_eq!(observed.get(), 0.25, "path={path}");
     }
+}
+
+#[test]
+fn switch_read_only_policy_is_identical_with_custom_visual() {
+    use incular_controls::switch::Root as SwitchRoot;
+    use incular_semantics::{Role, SemanticActionKind};
+    use std::{cell::Cell, rc::Rc};
+
+    for custom in [false, true] {
+        let calls = Rc::new(Cell::new(0_u32));
+        let observed = calls.clone();
+        let app = Application::new(move |_| {
+            let mut switch = SwitchRoot::new()
+                .checked(false)
+                .read_only(true)
+                .on_checked_change({
+                    let observed = observed.clone();
+                    move |_| observed.set(observed.get() + 1)
+                });
+            if custom {
+                switch = switch.child(Widget::box_(
+                    Size::new(48.0, 28.0),
+                    incular_core::Color::WHITE,
+                ));
+            }
+            switch.into()
+        })
+        .expect("application");
+        let mut runtime = app.into_runtime();
+        let constraints = Constraints::loose(Size::new(160.0, 60.0));
+        runtime.run_frame(constraints).expect("frame");
+        let node = runtime
+            .tree()
+            .semantics()
+            .iter()
+            .find(|(_, node)| node.role == Role::Switch)
+            .map(|(_, node)| node)
+            .expect("switch semantics");
+        assert!(node.state.read_only, "custom={custom}");
+        assert!(node.actions.contains(&SemanticActionKind::Focus));
+        assert!(!node.actions.contains(&SemanticActionKind::Activate));
+
+        click(&mut runtime, Offset::new(10.0, 10.0));
+        assert_eq!(calls.get(), 0, "custom={custom}");
+    }
+}
+
+#[test]
+fn slider_semantic_increment_is_numeric_increase_in_rtl() {
+    use incular_semantics::{Role, SemanticAction};
+
+    let observed = Signal::new(0.5_f32);
+    let app_observed = observed.clone();
+    let app = Application::new(move |_| {
+        Widget::from(
+            slider::Root::new()
+                .value(app_observed.get())
+                .step(0.25)
+                .rtl(true)
+                .on_value_change({
+                    let observed = app_observed.clone();
+                    move |next| {
+                        observed.set(next);
+                    }
+                }),
+        )
+    })
+    .expect("application");
+    let mut runtime = app.into_runtime();
+    let constraints = Constraints::loose(Size::new(240.0, 80.0));
+    runtime.run_frame(constraints).expect("frame");
+    let slider = runtime
+        .tree()
+        .semantics()
+        .iter()
+        .find(|(_, node)| node.role == Role::Slider)
+        .map(|(id, _)| id)
+        .expect("slider semantics");
+
+    assert!(runtime.dispatch_semantic_action(slider, SemanticAction::Increment));
+    runtime.run_frame(constraints).expect("updated frame");
+    assert_eq!(observed.get(), 0.75);
 }

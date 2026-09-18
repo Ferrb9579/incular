@@ -677,6 +677,10 @@ impl From<RangeSlider> for Widget {
             .clamp((initial_start + minimum_separation).min(max), max);
         let current = Rc::new(Cell::new(RangeValues::new(initial_start, initial_end)));
         let active_thumb = Rc::new(Cell::new(true));
+        let start_dragging = Rc::new(Cell::new(false));
+        let end_dragging = Rc::new(Cell::new(false));
+        let start_drag_origin = Rc::new(Cell::new(None::<RangeValues>));
+        let end_drag_origin = Rc::new(Cell::new(None::<RangeValues>));
         let on_changed = value.on_changed;
         let on_start = value.on_change_start;
         let on_end = value.on_change_end;
@@ -701,6 +705,10 @@ impl From<RangeSlider> for Widget {
             let current = current.clone();
             let revision = revision.clone();
             let active_thumb = active_thumb.clone();
+            let start_dragging = start_dragging.clone();
+            let end_dragging = end_dragging.clone();
+            let start_drag_origin = start_drag_origin.clone();
+            let end_drag_origin = end_drag_origin.clone();
             Widget::stateful_layout_builder(revision.clone(), move |context, constraints| {
                 // Use the available width when the parent is bounded, while
                 // retaining a compact intrinsic size for unconstrained overlays.
@@ -800,7 +808,6 @@ impl From<RangeSlider> for Widget {
                 })
                 .into();
 
-                let start_began = Rc::new(Cell::new(false));
                 let start_thumb: Widget = GestureDetector::new(thumb(false))
                     .behavior(HitTestBehavior::Opaque)
                     .on_horizontal_drag_update({
@@ -809,7 +816,8 @@ impl From<RangeSlider> for Widget {
                         let on_changed = on_changed.clone();
                         let on_start = on_start.clone();
                         let quantize = quantize.clone();
-                        let began = start_began.clone();
+                        let began = start_dragging.clone();
+                        let origin = start_drag_origin.clone();
                         let active_thumb = active_thumb.clone();
                         move |delta| {
                             if !enabled {
@@ -817,13 +825,21 @@ impl From<RangeSlider> for Widget {
                             }
                             if !began.replace(true) {
                                 active_thumb.set(true);
+                                origin.set(Some(current.get()));
                                 if let Some(callback) = on_start.as_ref() {
                                     callback(current.get());
                                 }
                             }
+                            let origin_values = origin.get().unwrap_or_else(|| current.get());
                             let mut next = current.get();
-                            next.start = quantize(next.start + delta.x / track_width * span)
-                                .min((next.end - minimum_separation).max(min));
+                            let direction = if rtl { -1.0 } else { 1.0 };
+                            next.start = quantize(
+                                origin_values.start + direction * delta.x / track_width * span,
+                            )
+                            .min((next.end - minimum_separation).max(min));
+                            if next == current.get() {
+                                return;
+                            }
                             current.set(next);
                             revision.set(revision.get().wrapping_add(1));
                             if let Some(callback) = on_changed.as_ref() {
@@ -834,8 +850,10 @@ impl From<RangeSlider> for Widget {
                     .on_horizontal_drag_end({
                         let current = current.clone();
                         let on_end = on_end.clone();
-                        let began = start_began.clone();
+                        let began = start_dragging.clone();
+                        let origin = start_drag_origin.clone();
                         move |_| {
+                            origin.set(None);
                             if began.replace(false)
                                 && let Some(callback) = on_end.as_ref()
                             {
@@ -844,7 +862,6 @@ impl From<RangeSlider> for Widget {
                         }
                     })
                     .into();
-                let end_began = Rc::new(Cell::new(false));
                 let end_thumb: Widget = GestureDetector::new(thumb(false))
                     .behavior(HitTestBehavior::Opaque)
                     .on_horizontal_drag_update({
@@ -853,7 +870,8 @@ impl From<RangeSlider> for Widget {
                         let on_changed = on_changed.clone();
                         let on_start = on_start.clone();
                         let quantize = quantize.clone();
-                        let began = end_began.clone();
+                        let began = end_dragging.clone();
+                        let origin = end_drag_origin.clone();
                         let active_thumb = active_thumb.clone();
                         move |delta| {
                             if !enabled {
@@ -861,13 +879,21 @@ impl From<RangeSlider> for Widget {
                             }
                             if !began.replace(true) {
                                 active_thumb.set(false);
+                                origin.set(Some(current.get()));
                                 if let Some(callback) = on_start.as_ref() {
                                     callback(current.get());
                                 }
                             }
+                            let origin_values = origin.get().unwrap_or_else(|| current.get());
                             let mut next = current.get();
-                            next.end = quantize(next.end + delta.x / track_width * span)
-                                .max((next.start + minimum_separation).min(max));
+                            let direction = if rtl { -1.0 } else { 1.0 };
+                            next.end = quantize(
+                                origin_values.end + direction * delta.x / track_width * span,
+                            )
+                            .max((next.start + minimum_separation).min(max));
+                            if next == current.get() {
+                                return;
+                            }
                             current.set(next);
                             revision.set(revision.get().wrapping_add(1));
                             if let Some(callback) = on_changed.as_ref() {
@@ -878,8 +904,10 @@ impl From<RangeSlider> for Widget {
                     .on_horizontal_drag_end({
                         let current = current.clone();
                         let on_end = on_end.clone();
-                        let began = end_began.clone();
+                        let began = end_dragging.clone();
+                        let origin = end_drag_origin.clone();
                         move |_| {
+                            origin.set(None);
                             if began.replace(false)
                                 && let Some(callback) = on_end.as_ref()
                             {

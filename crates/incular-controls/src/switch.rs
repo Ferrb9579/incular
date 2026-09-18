@@ -2,11 +2,7 @@
 
 use crate::{ControlTheme, Switch};
 use incular_core::Color;
-use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{
-    Widget,
-    internal::{ActionSurface, ExplicitSemantics},
-};
+use incular_widgets::Widget;
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
@@ -131,38 +127,9 @@ impl Root {
     }
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        if let Some(child) = &self.child {
-            let mut button = ActionSurface::with_child(child.clone())
-                .color(Color::TRANSPARENT)
-                .disabled_color(theme.colors.disabled_surface)
-                .enabled(self.enabled && !self.read_only)
-                .focusable_when_disabled(self.enabled && self.read_only);
-            if let Some(callback) = self.on_change.clone()
-                && self.enabled
-                && !self.read_only
-            {
-                let checked = self.checked;
-                button = button.on_click(move || callback(!checked));
-            }
-            let raw: Widget = button.into();
-            return raw.semantics(
-                ExplicitSemantics::new(SemanticRole::Switch)
-                    .state(SemanticState {
-                        enabled: self.enabled,
-                        focusable: self.enabled,
-                        checked: Some(self.checked.into()),
-                        ..SemanticState::default()
-                    })
-                    .actions(if self.enabled && !self.read_only {
-                        [SemanticActionKind::Focus, SemanticActionKind::Activate].to_vec()
-                    } else if self.enabled {
-                        vec![SemanticActionKind::Focus]
-                    } else {
-                        Vec::new()
-                    }),
-            );
-        }
-        let mut switch = Switch::new(self.checked).enabled(self.enabled && !self.read_only);
+        let mut switch = Switch::new(self.checked)
+            .enabled(self.enabled)
+            .read_only(self.read_only);
         if let Some(color) = self.active_track_color {
             switch = switch.active_track_color(color);
         }
@@ -184,7 +151,10 @@ impl Root {
         if let Some(callback) = self.on_change.clone() {
             switch = switch.on_changed(move |value| callback(value));
         }
-        switch.into()
+        if let Some(child) = self.child.clone() {
+            switch = switch.child(child);
+        }
+        Widget::environment_scope(theme.clone(), switch.into())
     }
 }
 impl From<Root> for Widget {

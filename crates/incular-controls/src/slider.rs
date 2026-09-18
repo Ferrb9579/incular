@@ -3,11 +3,10 @@
 use crate::theme::ControlTheme;
 use incular_config::Axis;
 use incular_core::{Color, KeyboardKey, NamedKey};
-use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::internal::ExplicitSemantics;
+use incular_semantics::{Role as SemanticRole, SemanticAction, SemanticState};
 use incular_widgets::{
-    Container, FocusNode, GestureDetector, HitTestBehavior, KeyboardListener, Positioned, Stack,
-    Widget,
+    Container, FocusNode, GestureDetector, HitTestBehavior, KeyboardListener, Positioned,
+    Semantics, Stack, TapUpDetails, Widget,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -282,6 +281,11 @@ impl Root {
         let ratio = ((current_value - self.range.min)
             / (self.range.max - self.range.min).max(f32::EPSILON))
         .clamp(0., 1.);
+        let visual_ratio = if self.rtl && self.orientation == Axis::Horizontal {
+            1.0 - ratio
+        } else {
+            ratio
+        };
         let track_extent = self.track_extent.unwrap_or(180.0);
         let track_thickness = theme.slider.track_height.max(1.);
         let thumb_size = theme.slider.thumb_size.max(track_thickness);
@@ -365,12 +369,20 @@ impl Root {
             if self.orientation == Axis::Horizontal {
                 let mut children = vec![Widget::from(track)];
                 if let Some(indicator) = secondary_indicator {
-                    children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
+                    children.push(Widget::from(if self.rtl {
+                        Positioned::new(indicator).right(0.).top(0.)
+                    } else {
+                        Positioned::new(indicator).left(0.).top(0.)
+                    }));
                 }
-                children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
+                children.push(Widget::from(if self.rtl {
+                    Positioned::new(indicator).right(0.).top(0.)
+                } else {
+                    Positioned::new(indicator).left(0.).top(0.)
+                }));
                 children.push(Widget::from(
                     Positioned::new(thumb)
-                        .left((track_extent * ratio - thumb_size * 0.5).max(0.))
+                        .left((track_extent * visual_ratio - thumb_size * 0.5).max(0.))
                         .top((track_thickness - thumb_size) * 0.5),
                 ));
                 Stack::new(children).into()
@@ -393,19 +405,23 @@ impl Root {
         let range = self.range;
         let orientation = self.orientation;
         let callback = self.on_change.clone();
-        let activate = {
+        let tap = {
             let value = value.clone();
             let revision = revision.clone();
             let callback = callback.clone();
-            move || {
-                // A tap is also a useful keyboard/accessible activation
-                // fallback: advance one quantized step.
-                let next = range.clamp(value.get() + range.step);
-                value.set(next);
-                revision.set(revision.get().wrapping_add(1));
-                if let Some(callback) = &callback {
-                    callback(next);
+            let rtl = self.rtl;
+            move |details: TapUpDetails| {
+                let axis_position = if orientation == Axis::Horizontal {
+                    details.local_position.x
+                } else {
+                    track_extent - details.local_position.y
+                };
+                let mut tapped_ratio = (axis_position / track_extent).clamp(0.0, 1.0);
+                if rtl && orientation == Axis::Horizontal {
+                    tapped_ratio = 1.0 - tapped_ratio;
                 }
+                let next = range.clamp(range.min + tapped_ratio * (range.max - range.min));
+                update_value(&value, &revision, &callback, next);
             }
         };
         let drag_value = value.clone();
@@ -413,11 +429,13 @@ impl Root {
         let drag_callback = callback.clone();
         let drag_start_callback = self.on_change_start.clone();
         let drag_end_callback = self.on_change_end.clone();
+        let drag_rtl = self.rtl;
         let drag_started = Rc::new(Cell::new(false));
         let drag_started_for_update = drag_started.clone();
         let drag = move |delta: incular_core::Offset| {
             let travel = if orientation == Axis::Horizontal {
-                delta.x / track_extent
+                let direction = if drag_rtl { -1.0 } else { 1.0 };
+                direction * delta.x / track_extent
             } else {
                 -delta.y / track_extent
             };
@@ -439,7 +457,7 @@ impl Root {
         let mut interactive: Widget = if self.enabled && (self.tap_enabled || self.drag_enabled) {
             let detector = GestureDetector::new(visual).behavior(HitTestBehavior::Opaque);
             let detector = if self.tap_enabled {
-                detector.on_tap(activate)
+                detector.on_tap_up(tap)
             } else {
                 detector
             };
@@ -553,29 +571,62 @@ impl Root {
             .semantic_value
             .clone()
             .unwrap_or_else(|| format!("{:.3}", range.clamp(current_value)));
-        interactive.semantics(
-            ExplicitSemantics::new(SemanticRole::Slider)
-                .value(value_text)
-                .state(SemanticState {
-                    enabled: self.enabled,
-                    focusable: self.enabled,
-                    numeric_value: Some(f64::from(range.clamp(current_value))),
-                    numeric_min: Some(f64::from(range.min)),
-                    numeric_max: Some(f64::from(range.max)),
-                    numeric_step: Some(f64::from(range.step)),
-                    ..SemanticState::default()
-                })
-                .actions(if self.enabled {
-                    [
-                        SemanticActionKind::Focus,
-                        SemanticActionKind::Increment,
-                        SemanticActionKind::Decrement,
-                    ]
-                    .to_vec()
-                } else {
-                    Vec::new()
-                }),
-        )
+        let mut semantics = Semantics::new(interactive)
+            .role(SemanticRole::Slider)
+            .value(value_text)
+            .state(SemanticState {
+                enabled: self.enabled,
+                focusable: self.enabled,
+                numeric_value: Some(f64::from(range.clamp(current_value))),
+                numeric_min: Some(f64::from(range.min)),
+                numeric_max: Some(f64::from(range.max)),
+                numeric_step: Some(f64::from(range.step)),
+                ..SemanticState::default()
+            });
+        if self.enabled {
+            semantics = semantics.action(SemanticAction::Focus);
+            let increment_value = value.clone();
+            let increment_revision = revision.clone();
+            let increment_callback = callback.clone();
+            semantics = semantics.on_increase(move || {
+                let next = range.clamp(increment_value.get() + range.step);
+                update_value(
+                    &increment_value,
+                    &increment_revision,
+                    &increment_callback,
+                    next,
+                );
+            });
+            let decrement_value = value;
+            let decrement_revision = revision;
+            let decrement_callback = callback;
+            semantics = semantics.on_decrease(move || {
+                let next = range.clamp(decrement_value.get() - range.step);
+                update_value(
+                    &decrement_value,
+                    &decrement_revision,
+                    &decrement_callback,
+                    next,
+                );
+            });
+        }
+        semantics.into()
+    }
+}
+
+fn update_value(
+    value: &Rc<Cell<f32>>,
+    revision: &Rc<Cell<u64>>,
+    callback: &Option<Rc<dyn Fn(f32) + 'static>>,
+    next: f32,
+) {
+    if (next - value.get()).abs() <= f32::EPSILON {
+        return;
+    }
+    value.set(next);
+    revision.set(revision.get().wrapping_add(1));
+    if let Some(callback) = callback {
+        callback(next);
     }
 }
 impl From<Root> for Widget {

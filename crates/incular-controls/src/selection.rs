@@ -575,6 +575,10 @@ pub struct Switch {
     thumb_initialized: Rc<Cell<bool>>,
     #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
+    read_only: bool,
+    #[builder(default, setter(strip_option, into))]
+    child: Option<Widget>,
     #[builder(default, setter(strip_option))]
     active_track_color: Option<Color>,
     #[builder(default, setter(strip_option))]
@@ -616,6 +620,21 @@ impl Switch {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Keeps the switch focusable while suppressing value changes.
+    #[must_use]
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Replaces only the visual content; interaction and semantics stay on the
+    /// switch root.
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
         self
     }
 
@@ -695,45 +714,51 @@ impl Switch {
                 .unwrap_or(theme.colors.foreground_muted)
         };
 
-        let thumb = Container::new()
-            .width(theme.switch.thumb_size)
-            .height(theme.switch.thumb_size)
-            .decoration(
-                BoxDecoration::new()
-                    .color(thumb_color)
-                    .border_radius(BorderRadius::circular(theme.switch.thumb_size * 0.5)),
-            );
+        let visual: Widget = if let Some(child) = &self.child {
+            child.clone()
+        } else {
+            let thumb = Container::new()
+                .width(theme.switch.thumb_size)
+                .height(theme.switch.thumb_size)
+                .decoration(
+                    BoxDecoration::new()
+                        .color(thumb_color)
+                        .border_radius(BorderRadius::circular(theme.switch.thumb_size * 0.5)),
+                );
 
-        let thumb = Positioned::new(Widget::translate(
-            self.thumb_translation.clone(),
-            thumb.into(),
-        ))
-        .left(2.0)
-        .top(2.0)
-        .width(theme.switch.thumb_size)
-        .height(theme.switch.thumb_size);
-        let track = Container::new()
-            .width(theme.switch.width)
-            .height(theme.switch.height)
-            .decoration(
-                BoxDecoration::new()
-                    .color(track_color)
-                    .border(Border::new(
-                        self.outline_width.unwrap_or(1.0),
-                        self.outline_color.unwrap_or(theme.colors.border),
-                    ))
-                    .border_radius(BorderRadius::circular(theme.switch.height * 0.5)),
-            )
-            .child(Stack::new([Widget::from(thumb)]));
+            let thumb = Positioned::new(Widget::translate(
+                self.thumb_translation.clone(),
+                thumb.into(),
+            ))
+            .left(2.0)
+            .top(2.0)
+            .width(theme.switch.thumb_size)
+            .height(theme.switch.thumb_size);
+            Container::new()
+                .width(theme.switch.width)
+                .height(theme.switch.height)
+                .decoration(
+                    BoxDecoration::new()
+                        .color(track_color)
+                        .border(Border::new(
+                            self.outline_width.unwrap_or(1.0),
+                            self.outline_color.unwrap_or(theme.colors.border),
+                        ))
+                        .border_radius(BorderRadius::circular(theme.switch.height * 0.5)),
+                )
+                .child(Stack::new([Widget::from(thumb)]))
+                .into()
+        };
 
         let value = self.value.clone();
         let revision = self.revision.clone();
         let thumb_translation = self.thumb_translation.clone();
         let on_changed = self.on_changed.clone();
-        let mut button = ActionSurface::with_child(track)
+        let mut button = ActionSurface::with_child(visual)
             .color(Color::TRANSPARENT)
-            .enabled(self.enabled);
-        if self.enabled {
+            .enabled(self.enabled && !self.read_only)
+            .focusable_when_disabled(self.enabled && self.read_only);
+        if self.enabled && !self.read_only {
             button = button.on_click(move || {
                 let next = !value.get();
                 value.set(next);
@@ -757,10 +782,13 @@ impl Switch {
                     enabled: self.enabled,
                     focusable: self.enabled,
                     checked: Some(is_on.into()),
+                    read_only: self.read_only,
                     ..SemanticState::default()
                 })
-                .actions(if self.enabled {
+                .actions(if self.enabled && !self.read_only {
                     vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+                } else if self.enabled {
+                    vec![SemanticActionKind::Focus]
                 } else {
                     Vec::new()
                 }),
