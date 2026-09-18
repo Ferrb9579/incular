@@ -268,6 +268,11 @@ fn retained_editability_changes_cancel_composition_without_native_events() {
             .unwrap();
         assert_eq!(controller.preedit(), None);
         assert_eq!(controller.text(), "ab");
+        assert_eq!(runtime.focused_element(), read_only.then_some(field));
+        assert_eq!(
+            runtime.focus_diagnostics().text_pointer_capture,
+            read_only.then_some(field)
+        );
     }
 }
 

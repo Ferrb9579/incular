@@ -1427,24 +1427,23 @@ impl Runtime {
         self.sync_text_input_client();
     }
 
-    fn clear_focus_if_unmounted(&mut self) {
-        if !self
-            .focused
-            .is_some_and(|focused| !self.tree.element_exists(focused))
-        {
-            return;
+    fn reconcile_focus_and_selection_captures(&mut self) {
+        if self.captured_text_field.is_some_and(|field| {
+            !self.tree.is_text_field(field) || !self.tree.can_request_focus(field)
+        }) {
+            self.captured_text_field = None;
         }
-        // The element is already gone, so do not attempt to write retained
-        // focus state through a stale generational id. Runtime focus and the
-        // native text-input client must nevertheless be cleared in this frame.
-        // The composition owner (if any) names this field: cancel through the
-        // retained controller handle so its stale preedit clears as well.
-        self.cancel_ime_composition();
-        self.focused = None;
-        self.captured_text_field = None;
-        self.captured_selectable_text = None;
-        self.sync_text_input_client();
-        self.frame_requested = true;
+        if self.captured_selectable_text.is_some_and(|label| {
+            !self.tree.is_selectable_text(label) || !self.tree.can_request_focus(label)
+        }) {
+            self.captured_selectable_text = None;
+        }
+        if self
+            .focused
+            .is_some_and(|focused| !self.tree.can_request_focus(focused))
+        {
+            self.set_focus(None);
+        }
     }
 
     fn ensure_text_history(&mut self, field: ElementId) -> Option<UndoHistoryController> {
@@ -1985,7 +1984,7 @@ impl Runtime {
                 scope.cancel();
             }
         }
-        self.clear_focus_if_unmounted();
+        self.reconcile_focus_and_selection_captures();
         self.validate_ime_composition();
         self.prune_handlers();
         let build = build_span.elapsed_us();
@@ -2016,7 +2015,7 @@ impl Runtime {
                 scope.cancel();
             }
         }
-        self.clear_focus_if_unmounted();
+        self.reconcile_focus_and_selection_captures();
         self.validate_ime_composition();
         self.prune_handlers();
         // Layout builders create their retained controls during the first

@@ -3281,6 +3281,39 @@ No tests, builds, Clippy, formatters or native runs were executed for this batch
 Source inspection is not proof of passing tests. New bridge signatures and
 retained subscription teardown require the deferred workspace gates.
 
+Next bounded W6 batch — retained focus and selection-capture retirement:
+
+1. Inspect the current runtime frame/input owners after `7b3e03f`; preserve
+   unrelated staged and unstaged restoration/scroll changes.
+2. Revalidate retained focus and each legacy selection capture after build and
+   layout, using the existing tree focus-eligibility owner. Clear focus through
+   `set_focus` so composition and native-client cleanup share the established path.
+3. Add regression source for disabled and inactive retained editors, capture
+   cleanup independent of current focus, and read-only preservation. Review
+   source without running tests/builds/Clippy/formatters/native commands under
+   the continuing budget. Do not advance W7 or claim W6 validation complete.
+
+Batch outcome (source-reviewed, NOT execution-validated):
+- Replaced unmount-only runtime cleanup with independent focus and selection
+  capture eligibility checks after build and layout. Disabled or inactive
+  retained editors no longer retain runtime focus/capture after a frame.
+- Invalid focus is retired through `set_focus(None)`, reusing composition
+  cancellation, retained visual focus updates and native-client clearing.
+  Missing-element access is already guarded by the tree setters.
+- Capture pruning does not depend on the current focus becoming invalid;
+  an eligible second editor keeps focus when the first capture owner is disabled.
+  Read-only editors keep focus and selection capture because selection remains
+  supported; their composition still cancels through the editability predicate.
+- Added source in `focus_mount.rs` for inactive IndexedStack editors, native
+  Clear command emission, ignored subsequent text/move input, and independent
+  stale capture retirement. Extended `text_input_gating.rs` to distinguish
+  disabled cleanup from read-only preservation. All regression source is
+  UNEXECUTED; no tests, builds, Clippy, formatters or native runs were performed.
+- Scope remains frame-bound: direct retained mutations before the next frame,
+  external FocusNode replacement/unmount mirroring, button press/hover tenure,
+  generic gesture capture across popup/route/window teardown, and native delivery
+  remain follow-up work. No changes were made to restoration or scroll files.
+
 Remaining W6 work (W6 stays open): execute the unexecuted tests plus full
 gates; multi-contact arbitration and captured-pointer cleanup across popup,
 route, and window teardown at runtime level; semantic bounds/checked-state
