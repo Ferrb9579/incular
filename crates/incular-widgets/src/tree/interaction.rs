@@ -935,25 +935,41 @@ impl WidgetTree {
         }
     }
     pub(super) fn activate_scale_pairs(&mut self, window: u64, elements: Vec<ElementId>) {
+        use std::collections::HashMap;
         for element in elements {
-            let members: Vec<_> = self
-                .active_gestures
-                .iter()
-                .filter(|(key, _)| key.window == window)
-                .flat_map(|(key, active)| {
-                    active.members.iter().filter_map(move |candidate| {
-                        (candidate.element == element
-                            && candidate.kind == RetainedGestureKind::Scale)
-                            .then_some((*key, candidate.member))
-                    })
-                })
-                .collect();
-            if members.len() < 2 {
+            if !self.elements.contains(element.0) {
                 continue;
             }
-            for (key, member) in members {
-                let entries = self.gesture_arena.accept(key, member);
-                self.apply_arena_entries(key, entries);
+            // Group scale members by device so two independent mice cannot
+            // auto-accept as a pinch. Stale dead elements are skipped.
+            let mut by_device: HashMap<u64, Vec<_>> = HashMap::new();
+            for (key, active) in self.active_gestures.iter() {
+                if key.window != window {
+                    continue;
+                }
+                let Some(device) = key.pointer_device_id() else {
+                    continue;
+                };
+                for candidate in active.members.iter() {
+                    if candidate.element == element
+                        && candidate.kind == RetainedGestureKind::Scale
+                        && self.elements.contains(candidate.element.0)
+                    {
+                        by_device
+                            .entry(device)
+                            .or_default()
+                            .push((*key, candidate.member));
+                    }
+                }
+            }
+            for members in by_device.values() {
+                if members.len() < 2 {
+                    continue;
+                }
+                for (key, member) in members {
+                    let entries = self.gesture_arena.accept(*key, *member);
+                    self.apply_arena_entries(*key, entries);
+                }
             }
         }
     }
@@ -1290,6 +1306,35 @@ impl WidgetTree {
         }
         self.active_gestures.remove(&key);
         self.pointer_captures.remove(&key);
+        self.remove_scale_recognizers_when_idle();
+    }
+
+    /// Cancels all gesture and pointer state for window teardown. Notifies
+    /// recognizers so no `on_cancel` owner strands across close/dispose.
+    pub fn cancel_all_gesture_streams(&mut self) {
+        let ordinary: Vec<GestureArenaKey> = self.active_gestures.keys().copied().collect();
+        for key in ordinary {
+            self.cancel_gesture_stream(key, true);
+        }
+        let raw: Vec<GestureArenaKey> = self.raw_gesture_streams.keys().copied().collect();
+        for key in raw {
+            self.cancel_raw_gesture_stream(key, true);
+        }
+        let trackpad: Vec<GestureArenaKey> =
+            self.active_trackpad_gestures.keys().copied().collect();
+        for key in trackpad {
+            let _ = self.gesture_arena.cancel(key);
+            self.active_trackpad_gestures.remove(&key);
+        }
+        self.raw_pointer_routes.clear();
+        self.consumed_tap_pointers.clear();
+        self.mouse_hover.clear();
+        self.pointer_captures.clear();
+        self.active_drags.clear();
+        self.scroll_brackets.clear();
+        self.scroll_flings.clear();
+        self.scrollbar_drag = None;
+        self.active_external_drop = None;
         self.remove_scale_recognizers_when_idle();
     }
     pub(super) fn remove_scale_recognizers_when_idle(&mut self) {

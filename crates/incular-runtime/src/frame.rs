@@ -622,6 +622,7 @@ impl Runtime {
             self.cancel_ime_composition();
             self.sync_text_input_client();
         }
+        self.tree.cancel_all_gesture_streams();
         self.captured_text_field = None;
         self.captured_selectable_text = None;
         self.hovered_button = None;
@@ -647,6 +648,7 @@ impl Runtime {
             self.cancel_ime_composition();
             self.sync_text_input_client();
         }
+        self.tree.cancel_all_gesture_streams();
         self.tree.release_edit_subscriptions();
         self.legacy_pointer = None;
         self.window_scope.cancel();

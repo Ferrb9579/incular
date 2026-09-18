@@ -252,6 +252,30 @@ fn form_validator_can_replace_itself_for_the_next_pass() {
 }
 
 #[test]
+fn form_validator_reentrant_validate_terminates_with_settled_result() {
+    let form = Form::new();
+    let nested = form.clone();
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let field = form
+        .register(TextEditingController::with_text("x"))
+        .validator(move |value| {
+            observed.set(observed.get() + 1);
+            if observed.get() == 1 {
+                let _ = nested.validate();
+            }
+            if value.is_empty() {
+                Some("required".into())
+            } else {
+                None
+            }
+        });
+    let _ = field;
+    assert!(form.validate());
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
 fn form_save_callback_can_replace_itself_for_the_next_pass() {
     let form = Form::new();
     let registration = Rc::new(RefCell::new(None::<incular_widgets::FormField>));

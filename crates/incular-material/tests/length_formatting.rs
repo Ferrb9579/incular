@@ -13,6 +13,19 @@ use std::{
 };
 
 #[test]
+fn restored_over_long_value_is_formatted_on_mount() {
+    let controller = TextEditingController::with_text("abcd");
+    let widget: Widget = TextField::new(controller.clone())
+        .max_length(Some(2))
+        .into();
+    let mut runtime = Runtime::new(widget).unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(240., 80.)))
+        .unwrap();
+    assert_eq!(controller.text(), "ab");
+}
+
+#[test]
 fn rebuild_replaces_callbacks_and_unmount_releases_formatter() {
     let controller = TextEditingController::new();
     let calls = Rc::new(Cell::new(0));
@@ -82,7 +95,7 @@ fn formatter_history_uses_accepted_values_and_recovers_from_panic() {
     let controller = TextEditingController::new();
     let history = UndoHistoryController::new(controller.clone());
     let old = Rc::new(RefCell::new(Vec::new()));
-    let panic_once = Rc::new(Cell::new(true));
+    let panic_once = Rc::new(Cell::new(false));
     let mut runtime = Runtime::new(
         TextField::new(controller.clone())
             .input_formatter(RecordingFormatter {
@@ -95,6 +108,7 @@ fn formatter_history_uses_accepted_values_and_recovers_from_panic() {
     runtime
         .run_frame(Constraints::tight(Size::new(240., 80.)))
         .unwrap();
+    panic_once.set(true);
     assert!(catch_unwind(AssertUnwindSafe(|| controller.set_text("bad"))).is_err());
     assert_eq!(controller.text(), "");
     controller.set_text("abcd");

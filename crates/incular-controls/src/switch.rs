@@ -135,7 +135,8 @@ impl Root {
             let mut button = ActionSurface::with_child(child.clone())
                 .color(Color::TRANSPARENT)
                 .disabled_color(theme.colors.disabled_surface)
-                .enabled(self.enabled && !self.read_only);
+                .enabled(self.enabled && !self.read_only)
+                .focusable_when_disabled(self.enabled && self.read_only);
             if let Some(callback) = self.on_change.clone()
                 && self.enabled
                 && !self.read_only
@@ -148,14 +149,16 @@ impl Root {
                 ExplicitSemantics::new(SemanticRole::Switch)
                     .state(SemanticState {
                         enabled: self.enabled,
-                        focusable: self.enabled || self.read_only,
+                        focusable: self.enabled,
                         checked: Some(self.checked.into()),
                         ..SemanticState::default()
                     })
                     .actions(if self.enabled && !self.read_only {
                         [SemanticActionKind::Focus, SemanticActionKind::Activate].to_vec()
-                    } else {
+                    } else if self.enabled {
                         vec![SemanticActionKind::Focus]
+                    } else {
+                        Vec::new()
                     }),
             );
         }

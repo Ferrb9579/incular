@@ -933,7 +933,6 @@ impl From<RangeSlider> for Widget {
                         .actions(if enabled {
                             vec![
                                 SemanticActionKind::Focus,
-                                SemanticActionKind::Activate,
                                 SemanticActionKind::Increment,
                                 SemanticActionKind::Decrement,
                             ]

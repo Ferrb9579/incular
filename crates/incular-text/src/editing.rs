@@ -265,6 +265,7 @@ struct ControllerState {
     preedit: Option<String>,
     preedit_selection: Option<TextRange>,
     restoration: Option<TextRestoration>,
+    restoration_generation: u64,
 }
 
 #[derive(Clone)]
@@ -331,6 +332,9 @@ impl TextEditingController {
             .is_some_and(|value| *value != self.inner.borrow().value);
         let mut state = self.inner.borrow_mut();
         state.restoration = Some(TextRestoration { scope, key });
+        // Restoration is a baseline, not an edit: bump the generation so
+        // history observers rebaseline instead of recording an undo step.
+        state.restoration_generation = state.restoration_generation.wrapping_add(1);
         if let Some(value) = restored {
             state.value = value;
             state.content_revision = state.content_revision.saturating_add(1);
@@ -616,6 +620,13 @@ impl TextEditingController {
     pub fn revisions(&self) -> (u64, u64) {
         let state = self.inner.borrow();
         (state.content_revision, state.visual_revision)
+    }
+
+    /// Restoration baseline generation; history rebaselines when observed.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn restoration_generation(&self) -> u64 {
+        self.inner.borrow().restoration_generation
     }
 
     /// Restarts the caret blink after an editing interaction.

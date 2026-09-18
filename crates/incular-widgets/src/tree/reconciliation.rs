@@ -28,27 +28,44 @@ enum ChildProvenance {
 
 impl WidgetTree {
     fn sync_edit_callbacks(&mut self, id: ElementId) {
-        let element = self.element_live_mut(id, "editing owner must remain live");
-        element.edit_transform_subscription = None;
-        element.edit_changed_subscription = None;
-        let WidgetKind::TextField(spec) = element.widget.kind() else {
-            return;
+        let (controller, transform) = {
+            let element = self.element_live_mut(id, "editing owner must remain live");
+            element.edit_transform_subscription = None;
+            element.edit_changed_subscription = None;
+            let WidgetKind::TextField(spec) = element.widget.kind() else {
+                return;
+            };
+            let controller = spec.controller.clone();
+            let transform = spec.edit_transform.clone();
+            if let Some(transform) = transform.clone() {
+                element.edit_transform_subscription =
+                    Some(controller.register_edit_transform(move |old, next| transform(old, next)));
+            }
+            if let Some(changed) = spec.edit_changed.clone() {
+                let previous = RefCell::new(controller.text());
+                element.edit_changed_subscription = Some(controller.observe(move |value| {
+                    let differs = *previous.borrow() != value.text;
+                    if differs {
+                        *previous.borrow_mut() = value.text.clone();
+                        changed(&value.text);
+                    }
+                }));
+            }
+            (controller, transform)
         };
-        if let Some(transform) = spec.edit_transform.clone() {
-            element.edit_transform_subscription = Some(
-                spec.controller
-                    .register_edit_transform(move |old, next| transform(old, next)),
-            );
-        }
-        if let Some(changed) = spec.edit_changed.clone() {
-            let previous = RefCell::new(spec.controller.text());
-            element.edit_changed_subscription = Some(spec.controller.observe(move |value| {
-                let differs = *previous.borrow() != value.text;
-                if differs {
-                    *previous.borrow_mut() = value.text.clone();
-                    changed(&value.text);
+        // Restored or replaced values bypass the commit path; normalize the
+        // current value once so over-long/illegal restored text cannot persist
+        // until the next keystroke. Empty stays empty for standard formatters,
+        // so skip it to avoid spurious invocations; history is created on
+        // focus afterwards.
+        if let Some(transform) = transform {
+            let current = controller.value();
+            if !current.text.is_empty() {
+                let formatted = transform(&current, &current);
+                if formatted != current {
+                    controller.set_value(formatted);
                 }
-            }));
+            }
         }
     }
 

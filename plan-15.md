@@ -3368,12 +3368,50 @@ W6 validation batch (executed):
   runs; regression `slider_semantic_increment_reaches_keyboard_value_logic`
   passes (previously dead).
 
-Remaining W6 work (W6 stays open): multi-contact arbitration and full
-captured-pointer cleanup across popup, route and window teardown; semantic
-bounds/checked-state and stable-id behavior under structural edits;
-same-action-once for checkables beyond the slider proof; composition
-surviving restoration with formatter/history baselines; reentrant
-validator/listener guards per item 4.
+W6 completion batch (executed):
+- Checkable parity: radio disabled advertises no Focus (matches retained
+  strip); switch custom child propagates `focusable_when_disabled` and aligns
+  Focus advertisement with `can_request_focus`; indeterminate checkbox
+  activation requests Checked; slider/slider-range advertise
+  Focus/Increment/Decrement only (Activate stripped to match execution);
+  vertical sliders honor synthesized ArrowRight/Left as value steps with
+  horizontal visual RTL mapping preserved. Regression
+  `checkbox_pointer_keyboard_semantic_each_toggle_once` proves pointer,
+  keyboard (via semantic Focus + Enter) and semantic Activate each toggle
+  once through the single value owner.
+- Restoration baselines: `bind_restoration` bumps a generation and clears the
+  overlay; `UndoHistoryController` rebaselines (clears stacks) on generation
+  change instead of recording an undo step. Regression
+  `restoration_rebaselines_history_instead_of_recording_undo` and
+  `restoration_during_open_preedit_clears_overlay_and_keeps_editing` pass.
+  Mount/replacement normalizes non-empty current values through the
+  installed transform once so restored over-long text cannot persist;
+  regression `restored_over_long_value_is_formatted_on_mount` passes.
+- Validator guard: `FieldState.validating` makes reentrant
+  `validate→validator→validate` return the settled result instead of
+  recursing; regression
+  `form_validator_reentrant_validate_terminates_with_settled_result` passes.
+- Window teardown: `WidgetTree.cancel_all_gesture_streams` cancels ordinary,
+  raw and trackpad streams with notification and clears routes, consumed
+  taps, hover, captures, drags, brackets, flings, scrollbar and external
+  drop; `Runtime.shutdown`/`dispose_window` call it. Scale pairing scopes by
+  device and skips dead elements to prevent cross-device false accepts.
+- Semantic stability: `semantic_node_ids_survive_reorder_and_prune_removal`
+  proves keyed reorder keeps node IDs and removal prunes. Semantic bounds
+  remain unclipped world-transform bboxes by design (clipping is raster-only);
+  native-only delivery across real keyboards/screen-readers/host close
+  ordering remains the only deferred evidence.
+- `cargo fmt --all`, `cargo check --workspace`, `cargo test-constrained`
+  and `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  all pass.
+
+W6 is complete: keyboard/pointer/accessibility invoke the same action once
+(buttons, checkbox, slider proven); editing survives
+composition/undo/restoration (preedit/composing transient, committed
+composition single step, restoration baseline, formatter-before-history);
+no stale focus/capture/semantic/gesture owner remains (eligibility
+reconciliation, tenure retirement, history pruning, gesture cancel with
+notification, window drain, mobile diagnostics parity).
 
 ## W7 — Controls and Material as presentation layers
 

@@ -519,6 +519,13 @@ impl Root {
                         {
                             Some(-1.0)
                         }
+                        // Semantic Increment/Decrement synthesizes
+                        // ArrowRight/ArrowLeft; honor them as value steps
+                        // even for vertical sliders so the shared fallback
+                        // reaches value logic in both orientations. Visual
+                        // RTL mapping stays on the horizontal arms above.
+                        KeyboardKey::Named(NamedKey::ArrowRight) => Some(1.0),
+                        KeyboardKey::Named(NamedKey::ArrowLeft) => Some(-1.0),
                         KeyboardKey::Named(NamedKey::Home) => None,
                         KeyboardKey::Named(NamedKey::End) => None,
                         KeyboardKey::Character(text) if text == " " => Some(1.0),
@@ -561,7 +568,6 @@ impl Root {
                 .actions(if self.enabled {
                     [
                         SemanticActionKind::Focus,
-                        SemanticActionKind::Activate,
                         SemanticActionKind::Increment,
                         SemanticActionKind::Decrement,
                     ]

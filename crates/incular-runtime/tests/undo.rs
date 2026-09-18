@@ -200,6 +200,47 @@ fn nested_redo_keeps_outer_undo_application_active() {
 }
 
 #[test]
+fn restoration_rebaselines_history_instead_of_recording_undo() {
+    use incular_core::{RestorationKey, RestorationScope};
+    use serde_json::json;
+    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+
+    #[derive(Default)]
+    struct MemoryBackend(RefCell<BTreeMap<Vec<RestorationKey>, serde_json::Value>>);
+    impl incular_core::RestorationBackend for MemoryBackend {
+        fn read_value(&self, path: &[RestorationKey]) -> Option<serde_json::Value> {
+            self.0.borrow().get(path).cloned()
+        }
+        fn write_value(&self, path: &[RestorationKey], value: serde_json::Value) {
+            self.0.borrow_mut().insert(path.to_vec(), value);
+        }
+        fn remove_value(&self, path: &[RestorationKey]) {
+            self.0.borrow_mut().remove(path);
+        }
+    }
+
+    let scope = RestorationScope::root(Rc::new(MemoryBackend::default()));
+    let key = RestorationKey::new("document").unwrap();
+    let editor = TextEditingController::with_text("a");
+    let history = UndoHistoryController::new(editor.clone());
+    editor.set_text("b");
+    assert!(history.can_undo());
+    scope.set_json(
+        &key,
+        json!({"text": "restored", "selection": {"base": 8, "extent": 8}}),
+    );
+    editor.bind_restoration(scope, key);
+    assert_eq!(editor.text(), "restored");
+    assert!(!history.can_undo());
+    assert!(!history.can_redo());
+    assert!(!history.undo());
+    editor.set_text("after");
+    assert!(history.undo());
+    assert_eq!(editor.text(), "restored");
+    assert!(!history.undo());
+}
+
+#[test]
 fn selection_changes_do_not_create_undo_steps_and_capacity_is_bounded() {
     let editor = TextEditingController::with_text("one");
     let controller = UndoHistoryController::new(editor.clone());

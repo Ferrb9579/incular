@@ -177,6 +177,65 @@ fn unmounted_mid_press_and_hover_release_tenure_silently() {
 }
 
 #[test]
+fn checkbox_pointer_keyboard_semantic_each_toggle_once() {
+    use incular_controls::{ControlTheme, checkbox::Root as Checkbox};
+    use incular_core::{Code, KeyboardEvent, KeyboardKey, NamedKey};
+    for path in ["pointer", "keyboard", "semantic"] {
+        let toggles = Rc::new(Cell::new(0_u32));
+        let observed = toggles.clone();
+        let widget = Checkbox::new()
+            .on_checked_change(move |_| observed.set(observed.get() + 1))
+            .build(&ControlTheme::light());
+        let mut runtime = Runtime::new(widget).unwrap();
+        let constraints = Constraints::tight(Size::new(200., 60.));
+        runtime.run_frame(constraints).unwrap();
+        match path {
+            "pointer" => {
+                let _ = runtime.handle_input(InputEvent::Pointer {
+                    phase: PointerPhase::Down,
+                    position: Offset::new(10., 10.),
+                });
+                let _ = runtime.handle_input(InputEvent::Pointer {
+                    phase: PointerPhase::Up,
+                    position: Offset::new(10., 10.),
+                });
+            }
+            "keyboard" => {
+                let node = runtime
+                    .tree()
+                    .semantics()
+                    .iter()
+                    .find(|(_, node)| {
+                        node.actions
+                            .contains(&incular_semantics::SemanticActionKind::Focus)
+                    })
+                    .map(|(id, _)| id)
+                    .expect("checkbox focus node");
+                assert!(runtime.dispatch_semantic_action(node, SemanticAction::Focus));
+                let _ = runtime.handle_input(InputEvent::Key(KeyboardEvent::key_down(
+                    KeyboardKey::Named(NamedKey::Enter),
+                    Code::Enter,
+                )));
+            }
+            _ => {
+                let node = runtime
+                    .tree()
+                    .semantics()
+                    .iter()
+                    .find(|(_, node)| {
+                        node.actions
+                            .contains(&incular_semantics::SemanticActionKind::Activate)
+                    })
+                    .map(|(id, _)| id)
+                    .expect("checkbox activate node");
+                assert!(runtime.dispatch_semantic_action(node, SemanticAction::Activate));
+            }
+        }
+        assert_eq!(toggles.get(), 1, "path={path}");
+    }
+}
+
+#[test]
 fn slider_semantic_increment_reaches_keyboard_value_logic() {
     use incular_controls::slider::Root as Slider;
     let value = Rc::new(Cell::new(0.0_f32));

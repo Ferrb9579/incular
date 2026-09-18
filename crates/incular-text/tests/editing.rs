@@ -1,7 +1,8 @@
 use incular_text::{
     TextEditingController, TextEditingDelta, TextEditingValue, TextRange, TextSelection,
 };
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 #[test]
@@ -69,6 +70,41 @@ fn committed_preedit_preserves_composition_started_by_listener() {
         assert_eq!(controller.preedit().as_deref(), Some("new"));
         assert!(controller.remove_listener(token));
     }
+}
+
+#[test]
+fn restoration_during_open_preedit_clears_overlay_and_keeps_editing() {
+    use incular_core::{RestorationKey, RestorationScope};
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct MemoryBackend(RefCell<BTreeMap<Vec<RestorationKey>, serde_json::Value>>);
+    impl incular_core::RestorationBackend for MemoryBackend {
+        fn read_value(&self, path: &[RestorationKey]) -> Option<serde_json::Value> {
+            self.0.borrow().get(path).cloned()
+        }
+        fn write_value(&self, path: &[RestorationKey], value: serde_json::Value) {
+            self.0.borrow_mut().insert(path.to_vec(), value);
+        }
+        fn remove_value(&self, path: &[RestorationKey]) {
+            self.0.borrow_mut().remove(path);
+        }
+    }
+
+    let scope = RestorationScope::root(Rc::new(MemoryBackend::default()));
+    let key = RestorationKey::new("document").unwrap();
+    let controller = TextEditingController::with_text("ab");
+    controller.set_preedit("xy", None);
+    assert_eq!(controller.preedit().as_deref(), Some("xy"));
+    scope.set_json(
+        &key,
+        json!({"text": "restored", "selection": {"base": 8, "extent": 8}}),
+    );
+    controller.bind_restoration(scope, key);
+    assert_eq!(controller.preedit(), None);
+    assert_eq!(controller.text(), "restored");
+    controller.insert("!");
+    assert_eq!(controller.text(), "restored!");
 }
 
 #[test]

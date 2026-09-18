@@ -19,6 +19,8 @@
 //! Redo clears on the next committed text change, including after an undo.
 //! Controller replacement starts fresh: the old history drops with its
 //! listener and the new controller tracks from its current value.
+//! Restoration is a baseline, not an edit: binding rebaselines current and
+//! clears both stacks instead of recording an undo step.
 //! Reentrant edits made by listeners during notification commit normally —
 //! newer wins and snapshots are never restored over them; edits made while
 //! an undo/redo application is dispatching are absorbed into current without
@@ -58,6 +60,7 @@ struct Inner {
     editor: TextEditingController,
     history: RefCell<History>,
     applying: Cell<bool>,
+    restoration_generation: Cell<u64>,
     state: Signal<UndoHistoryState>,
     listener: usize,
 }
@@ -76,6 +79,19 @@ impl Inner {
     }
 
     fn record(&self, value: TextEditingValue) {
+        // Restoration is a baseline, not an edit: rebaseline instead of
+        // recording an undo step when the generation changed.
+        let generation = self.editor.restoration_generation();
+        if generation != self.restoration_generation.get() {
+            self.restoration_generation.set(generation);
+            let mut history = self.history.borrow_mut();
+            history.current = value;
+            history.undo.clear();
+            history.redo.clear();
+            drop(history);
+            self.sync_state();
+            return;
+        }
         if self.applying.get() {
             self.history.borrow_mut().current = value;
             return;
@@ -177,6 +193,7 @@ impl UndoHistoryController {
                     max_entries: DEFAULT_MAX_ENTRIES,
                 }),
                 applying: Cell::new(false),
+                restoration_generation: Cell::new(editor.restoration_generation()),
                 state: Signal::new(UndoHistoryState::default()),
                 listener,
             }

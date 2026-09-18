@@ -170,7 +170,7 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
                     .actions(if self.enabled {
                         [SemanticActionKind::Focus, SemanticActionKind::Activate].to_vec()
                     } else {
-                        vec![SemanticActionKind::Focus]
+                        Vec::new()
                     }),
             );
         }

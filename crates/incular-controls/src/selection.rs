@@ -293,8 +293,13 @@ impl Checkbox {
             .focusable_when_disabled(self.enabled && self.read_only);
 
         if self.enabled && !self.read_only {
+            let was_indeterminate = self.indeterminate;
             button = button.on_click(move || {
-                let next = !value.get();
+                let next = if was_indeterminate {
+                    true
+                } else {
+                    !value.get()
+                };
                 value.set(next);
                 revision.set(revision.get().wrapping_add(1));
                 let target_opacity = if next { 1. } else { 0. };

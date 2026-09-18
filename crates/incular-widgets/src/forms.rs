@@ -45,6 +45,7 @@ struct FieldState {
     autovalidate: Cell<AutovalidateMode>,
     error: RefCell<Option<String>>,
     controller_listener: RefCell<Option<incular_text::TextEditingSubscription>>,
+    validating: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -114,6 +115,7 @@ impl Form {
             autovalidate: Cell::new(AutovalidateMode::Disabled),
             error: RefCell::new(None),
             controller_listener: RefCell::new(None),
+            validating: Cell::new(false),
         });
         let field_weak = Rc::downgrade(&field);
         let form_weak = Rc::downgrade(&self.state);
@@ -393,6 +395,18 @@ fn validate_fields(fields: &[(FormFieldId, Rc<FieldState>)]) -> bool {
 }
 
 fn validate_field(field: &FieldState) -> bool {
+    // Reentrant validators (validator calling validate/save/set_text) return
+    // the last settled validity instead of recursing unboundedly.
+    if field.validating.replace(true) {
+        return field.error.borrow().is_none();
+    }
+    struct Reset<'a>(&'a FieldState);
+    impl Drop for Reset<'_> {
+        fn drop(&mut self) {
+            self.0.validating.set(false);
+        }
+    }
+    let _guard = Reset(field);
     let validator = field.validator.borrow().clone();
     let error = validator.and_then(|validator| validator(&field.controller.text()));
     let valid = error.is_none();
