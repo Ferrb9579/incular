@@ -19,9 +19,16 @@ impl WidgetTree {
         focused: bool,
         now: Instant,
     ) -> Result<(), TreeError> {
+        let interaction = self.elements.get(id.0).and_then(|element| {
+            let WidgetKind::Button(spec) = element.widget.kind() else {
+                return None;
+            };
+            spec.interaction.clone()
+        });
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.render_live_mut(render, "retained render must remain live");
         if let Some(button) = node.button_state_mut() {
+            let changed = button.focused != focused;
             button.focused = focused;
             button.visual = if button.pressed {
                 ButtonState::Pressed
@@ -32,7 +39,17 @@ impl WidgetTree {
             } else {
                 ButtonState::Normal
             };
-            node.dirty.insert(DirtyFlags::PAINT);
+            if changed {
+                let snapshot = crate::internal::ActionInteractionState {
+                    hovered: button.hovered,
+                    pressed: button.pressed,
+                    focused: button.focused,
+                };
+                node.dirty.insert(DirtyFlags::PAINT);
+                if let Some(interaction) = interaction {
+                    interaction.update(snapshot);
+                }
+            }
         }
         if node
             .text_field_state()

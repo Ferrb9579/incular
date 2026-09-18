@@ -4,7 +4,7 @@
 //! retained implementation. They are intentionally not re-exported from the
 //! public widget prelude and are not part of Incular's Flutter-facing API.
 
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use incular_config::EdgeInsets;
 use incular_core::{Color, Size};
@@ -132,6 +132,58 @@ pub fn action(size: Size, color: Color, action: ActionId) -> Widget {
     Widget::button(size, color, action)
 }
 
+/// Live interaction snapshot owned by a mounted retained action surface.
+///
+/// Sibling presentation crates can observe this state to resolve visuals, but
+/// they never drive it. Pointer/focus tenure remains owned by `WidgetTree` and
+/// the runtime.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActionInteractionState {
+    pub hovered: bool,
+    pub pressed: bool,
+    pub focused: bool,
+}
+
+/// Read-only presentation bridge for a retained action surface.
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct ActionInteractionController {
+    state: Rc<Cell<ActionInteractionState>>,
+    revision: Rc<Cell<u64>>,
+}
+
+impl ActionInteractionController {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn state(&self) -> ActionInteractionState {
+        self.state.get()
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Rc<Cell<u64>> {
+        self.revision.clone()
+    }
+
+    pub(crate) fn update(&self, next: ActionInteractionState) {
+        if self.state.replace(next) != next {
+            self.revision.set(self.revision.get().wrapping_add(1));
+        }
+    }
+}
+
+impl PartialEq for ActionInteractionController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state) && Rc::ptr_eq(&self.revision, &other.revision)
+    }
+}
+
+impl Eq for ActionInteractionController {}
+
 /// Internal action surface used by control implementations.
 ///
 /// Flutter has no `widgets::ActionSurface`. Material's raw button is
@@ -154,6 +206,7 @@ pub struct ActionSurface {
     pub(crate) label_style: TextStyle,
     pub(crate) padding: EdgeInsets,
     pub(crate) content: Option<Widget>,
+    pub(crate) interaction: Option<ActionInteractionController>,
 }
 
 impl ActionSurface {
@@ -175,6 +228,7 @@ impl ActionSurface {
             label_style: TextStyle::default(),
             padding: EdgeInsets::ZERO,
             content: None,
+            interaction: None,
         }
     }
 
@@ -285,6 +339,13 @@ impl ActionSurface {
     #[must_use]
     pub fn content(mut self, content: impl Into<Widget>) -> Self {
         self.content = Some(content.into());
+        self
+    }
+
+    /// Binds a presentation observer to this mounted action surface.
+    #[must_use]
+    pub fn interaction_controller(mut self, controller: ActionInteractionController) -> Self {
+        self.interaction = Some(controller);
         self
     }
 }

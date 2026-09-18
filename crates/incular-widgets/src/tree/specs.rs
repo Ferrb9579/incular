@@ -157,6 +157,7 @@ pub struct ButtonSpec {
     pub(crate) exit_callback: Option<Rc<dyn Fn()>>,
     pub(crate) has_callback: bool,
     pub(crate) child: Option<Widget>,
+    pub(crate) interaction: Option<crate::internal::ActionInteractionController>,
 }
 
 pub(crate) type EditTransform = Rc<

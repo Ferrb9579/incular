@@ -4,7 +4,10 @@ use incular_config::{Alignment, EdgeInsets};
 use incular_core::Color;
 use incular_core::Offset;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::internal::{ActionSurface, DropShadow, ExplicitSemantics};
+use incular_widgets::internal::{
+    ActionInteractionController, ActionInteractionState, ActionSurface, DropShadow,
+    ExplicitSemantics,
+};
 use incular_widgets::{Align, Border, BorderRadius, BoxDecoration, Container, Text, Widget};
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
@@ -134,39 +137,86 @@ impl Button {
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
         let effective_enabled = self.enabled && !self.loading;
-        let state = ControlState::from_enabled(effective_enabled);
+        let interaction = ActionInteractionController::new();
+        let presentation = {
+            let button = self.clone();
+            let theme = theme.clone();
+            let interaction = interaction.clone();
+            Widget::stateful_layout_builder(interaction.revision(), move |_, _| {
+                let state = button.control_state(effective_enabled, interaction.state());
+                button.build_presentation(&theme, state)
+            })
+        };
 
-        let bg = self.style.resolve_background(state, theme);
-        let hover_state = state.with(ControlState::HOVERED);
-        let pressed_state = state.with(ControlState::PRESSED);
-        let focused_state = state.with(ControlState::FOCUSED);
-        let hover_bg = blend_overlay(
-            self.style.resolve_background(hover_state, theme),
-            self.style.resolve_overlay_color(hover_state, theme),
+        let mut raw = ActionSurface::with_child(presentation)
+            .color(Color::TRANSPARENT)
+            .hover_color(Color::TRANSPARENT)
+            .pressed_color(Color::TRANSPARENT)
+            .focused_color(theme.colors.focus_ring)
+            .disabled_color(Color::TRANSPARENT)
+            .enabled(effective_enabled)
+            .focusable_when_disabled(self.focusable_when_disabled || self.loading)
+            .interaction_controller(interaction);
+        if let Some(cb) = self.on_click.clone()
+            && effective_enabled
+        {
+            raw = raw.on_click(move || cb());
+        }
+        let semantic_label = self
+            .label
+            .clone()
+            .or_else(|| self.child.as_ref().and_then(Widget::semantic_text))
+            .unwrap_or_default();
+        let mut semantics = ExplicitSemantics::new(SemanticRole::Button)
+            .label(semantic_label)
+            .state(SemanticState {
+                enabled: effective_enabled,
+                focusable: self.enabled || self.focusable_when_disabled || self.loading,
+                ..SemanticState::default()
+            });
+        if effective_enabled {
+            semantics =
+                semantics.actions([SemanticActionKind::Focus, SemanticActionKind::Activate]);
+        } else if self.focusable_when_disabled || self.loading {
+            semantics = semantics.actions([SemanticActionKind::Focus]);
+        }
+        let raw: Widget = raw.into();
+        raw.semantics(semantics)
+    }
+
+    fn control_state(
+        &self,
+        effective_enabled: bool,
+        interaction: ActionInteractionState,
+    ) -> ControlState {
+        let mut state = ControlState::from_enabled(effective_enabled);
+        if interaction.hovered {
+            state.insert(ControlState::HOVERED);
+        }
+        if interaction.pressed {
+            state.insert(ControlState::PRESSED);
+        }
+        if interaction.focused {
+            state.insert(ControlState::FOCUSED);
+            state.insert(ControlState::FOCUS_VISIBLE);
+        }
+        state
+    }
+
+    fn build_presentation(&self, theme: &ControlTheme, state: ControlState) -> Widget {
+        let background = blend_overlay(
+            self.style.resolve_background(state, theme),
+            self.style.resolve_overlay_color(state, theme),
         );
-        let pressed_bg = blend_overlay(
-            self.style.resolve_background(pressed_state, theme),
-            self.style.resolve_overlay_color(pressed_state, theme),
-        );
-        let focused_bg = blend_overlay(
-            self.style.resolve_background(focused_state, theme),
-            self.style.resolve_overlay_color(focused_state, theme),
-        );
-        let disabled_bg = self.style.resolve_background(ControlState::DISABLED, theme);
         let fg = self.style.resolve_foreground(state, theme);
         let radius = self
             .style
             .shape
             .as_ref()
-            .map(|shape| {
-                shape
-                    .resolve(state)
-                    .top_left
-                    .x
-                    .max(shape.resolve(state).top_left.y)
-            })
-            .or(self.style.border_radius)
-            .unwrap_or(theme.button.radius);
+            .map(|shape| shape.resolve(state))
+            .unwrap_or_else(|| {
+                BorderRadius::circular(self.style.border_radius.unwrap_or(theme.button.radius))
+            });
         let padding = self
             .style
             .padding
@@ -205,9 +255,6 @@ impl Button {
             .map(|side| side.resolve(state))
             .or(self.style.border)
             .unwrap_or_else(|| match self.style.variant {
-                // Filled actions do not need a second outline around their
-                // surface. Callers can still opt into one with `border` or
-                // `side`, including state-aware sides.
                 ButtonVariant::Primary | ButtonVariant::Danger | ButtonVariant::Destructive => {
                     Border::new(0.0, Color::TRANSPARENT)
                 }
@@ -217,12 +264,6 @@ impl Button {
                 ButtonVariant::Ghost => Border::new(0.0, Color::TRANSPARENT),
             });
 
-        // `Container::alignment` is intentionally expanding, which is useful
-        // for panels but wrong for a button in a loose row/column: it makes
-        // the button consume the parent's entire bounded width. A normal
-        // button should size to its label plus padding. Explicit fixed sizes
-        // keep the expanding alignment behavior so custom-width buttons still
-        // honor their requested alignment.
         let shrink_wrap = self.style.fixed_size.is_none();
         let content = if shrink_wrap {
             Align::new(self.style.alignment.unwrap_or(Alignment::CENTER), content)
@@ -232,13 +273,10 @@ impl Button {
             content
         };
 
-        let mut decoration = BoxDecoration::new().border_radius(BorderRadius::circular(radius));
+        let mut decoration = BoxDecoration::new().color(background).border_radius(radius);
         if has_visible_border(&border) {
             decoration = decoration.border(border);
         }
-        // The retained action surface owns the state-aware surface. Keep this
-        // wrapper free of a second background/border so focus rings remain a
-        // separate interaction layer instead of becoming decoration.
         let mut decorated = Container::new()
             .height(height)
             .padding(padding)
@@ -251,15 +289,12 @@ impl Button {
             decorated = decorated.alignment(self.style.alignment.unwrap_or(Alignment::CENTER));
         }
 
+        let mut decorated: Widget = decorated.into();
         if let Some(builder) = self.style.background_builder.as_ref() {
-            decorated = Container::with_child(builder.build(decorated.into(), state));
+            decorated = builder.build(decorated, state);
         }
 
-        // Elevation is a paint/composite concern. Keep it outside the action
-        // surface so hover/press state can change without rebuilding the
-        // button's content, while still reaching the retained drop-shadow
-        // renderer instead of remaining metadata-only.
-        let decorated: Widget = if elevation > 0.0 {
+        if elevation > 0.0 {
             DropShadow::new(
                 Offset::new(0.0, elevation * 0.18),
                 (elevation * 0.55).max(1.0),
@@ -268,42 +303,8 @@ impl Button {
             )
             .into()
         } else {
-            decorated.into()
-        };
-
-        let mut raw = ActionSurface::with_child(decorated)
-            .color(bg)
-            .hover_color(hover_bg)
-            .pressed_color(pressed_bg)
-            .focused_color(focused_bg)
-            .disabled_color(disabled_bg)
-            .enabled(effective_enabled)
-            .focusable_when_disabled(self.focusable_when_disabled || self.loading);
-        if let Some(cb) = self.on_click.clone()
-            && effective_enabled
-        {
-            raw = raw.on_click(move || cb());
+            decorated
         }
-        let semantic_label = self
-            .label
-            .clone()
-            .or_else(|| self.child.as_ref().and_then(Widget::semantic_text))
-            .unwrap_or_default();
-        let mut semantics = ExplicitSemantics::new(SemanticRole::Button)
-            .label(semantic_label)
-            .state(SemanticState {
-                enabled: effective_enabled,
-                focusable: self.enabled || self.focusable_when_disabled || self.loading,
-                ..SemanticState::default()
-            });
-        if effective_enabled {
-            semantics =
-                semantics.actions([SemanticActionKind::Focus, SemanticActionKind::Activate]);
-        } else if self.focusable_when_disabled || self.loading {
-            semantics = semantics.actions([SemanticActionKind::Focus]);
-        }
-        let raw: Widget = raw.into();
-        raw.semantics(semantics)
     }
 }
 

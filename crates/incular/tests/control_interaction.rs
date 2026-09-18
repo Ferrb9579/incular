@@ -306,3 +306,64 @@ fn slider_semantic_increment_is_numeric_increase_in_rtl() {
     runtime.run_frame(constraints).expect("updated frame");
     assert_eq!(observed.get(), 0.75);
 }
+
+#[test]
+fn state_layer_builders_receive_combined_live_button_state() {
+    use incular_controls::{Button, ButtonStyle, ControlState};
+    use incular_core::{Code, KeyboardEvent, KeyboardKey, NamedKey};
+    use std::{cell::RefCell, rc::Rc};
+
+    let states = Rc::new(RefCell::new(Vec::<ControlState>::new()));
+    let observed = states.clone();
+    let app = Application::new(move |_| {
+        Widget::from(
+            Button::new("Live")
+                .style(ButtonStyle::new().foreground_builder({
+                    let observed = observed.clone();
+                    move |child, state| {
+                        observed.borrow_mut().push(state);
+                        child
+                    }
+                }))
+                .on_click(|| {}),
+        )
+    })
+    .expect("application");
+    let mut runtime = app.into_runtime();
+    let constraints = Constraints::loose(Size::new(220.0, 80.0));
+    runtime.run_frame(constraints).expect("initial frame");
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Move,
+        position: Offset::new(10.0, 10.0),
+    });
+    let _ = runtime.handle_input(InputEvent::Key(KeyboardEvent::key_down(
+        KeyboardKey::Named(NamedKey::Tab),
+        Code::Tab,
+    )));
+    runtime.run_frame(constraints).expect("hover+focus frame");
+    let state = *states.borrow().last().expect("resolved state");
+    assert!(
+        state.contains(ControlState::HOVERED),
+        "states={:?}",
+        states.borrow()
+    );
+    assert!(
+        state.contains(ControlState::FOCUSED),
+        "states={:?}",
+        states.borrow()
+    );
+    assert!(
+        state.contains(ControlState::FOCUS_VISIBLE),
+        "states={:?}",
+        states.borrow()
+    );
+
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Down,
+        position: Offset::new(10.0, 10.0),
+    });
+    runtime.run_frame(constraints).expect("pressed frame");
+    let state = *states.borrow().last().expect("pressed resolved state");
+    assert!(state.contains(ControlState::HOVERED));
+    assert!(state.contains(ControlState::PRESSED));
+}

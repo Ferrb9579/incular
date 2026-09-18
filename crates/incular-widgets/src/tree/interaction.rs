@@ -1374,6 +1374,12 @@ impl WidgetTree {
             .and_then(|render| render.button_state().map(|state| state.visual))
     }
     pub fn set_button_state(&mut self, id: ElementId, state: ButtonState) -> Result<(), TreeError> {
+        let interaction = self.elements.get(id.0).and_then(|element| {
+            let WidgetKind::Button(spec) = element.widget.kind() else {
+                return None;
+            };
+            spec.interaction.clone()
+        });
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.render_live_mut(render, "button render identity must remain live");
         if let Some(button) = node.button_state_mut()
@@ -1383,7 +1389,15 @@ impl WidgetTree {
             button.hovered = matches!(state, ButtonState::Hovered);
             button.pressed = matches!(state, ButtonState::Pressed);
             button.focused = matches!(state, ButtonState::Focused);
+            let snapshot = crate::internal::ActionInteractionState {
+                hovered: button.hovered,
+                pressed: button.pressed,
+                focused: button.focused,
+            };
             node.dirty.insert(DirtyFlags::PAINT);
+            if let Some(interaction) = interaction {
+                interaction.update(snapshot);
+            }
         }
         Ok(())
     }
@@ -1398,11 +1412,18 @@ impl WidgetTree {
         pressed: Option<bool>,
         focused: Option<bool>,
     ) -> Result<(), TreeError> {
+        let interaction = self.elements.get(id.0).and_then(|element| {
+            let WidgetKind::Button(spec) = element.widget.kind() else {
+                return None;
+            };
+            spec.interaction.clone()
+        });
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.render_live_mut(render, "button render identity must remain live");
         let Some(button) = node.button_state_mut() else {
             return Ok(());
         };
+        let before = (button.hovered, button.pressed, button.focused);
         if let Some(value) = hovered {
             button.hovered = value;
         }
@@ -1421,7 +1442,18 @@ impl WidgetTree {
         } else {
             ButtonState::Normal
         };
-        node.dirty.insert(DirtyFlags::PAINT);
+        let after = (button.hovered, button.pressed, button.focused);
+        if before != after {
+            let snapshot = crate::internal::ActionInteractionState {
+                hovered: button.hovered,
+                pressed: button.pressed,
+                focused: button.focused,
+            };
+            node.dirty.insert(DirtyFlags::PAINT);
+            if let Some(interaction) = interaction {
+                interaction.update(snapshot);
+            }
+        }
         Ok(())
     }
     /// Changes only retained animation progression. The accumulated logical

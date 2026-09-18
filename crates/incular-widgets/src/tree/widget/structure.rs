@@ -600,6 +600,7 @@ impl PartialEq for ButtonSpec {
             && self.exit_action == other.exit_action
             && self.has_callback == other.has_callback
             && self.child == other.child
+            && self.interaction == other.interaction
             && same_optional_callback(&self.callback, &other.callback)
             && same_optional_callback(&self.hover_callback, &other.hover_callback)
             && same_optional_callback(&self.exit_callback, &other.exit_callback)

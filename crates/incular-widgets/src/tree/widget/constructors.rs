@@ -268,6 +268,7 @@ impl Widget {
                 exit_callback: None,
                 has_callback: false,
                 child: None,
+                interaction: None,
             }),
             semantics: SemanticProperties::default(),
         })
@@ -309,6 +310,7 @@ impl Widget {
                 exit_callback: surface.exit_callback,
                 has_callback: false,
                 child: Some(label),
+                interaction: surface.interaction,
             }),
             semantics: SemanticProperties {
                 // Custom content is inspected for a text or explicit semantic

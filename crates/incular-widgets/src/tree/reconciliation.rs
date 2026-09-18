@@ -624,6 +624,18 @@ impl WidgetTree {
             }
             element.dirty.remove(DirtyFlags::BUILD);
         }
+        if let WidgetKind::Button(spec) = widget.kind()
+            && let Some(interaction) = spec.interaction.as_ref()
+            && let Some(button) = self
+                .render_live(render, "button render identity must remain live")
+                .button_state()
+        {
+            interaction.update(crate::internal::ActionInteractionState {
+                hovered: button.hovered,
+                pressed: button.pressed,
+                focused: button.focused,
+            });
+        }
         self.sync_edit_callbacks(id);
         // Carry hover presence across a focus-behavior swap without
         // replaying transitions: replacement callbacks learn only
