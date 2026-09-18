@@ -6,6 +6,11 @@ Start with the [architecture contract](ARCHITECTURE.md),
 The [original audit](ARCHITECTURE_AUDIT.md) is a historical baseline; the
 [implementation plan](../plan-14.md) records completed and pending fixes.
 
+The remaining quality campaign is tracked in [Plan 15](../plan-15.md).
+The [W7 completion plan](W7_COMPLETION_PLAN.md) provides the implementation
+sequence for controls/Material ownership, themes, property coverage and
+validation. It is an execution plan, not a claim that W7 is implemented.
+
 The phase notes below describe existing implementation, including migration
 seams; they do not override the architecture contract.
 

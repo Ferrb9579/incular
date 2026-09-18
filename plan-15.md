@@ -3415,6 +3415,11 @@ notification, window drain, mobile diagnostics parity).
 
 ## W7 — Controls and Material as presentation layers
 
+Execution plan: [W7 completion plan](docs/W7_COMPLETION_PLAN.md), prepared
+against `b65751b` on 2026-09-18. It records source-confirmed gaps, file-level
+implementation steps, ownership decisions, regression scenarios, migrations,
+and final validation gates. Planning is complete; W7 implementation is pending.
+
 1. Inventory exported control/Material fields against W3's ledger, including
    generated builders. Cover buttons, selection controls, text fields, sliders,
    progress, lists, menus, dialogs, navigation and shell composition.
