@@ -2,7 +2,7 @@ use crate::foundation::{StateProperty, WidgetState, WidgetStates};
 use incular_controls::CheckedState;
 use incular_core::Color;
 use incular_widgets::{Border, BorderRadius, Widget};
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 use typed_builder::TypedBuilder;
 
 /// Material checkbox with a controlled nullable value.
@@ -253,6 +253,10 @@ pub struct Radio<T: Clone + PartialEq + 'static> {
         )
     )]
     on_changed: Option<Rc<dyn Fn(T) + 'static>>,
+    #[builder(default, setter(skip))]
+    group_state: Option<Rc<std::cell::RefCell<Option<T>>>>,
+    #[builder(default, setter(skip))]
+    group_revision: Option<Rc<Cell<u64>>>,
 }
 
 impl<T: Clone + PartialEq + 'static> Radio<T> {
@@ -268,6 +272,8 @@ impl<T: Clone + PartialEq + 'static> Radio<T> {
             check_color: None,
             side: None,
             on_changed: None,
+            group_state: None,
+            group_revision: None,
         }
     }
 
@@ -334,35 +340,48 @@ impl<T: Clone + PartialEq + 'static> Radio<T> {
 
 impl<T: Clone + PartialEq + 'static> From<Radio<T>> for Widget {
     fn from(value: Radio<T>) -> Self {
-        let autofocus = value.autofocus;
-        let selected = value.group_value.as_ref() == Some(&value.value);
+        if let (Some(state), Some(revision)) =
+            (value.group_state.clone(), value.group_revision.clone())
+        {
+            let value = Rc::new(value);
+            return Widget::stateful_layout_builder(revision, move |_, _| {
+                value.build_with_group(state.borrow().clone())
+            });
+        }
+        value.build_with_group(value.group_value.clone())
+    }
+}
+
+impl<T: Clone + PartialEq + 'static> Radio<T> {
+    fn build_with_group(&self, group_value: Option<T>) -> Widget {
+        let autofocus = self.autofocus;
+        let selected = group_value.as_ref() == Some(&self.value);
         let mut selected_states = WidgetStates::default();
         if selected {
             selected_states = selected_states.with(WidgetState::Selected);
         }
         let mut normal_states = WidgetStates::default();
-        if !value.enabled {
+        if !self.enabled {
             selected_states = selected_states.with(WidgetState::Disabled);
             normal_states = normal_states.with(WidgetState::Disabled);
         }
-        let mut root =
-            incular_controls::selection::Radio::new(value.value.clone(), value.group_value.clone())
-                .enabled(value.enabled)
-                .toggleable(value.toggleable);
-        if let Some(property) = value.fill_color.as_ref() {
+        let mut root = incular_controls::selection::Radio::new(self.value.clone(), group_value)
+            .enabled(self.enabled)
+            .toggleable(self.toggleable);
+        if let Some(property) = self.fill_color.as_ref() {
             root = root
                 .active_color(property.resolve(selected_states))
                 .inactive_color(property.resolve(normal_states));
         }
-        if let Some(property) = value.check_color.as_ref() {
+        if let Some(property) = self.check_color.as_ref() {
             root = root.dot_color(property.resolve(selected_states));
         }
-        if let Some(side) = value.side {
+        if let Some(side) = self.side {
             root = root
                 .border_color(side.top.color)
                 .border_width(side.top.width);
         }
-        if let Some(callback) = value.on_changed {
+        if let Some(callback) = self.on_changed.clone() {
             root = root.on_changed(move |next| callback(next));
         }
         let widget: Widget = root.into();
@@ -379,6 +398,7 @@ impl<T: Clone + PartialEq + 'static> From<Radio<T>> for Widget {
 #[derive(Clone)]
 pub struct RadioGroup<T: Clone + PartialEq + 'static> {
     selected: Rc<std::cell::RefCell<Option<T>>>,
+    revision: Rc<Cell<u64>>,
     on_changed: Option<Rc<dyn Fn(T) + 'static>>,
 }
 
@@ -387,6 +407,7 @@ impl<T: Clone + PartialEq + 'static> RadioGroup<T> {
     pub fn new() -> Self {
         Self {
             selected: Rc::new(std::cell::RefCell::new(None)),
+            revision: Rc::new(Cell::new(0)),
             on_changed: None,
         }
     }
@@ -397,7 +418,10 @@ impl<T: Clone + PartialEq + 'static> RadioGroup<T> {
     }
 
     pub fn set_selected(&self, value: Option<T>) {
-        *self.selected.borrow_mut() = value;
+        if *self.selected.borrow() != value {
+            *self.selected.borrow_mut() = value;
+            self.revision.set(self.revision.get().wrapping_add(1));
+        }
     }
 
     #[must_use]
@@ -408,22 +432,30 @@ impl<T: Clone + PartialEq + 'static> RadioGroup<T> {
 
     #[must_use]
     pub fn radio(&self, value: T) -> Radio<T> {
-        let selected = self.selected();
         let state = self.selected.clone();
+        let revision = self.revision.clone();
         let callback = self.on_changed.clone();
-        let next = value.clone();
-        let mut radio = Radio::new(value).group_value(selected);
+        let mut radio = Radio::new(value);
+        radio.group_state = Some(state.clone());
+        radio.group_revision = Some(revision.clone());
         if let Some(callback) = callback {
             radio = radio.on_changed(move |value| {
-                *state.borrow_mut() = Some(value.clone());
-                callback(value);
+                let next = Some(value.clone());
+                if *state.borrow() != next {
+                    *state.borrow_mut() = next;
+                    revision.set(revision.get().wrapping_add(1));
+                    callback(value);
+                }
             });
         } else {
             radio = radio.on_changed(move |value| {
-                *state.borrow_mut() = Some(value);
+                let next = Some(value);
+                if *state.borrow() != next {
+                    *state.borrow_mut() = next;
+                    revision.set(revision.get().wrapping_add(1));
+                }
             });
         }
-        let _ = next;
         radio
     }
 }
