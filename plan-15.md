@@ -3340,13 +3340,40 @@ Batch outcome (source-reviewed, NOT execution-validated):
   and window teardown, external FocusNode mirroring, direct mutations before
   the next frame, and native delivery remain follow-up work.
 
-Remaining W6 work (W6 stays open): execute the unexecuted tests plus full
-gates; multi-contact arbitration and captured-pointer cleanup across popup,
-route, and window teardown at runtime level; semantic bounds/checked-state
-and stable-id behavior under structural edits; same-action-once across
-pointer, keyboard, and accessibility for representative controls beyond
-buttons and text fields; composition surviving restoration; reentrant
-listener/validator coverage per item 4.
+W6 validation batch (executed):
+- `cargo fmt --all`, `cargo check --workspace`, `cargo test-constrained`
+  and `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  all pass after the fixes below.
+- Fixed `unmounted_mid_press_and_hover_release_tenure_silently` incompatible
+  root update by wrapping the button in a `Stack` so Button-to-Box becomes a
+  compatible Stack child replacement.
+- `outlet_rebuild_failure_consumes_nothing` now expects no stale focus owner:
+  disabling the focused `FocusNode` clears both the node flag (via its own
+  `unfocus`) and the runtime slot, consistent with the W6 exit. Previous
+  expectation documented stale retention.
+- Runtime lifecycle parity: `shutdown` and `dispose_window` always cancel IME
+  composition, clear selection captures, button tenure and legacy pointer;
+  `shutdown` also clears histories for parity with dispose. Unmounted elements
+  prune `text_histories` in both frame drains to avoid `ElementId` recycle
+  aliasing and controller leaks.
+- Gesture teardown: unmounted streams cancel through `cancel_gesture_stream`
+  with notification so brackets end, drags cancel and recognizers observe
+  `on_cancel`, instead of only finishing the scroll bracket.
+- Mobile parity: `MobileAccessibilityProjection` gains diagnostics counters
+  matching desktop (`received/dispatched/stale/unsupported`); `translate_action`
+  takes `&mut self`. Android/iOS adapters take `&mut self` for `action` and
+  expose `diagnostics`.
+- Slider semantic path: `dispatch_semantic_increment` synthesizes named
+  ArrowRight/ArrowLeft (not Unidentified) so the real slider keyboard logic
+  runs; regression `slider_semantic_increment_reaches_keyboard_value_logic`
+  passes (previously dead).
+
+Remaining W6 work (W6 stays open): multi-contact arbitration and full
+captured-pointer cleanup across popup, route and window teardown; semantic
+bounds/checked-state and stable-id behavior under structural edits;
+same-action-once for checkables beyond the slider proof; composition
+surviving restoration with formatter/history baselines; reentrant
+validator/listener guards per item 4.
 
 ## W7 — Controls and Material as presentation layers
 

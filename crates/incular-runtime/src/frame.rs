@@ -619,8 +619,15 @@ impl Runtime {
         if self.focused.is_some() {
             self.set_focus(None);
         } else {
+            self.cancel_ime_composition();
             self.sync_text_input_client();
         }
+        self.captured_text_field = None;
+        self.captured_selectable_text = None;
+        self.hovered_button = None;
+        self.pressed_button = None;
+        self.legacy_pointer = None;
+        self.text_histories.clear();
         self.tree.release_edit_subscriptions();
         let _ = self.transition_lifecycle(ApplicationLifecycle::Stopping);
         for (_, scope) in self.owner_scopes.drain() {
@@ -637,9 +644,11 @@ impl Runtime {
         if self.focused.is_some() {
             self.set_focus(None);
         } else {
+            self.cancel_ime_composition();
             self.sync_text_input_client();
         }
         self.tree.release_edit_subscriptions();
+        self.legacy_pointer = None;
         self.window_scope.cancel();
         for (_, scope) in self.owner_scopes.drain() {
             scope.cancel();
@@ -1457,13 +1466,12 @@ impl Runtime {
                 .button_ancestor(pressed)
                 .map(|(ancestor, _)| ancestor)
                 != Some(pressed)
-        }) {
-            if let Some(pressed) = self.pressed_button.take() {
-                let _ = self
-                    .tree
-                    .set_button_interaction(pressed, None, Some(false), None);
-                self.frame_requested = true;
-            }
+        }) && let Some(pressed) = self.pressed_button.take()
+        {
+            let _ = self
+                .tree
+                .set_button_interaction(pressed, None, Some(false), None);
+            self.frame_requested = true;
         }
         // Hover tenure reuses the single `set_hover` owner so exit callbacks
         // fire for still-mounted buttons; pruned handlers make unmounted exit
@@ -2015,6 +2023,7 @@ impl Runtime {
             if let Some(scope) = self.owner_scopes.remove(&id) {
                 scope.cancel();
             }
+            self.text_histories.remove(&id);
         }
         self.reconcile_focus_and_selection_captures();
         self.validate_ime_composition();
@@ -2046,6 +2055,7 @@ impl Runtime {
             if let Some(scope) = self.owner_scopes.remove(&id) {
                 scope.cancel();
             }
+            self.text_histories.remove(&id);
         }
         self.reconcile_focus_and_selection_captures();
         self.validate_ime_composition();

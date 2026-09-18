@@ -93,6 +93,7 @@ pub struct MobileAccessibilityProjection {
     next_native_id: u64,
     active: bool,
     force_full_update: bool,
+    diagnostics: AccessibilityDiagnostics,
 }
 
 impl Default for MobileAccessibilityProjection {
@@ -113,7 +114,13 @@ impl MobileAccessibilityProjection {
             next_native_id: 1,
             active: true,
             force_full_update: true,
+            diagnostics: AccessibilityDiagnostics::default(),
         }
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self) -> AccessibilityDiagnostics {
+        self.diagnostics
     }
 
     pub fn activate(&mut self) {
@@ -259,19 +266,33 @@ impl MobileAccessibilityProjection {
     /// Validates that a native action is still supported by the live semantic
     /// node before handing it to the runtime.
     pub fn translate_action(
-        &self,
+        &mut self,
         native_id: u64,
         action: SemanticAction,
     ) -> Option<SemanticActionRequest> {
+        self.diagnostics.actions_received = self.diagnostics.actions_received.wrapping_add(1);
         if !self.active {
+            self.diagnostics.unsupported_actions =
+                self.diagnostics.unsupported_actions.wrapping_add(1);
             return None;
         }
-        let node = self.native_to_semantic.get(&native_id).copied()?;
-        let semantic = self.previous.get(&node)?;
-        semantic
-            .actions
-            .contains(&action.kind())
-            .then_some(SemanticActionRequest { node, action })
+        let Some(node) = self.native_to_semantic.get(&native_id).copied() else {
+            self.diagnostics.stale_actions_rejected =
+                self.diagnostics.stale_actions_rejected.wrapping_add(1);
+            return None;
+        };
+        let Some(semantic) = self.previous.get(&node) else {
+            self.diagnostics.stale_actions_rejected =
+                self.diagnostics.stale_actions_rejected.wrapping_add(1);
+            return None;
+        };
+        if !semantic.actions.contains(&action.kind()) {
+            self.diagnostics.unsupported_actions =
+                self.diagnostics.unsupported_actions.wrapping_add(1);
+            return None;
+        }
+        self.diagnostics.actions_dispatched = self.diagnostics.actions_dispatched.wrapping_add(1);
+        Some(SemanticActionRequest { node, action })
     }
 
     fn ensure_native_id(&mut self, node: SemanticNodeId) {

@@ -127,25 +127,23 @@ fn unmounted_mid_press_and_hover_release_tenure_silently() {
     let hits = Rc::new(Cell::new(0_u32));
     let enters = Rc::new(Cell::new(0_u32));
     let exits = Rc::new(Cell::new(0_u32));
-    let mut runtime = Runtime::new(
-        Widget::from(
-            ActionSurface::new("HoverPress")
-                .size(Size::new(100., 40.))
-                .on_press({
-                    let hits = hits.clone();
-                    move || hits.set(hits.get() + 1)
-                })
-                .on_hover({
-                    let enters = enters.clone();
-                    move || enters.set(enters.get() + 1)
-                })
-                .on_exit({
-                    let exits = exits.clone();
-                    move || exits.set(exits.get() + 1)
-                }),
-        ),
-    )
-    .unwrap();
+    let button: Widget = ActionSurface::new("HoverPress")
+        .size(Size::new(100., 40.))
+        .on_press({
+            let hits = hits.clone();
+            move || hits.set(hits.get() + 1)
+        })
+        .on_hover({
+            let enters = enters.clone();
+            move || enters.set(enters.get() + 1)
+        })
+        .on_exit({
+            let exits = exits.clone();
+            move || exits.set(exits.get() + 1)
+        })
+        .into();
+    let build = |child: Widget| Widget::from(incular_widgets::Stack::new([child]));
+    let mut runtime = Runtime::new(build(button)).unwrap();
     let constraints = Constraints::tight(Size::new(100., 40.));
     runtime.run_frame(constraints).unwrap();
     let _ = runtime.handle_input(InputEvent::Pointer {
@@ -162,7 +160,7 @@ fn unmounted_mid_press_and_hover_release_tenure_silently() {
         .tree_mut()
         .update(
             root,
-            Widget::box_(Size::new(100., 40.), Color::WHITE),
+            build(Widget::box_(Size::new(100., 40.), Color::WHITE)),
         )
         .unwrap();
     runtime.run_frame(constraints).unwrap();
@@ -176,6 +174,34 @@ fn unmounted_mid_press_and_hover_release_tenure_silently() {
     });
     assert_eq!(hits.get(), 0);
     assert_eq!(enters.get(), 1);
+}
+
+#[test]
+fn slider_semantic_increment_reaches_keyboard_value_logic() {
+    use incular_controls::slider::Root as Slider;
+    let value = Rc::new(Cell::new(0.0_f32));
+    let observed = value.clone();
+    let mut runtime = Runtime::new(Widget::from(
+        Slider::new()
+            .value(0.0)
+            .on_value_change(move |next| observed.set(next)),
+    ))
+    .unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(200., 60.)))
+        .unwrap();
+    let node = runtime
+        .tree()
+        .semantics()
+        .iter()
+        .find(|(_, node)| {
+            node.actions
+                .contains(&incular_semantics::SemanticActionKind::Increment)
+        })
+        .map(|(id, _)| id)
+        .expect("slider increment node");
+    assert!(runtime.dispatch_semantic_action(node, SemanticAction::Increment));
+    assert!(value.get() > 0.0);
 }
 
 #[test]

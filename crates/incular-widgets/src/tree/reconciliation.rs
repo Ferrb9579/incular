@@ -1815,9 +1815,10 @@ impl WidgetTree {
                         }
                         _ => {}
                     }
-                    // Streams pruned here take their scroll brackets with
-                    // them: finish with `End` like a normal detach before
-                    // the members disappear.
+                    // Streams pruned here take their full teardown with them:
+                    // cancel through the single stream owner so scroll
+                    // brackets end, drags cancel and recognizers observe
+                    // `on_cancel` before members disappear.
                     let pruned: Vec<GestureArenaKey> = self
                         .active_gestures
                         .iter()
@@ -1830,14 +1831,8 @@ impl WidgetTree {
                         })
                         .collect();
                     for stream in pruned {
-                        self.finish_scroll_bracket(stream);
+                        self.cancel_gesture_stream(stream, true);
                     }
-                    self.active_gestures.retain(|_, active| {
-                        active
-                            .members
-                            .iter()
-                            .all(|candidate| candidate.element != id)
-                    });
                     let stale_trackpad_streams = self
                         .active_trackpad_gestures
                         .iter()

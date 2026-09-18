@@ -140,14 +140,20 @@ impl WidgetTree {
     /// in its existing callback rather than creating a second action path.
     #[must_use]
     pub fn dispatch_semantic_increment(&self, element: ElementId, increment: bool) -> bool {
-        let code = if increment {
-            incular_core::Code::ArrowRight
+        let (key, code) = if increment {
+            (
+                KeyboardKey::Named(NamedKey::ArrowRight),
+                incular_core::Code::ArrowRight,
+            )
         } else {
-            incular_core::Code::ArrowLeft
+            (
+                KeyboardKey::Named(NamedKey::ArrowLeft),
+                incular_core::Code::ArrowLeft,
+            )
         };
         self.dispatch_keyboard_where(
             Some(element),
-            KeyboardEvent::key_down(KeyboardKey::Named(NamedKey::Unidentified), code),
+            KeyboardEvent::key_down(key, code),
             incular_gestures::GestureCallbacks::services_semantic_keys,
         )
     }

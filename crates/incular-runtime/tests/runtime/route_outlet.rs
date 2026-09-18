@@ -1316,15 +1316,15 @@ fn outlet_rebuild_failure_consumes_nothing() {
     navigator.pop();
     present(&mut harness);
     tab_until(&mut harness.runtime, &node_a2);
-    let ea2 = harness.runtime.focused_element().expect("A2 focused");
+    let _ea2 = harness.runtime.focused_element().expect("A2 focused");
     assert!(navigator.lifetime_of(rb).is_none());
-    // The dropped save never committed: disabling the current target (the
-    // node flag clears immediately, the runtime slot keeps it) and
+    // The dropped save never committed: disabling the current target clears
+    // both the node flag and the runtime slot (no stale focus owner), and
     // presenting must not resurrect the pre-failure focus through a stale
-    // record — the slot stays exactly where the user left it.
+    // record.
     node_a2.set_can_request_focus(false);
     present(&mut harness);
-    assert_eq!(harness.runtime.focused_element(), Some(ea2));
+    assert_eq!(harness.runtime.focused_element(), None);
 }
 
 fn two_focus_route_page(name: &str, first: &FocusNode, second: &FocusNode) -> Page {

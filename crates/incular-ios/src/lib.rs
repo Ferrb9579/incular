@@ -34,9 +34,17 @@ impl IosAccessibilityAdapter {
         self.projection.sync(tree)
     }
 
-    #[must_use]
-    pub fn action(&self, native_id: u64, action: SemanticAction) -> Option<SemanticActionRequest> {
+    pub fn action(
+        &mut self,
+        native_id: u64,
+        action: SemanticAction,
+    ) -> Option<SemanticActionRequest> {
         self.projection.translate_action(native_id, action)
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self) -> incular_accessibility::AccessibilityDiagnostics {
+        self.projection.diagnostics()
     }
 
     #[must_use]
