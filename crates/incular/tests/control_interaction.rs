@@ -177,3 +177,50 @@ fn slider_drag_reports_a_continuous_quantized_value() {
     runtime.run_frame(constraints).expect("slider drag frame");
     assert!((observed.get() - 0.5).abs() < f32::EPSILON);
 }
+
+#[test]
+fn custom_slider_keeps_pointer_keyboard_and_semantic_actions() {
+    use incular_semantics::{Role, SemanticAction};
+
+    for path in ["pointer", "semantic"] {
+        let observed = Signal::new(0.0_f32);
+        let app_observed = observed.clone();
+        let app = Application::new(move |_| {
+            let value = app_observed.get();
+            Widget::from(
+                slider::Root::new()
+                    .value(value)
+                    .step(0.25)
+                    .child(Widget::box_(
+                        Size::new(180.0, 24.0),
+                        incular_core::Color::WHITE,
+                    ))
+                    .on_value_change({
+                        let observed = app_observed.clone();
+                        move |next| {
+                            observed.set(next);
+                        }
+                    }),
+            )
+        })
+        .expect("application");
+        let mut runtime = app.into_runtime();
+        let constraints = Constraints::loose(Size::new(260.0, 80.0));
+        runtime.run_frame(constraints).expect("initial frame");
+        let semantic = runtime
+            .tree()
+            .semantics()
+            .iter()
+            .find(|(_, node)| node.role == Role::Slider)
+            .map(|(id, _)| id)
+            .expect("custom slider semantics");
+
+        if path == "pointer" {
+            click(&mut runtime, Offset::new(20.0, 12.0));
+        } else {
+            assert!(runtime.dispatch_semantic_action(semantic, SemanticAction::Increment));
+        }
+        runtime.run_frame(constraints).expect("updated frame");
+        assert_eq!(observed.get(), 0.25, "path={path}");
+    }
+}

@@ -119,40 +119,43 @@ impl Root {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        if let Some(child) = &self.child {
-            return child.clone();
-        }
-
-        let height = self
-            .height
-            .unwrap_or(theme.progress.height)
-            .max(1.)
-            .min(self.width.max(1.));
-        let width = self.width.max(1.);
-        let radius = theme.progress.radius.max(0.);
-        let track_color = with_alpha(theme.colors.border, theme.progress.track_alpha);
-        let ratio = self.normalized_value().unwrap_or(0.33);
-        let indicator_width = (width * ratio).clamp(1., width);
-        let track: Widget = Container::new()
-            .width(width)
-            .height(height)
-            .decoration(
-                BoxDecoration::new()
-                    .color(track_color)
-                    .border_radius(BorderRadius::circular(radius)),
-            )
-            .into();
-        let indicator: Widget = Container::new()
-            .width(indicator_width)
-            .height(height)
-            .decoration(
-                BoxDecoration::new()
-                    .color(theme.colors.accent)
-                    .border_radius(BorderRadius::circular(radius)),
-            )
-            .into();
-        let visual: Widget =
-            Stack::new([track, Positioned::new(indicator).left(0.).top(0.).into()]).into();
+        let visual: Widget = if let Some(child) = &self.child {
+            child.clone()
+        } else {
+            let height = self
+                .height
+                .unwrap_or(theme.progress.height)
+                .max(1.)
+                .min(self.width.max(1.));
+            let width = self.width.max(1.);
+            let radius = theme.progress.radius.max(0.);
+            let track_color = with_alpha(theme.colors.border, theme.progress.track_alpha);
+            let ratio = self.normalized_value().unwrap_or(0.33);
+            let indicator_width = width * ratio;
+            let track: Widget = Container::new()
+                .width(width)
+                .height(height)
+                .decoration(
+                    BoxDecoration::new()
+                        .color(track_color)
+                        .border_radius(BorderRadius::circular(radius)),
+                )
+                .into();
+            let mut children = vec![track];
+            if indicator_width > 0.0 {
+                let indicator: Widget = Container::new()
+                    .width(indicator_width.min(width))
+                    .height(height)
+                    .decoration(
+                        BoxDecoration::new()
+                            .color(theme.colors.accent)
+                            .border_radius(BorderRadius::circular(radius)),
+                    )
+                    .into();
+                children.push(Positioned::new(indicator).left(0.).top(0.).into());
+            }
+            Stack::new(children).into()
+        };
 
         let value_text = self
             .normalized_value()

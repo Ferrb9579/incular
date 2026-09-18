@@ -277,10 +277,6 @@ impl Root {
     /// while retaining the descriptor's value and callback policy.
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        if let Some(child) = &self.child {
-            return child.clone();
-        }
-
         let current_value = self.range.clamp(self.value.get());
         self.value.set(current_value);
         let ratio = ((current_value - self.range.min)
@@ -301,92 +297,96 @@ impl Root {
             .secondary_track_color
             .unwrap_or(theme.colors.accent_active);
         let thumb_color = self.thumb_color.unwrap_or(theme.colors.surface);
-        let track = if self.orientation == Axis::Horizontal {
-            Container::new()
-                .width(track_extent)
-                .height(track_thickness)
-                .color(if self.enabled {
-                    inactive_color
-                } else {
-                    theme.colors.disabled_surface
-                })
+        let visual: Widget = if let Some(child) = &self.child {
+            child.clone()
         } else {
-            Container::new()
-                .width(track_thickness)
-                .height(track_extent)
-                .color(if self.enabled {
-                    inactive_color
-                } else {
-                    theme.colors.disabled_surface
-                })
-        };
-        let indicator_extent = (track_extent * ratio).max(track_thickness);
-        let indicator = if self.orientation == Axis::Horizontal {
-            Container::new()
-                .width(indicator_extent)
-                .height(track_thickness)
-                .color(active_color)
-        } else {
-            Container::new()
-                .width(track_thickness)
-                .height(indicator_extent)
-                .color(active_color)
-        };
-        let secondary_indicator: Option<Widget> = self.secondary_value.map(|secondary| {
-            let secondary_ratio = ((secondary - self.range.min)
-                / (self.range.max - self.range.min).max(f32::EPSILON))
-            .clamp(0.0, 1.0);
-            if self.orientation == Axis::Horizontal {
+            let track = if self.orientation == Axis::Horizontal {
                 Container::new()
-                    .width((track_extent * secondary_ratio).max(track_thickness))
+                    .width(track_extent)
                     .height(track_thickness)
-                    .color(secondary_color)
-                    .into()
+                    .color(if self.enabled {
+                        inactive_color
+                    } else {
+                        theme.colors.disabled_surface
+                    })
             } else {
                 Container::new()
                     .width(track_thickness)
-                    .height((track_extent * secondary_ratio).max(track_thickness))
-                    .color(secondary_color)
-                    .into()
-            }
-        });
-        let thumb = Container::new()
-            .width(thumb_size)
-            .height(thumb_size)
-            .color(thumb_color)
-            .border(incular_widgets::Border::new(
-                theme.button.border_width,
-                if self.enabled {
-                    inactive_color
+                    .height(track_extent)
+                    .color(if self.enabled {
+                        inactive_color
+                    } else {
+                        theme.colors.disabled_surface
+                    })
+            };
+            let indicator_extent = (track_extent * ratio).max(track_thickness);
+            let indicator = if self.orientation == Axis::Horizontal {
+                Container::new()
+                    .width(indicator_extent)
+                    .height(track_thickness)
+                    .color(active_color)
+            } else {
+                Container::new()
+                    .width(track_thickness)
+                    .height(indicator_extent)
+                    .color(active_color)
+            };
+            let secondary_indicator: Option<Widget> = self.secondary_value.map(|secondary| {
+                let secondary_ratio = ((secondary - self.range.min)
+                    / (self.range.max - self.range.min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+                if self.orientation == Axis::Horizontal {
+                    Container::new()
+                        .width((track_extent * secondary_ratio).max(track_thickness))
+                        .height(track_thickness)
+                        .color(secondary_color)
+                        .into()
                 } else {
-                    theme.colors.disabled_foreground
-                },
-            ))
-            .radius(theme.slider.radius);
-        let visual = if self.orientation == Axis::Horizontal {
-            let mut children = vec![Widget::from(track)];
-            if let Some(indicator) = secondary_indicator {
+                    Container::new()
+                        .width(track_thickness)
+                        .height((track_extent * secondary_ratio).max(track_thickness))
+                        .color(secondary_color)
+                        .into()
+                }
+            });
+            let thumb = Container::new()
+                .width(thumb_size)
+                .height(thumb_size)
+                .color(thumb_color)
+                .border(incular_widgets::Border::new(
+                    theme.button.border_width,
+                    if self.enabled {
+                        inactive_color
+                    } else {
+                        theme.colors.disabled_foreground
+                    },
+                ))
+                .radius(theme.slider.radius);
+            if self.orientation == Axis::Horizontal {
+                let mut children = vec![Widget::from(track)];
+                if let Some(indicator) = secondary_indicator {
+                    children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
+                }
                 children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
-            }
-            children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
-            children.push(Widget::from(
-                Positioned::new(thumb)
-                    .left((track_extent * ratio - thumb_size * 0.5).max(0.))
-                    .top((track_thickness - thumb_size) * 0.5),
-            ));
-            Stack::new(children)
-        } else {
-            let mut children = vec![Widget::from(track)];
-            if let Some(indicator) = secondary_indicator {
+                children.push(Widget::from(
+                    Positioned::new(thumb)
+                        .left((track_extent * ratio - thumb_size * 0.5).max(0.))
+                        .top((track_thickness - thumb_size) * 0.5),
+                ));
+                Stack::new(children).into()
+            } else {
+                let mut children = vec![Widget::from(track)];
+                if let Some(indicator) = secondary_indicator {
+                    children.push(Widget::from(Positioned::new(indicator).left(0.).bottom(0.)));
+                }
                 children.push(Widget::from(Positioned::new(indicator).left(0.).bottom(0.)));
+                children.push(Widget::from(
+                    Positioned::new(thumb)
+                        .left((track_thickness - thumb_size) * 0.5)
+                        .bottom((track_extent * ratio - thumb_size * 0.5).max(0.)),
+                ));
+                Stack::new(children).into()
             }
-            children.push(Widget::from(Positioned::new(indicator).left(0.).bottom(0.)));
-            children.push(Widget::from(
-                Positioned::new(thumb)
-                    .left((track_thickness - thumb_size) * 0.5)
-                    .bottom((track_extent * ratio - thumb_size * 0.5).max(0.)),
-            ));
-            Stack::new(children)
         };
         let value = self.value.clone();
         let revision = self.revision.clone();
