@@ -3,7 +3,9 @@
 use incular_config::Brightness;
 use incular_controls::{ButtonStyle, ControlTheme, SplashFactory};
 use incular_core::Color;
+use incular_widgets::internal::AnimationRetargetBridge;
 use incular_widgets::{AnimationController, BorderRadius, BuildContext, Widget};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
@@ -891,6 +893,24 @@ impl AnimatedTheme {
     }
 }
 
+#[derive(Clone)]
+struct AnimatedThemeTransitionState {
+    start: RefCell<Option<ThemeData>>,
+    target: ThemeData,
+    controller: AnimationController,
+}
+
+impl AnimatedThemeTransitionState {
+    fn displayed(&self, fallback: &ThemeData) -> ThemeData {
+        let start = self
+            .start
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| fallback.clone());
+        start.lerp(&self.target, self.controller.value())
+    }
+}
+
 impl From<AnimatedTheme> for Widget {
     fn from(value: AnimatedTheme) -> Self {
         if value.duration.is_zero() {
@@ -900,14 +920,36 @@ impl From<AnimatedTheme> for Widget {
         let controller = AnimationController::new(value.duration);
         let ticker = controller.clone();
         let revision = Rc::new(std::cell::Cell::new(0_u64));
-        let target = Rc::new(value.data);
+        let transition = Rc::new(AnimatedThemeTransitionState {
+            start: RefCell::new(None),
+            target: value.data,
+            controller: controller.clone(),
+        });
+        let transition_for_build = transition.clone();
         let child = value.child;
         let animated = Widget::stateful_layout_builder(revision.clone(), move |context, _| {
-            let start = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
-            let displayed = start.lerp(&target, controller.value());
+            let ambient = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
+            if transition_for_build.start.borrow().is_none() {
+                transition_for_build.start.replace(Some((*ambient).clone()));
+            }
+            let displayed = transition_for_build.displayed(&ambient);
             Theme::new(displayed, child.clone()).into()
         });
-        Widget::animation_ticker_with_revision(ticker, true, revision, animated)
+        let replacement = transition.clone();
+        let bridge = AnimationRetargetBridge::new(transition, move |previous| {
+            let fallback = previous.target.clone();
+            let displayed = previous.displayed(&fallback);
+            if previous.target == replacement.target {
+                replacement.start.replace(previous.start.borrow().clone());
+                replacement
+                    .controller
+                    .adopt_timeline_from(&previous.controller);
+            } else {
+                replacement.start.replace(Some(displayed));
+                replacement.controller.reset();
+            }
+        });
+        Widget::animation_ticker_with_retarget(ticker, true, revision, Some(bridge), animated)
     }
 }
 

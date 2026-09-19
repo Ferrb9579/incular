@@ -98,6 +98,28 @@ impl PartialEq for AnimationController {
 }
 
 impl AnimationController {
+    #[doc(hidden)]
+    pub fn adopt_timeline_from(&self, other: &Self) {
+        if Rc::ptr_eq(&self.inner, &other.inner) {
+            return;
+        }
+        let next = other.inner.borrow().state;
+        let (changed, listeners, value) = {
+            let mut controller = self.inner.borrow_mut();
+            let previous = controller.state;
+            controller.state = next;
+            (
+                previous != next,
+                clone_listeners(&controller),
+                controller.state.value,
+            )
+        };
+        if changed {
+            notify(listeners, Some(value));
+            self.changes.notify();
+        }
+    }
+
     #[must_use]
     pub fn new(duration: Duration) -> Self {
         Self::with_bounds(duration, 0.0, 1.0)

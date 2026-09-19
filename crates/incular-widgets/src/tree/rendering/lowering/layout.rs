@@ -52,11 +52,13 @@ pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
             controller,
             auto_start,
             revision,
+            retarget,
             ..
         } => RenderKind::AnimationTicker {
             controller: controller.clone(),
             auto_start: *auto_start,
             revision: revision.clone(),
+            retarget: retarget.clone(),
         },
         WidgetKind::Gesture { .. } => RenderKind::Gesture,
         WidgetKind::RawInput { .. } => RenderKind::Gesture,

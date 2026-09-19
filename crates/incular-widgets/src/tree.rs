@@ -118,7 +118,7 @@ pub(crate) use context::LayoutBuilderCallback;
 pub use context::{BuildContext, InheritedScopeValue};
 pub use descriptors::*;
 pub(crate) use specs::WidgetKind;
-pub use specs::{ButtonSpec, ExplicitSemantics, TextFieldSpec};
+pub use specs::{AnimationRetargetBridge, ButtonSpec, ExplicitSemantics, TextFieldSpec};
 use specs::{SemanticCallbacks, SemanticProperties};
 
 use semantics::widget_text;
@@ -528,6 +528,7 @@ pub enum RenderKind {
         controller: AnimationController,
         auto_start: bool,
         revision: Rc<Cell<u64>>,
+        retarget: Option<AnimationRetargetBridge>,
     },
     Gesture,
     Align {

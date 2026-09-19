@@ -1648,6 +1648,7 @@ impl WidgetTree {
                     controller,
                     auto_start,
                     revision,
+                    ..
                 } => {
                     if ticking
                         && auto_start

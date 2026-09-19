@@ -95,9 +95,9 @@ pub use crate::selection::*;
 pub use crate::transient::TransientPlacementOverride;
 pub use crate::tree::icons;
 pub use crate::tree::{
-    ActionId, Blend, Blur, BlurController, BoxFit, BuildContext, ButtonSpec, ButtonState,
-    ColorFilterController, ColorFiltered, DecoratedBox, Diagnostics, DropShadow,
-    DropShadowController, EditableText, Effects, Element, ElementId, ExplicitSemantics,
+    ActionId, AnimationRetargetBridge, Blend, Blur, BlurController, BoxFit, BuildContext,
+    ButtonSpec, ButtonState, ColorFilterController, ColorFiltered, DecoratedBox, Diagnostics,
+    DropShadow, DropShadowController, EditableText, Effects, Element, ElementId, ExplicitSemantics,
     FadeTransition, GeneratedChildIdentity, Icon, Image, ImageFit, ImageRepeat,
     InheritedScopeValue, InvariantCategory, InvariantViolation, Key, OpacityController,
     PERFORMANCE_OVERLAY_KEY, PathView, RenderKind, RotationController, ScaleController, ScrollView,

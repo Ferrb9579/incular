@@ -4,6 +4,49 @@
 
 use super::*;
 
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct AnimationRetargetBridge {
+    payload: Rc<dyn Any>,
+    type_id: TypeId,
+    carry: Rc<dyn Fn(&dyn Any)>,
+}
+
+impl AnimationRetargetBridge {
+    #[must_use]
+    pub fn new<T: Any>(payload: Rc<T>, carry: impl Fn(&T) + 'static) -> Self {
+        Self {
+            payload,
+            type_id: TypeId::of::<T>(),
+            carry: Rc::new(move |previous| {
+                if let Some(previous) = previous.downcast_ref::<T>() {
+                    carry(previous);
+                }
+            }),
+        }
+    }
+
+    pub(crate) fn carry_from(&self, previous: &Self) {
+        if self.type_id == previous.type_id {
+            (self.carry)(previous.payload.as_ref());
+        }
+    }
+}
+
+impl std::fmt::Debug for AnimationRetargetBridge {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AnimationRetargetBridge")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for AnimationRetargetBridge {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id == other.type_id && Rc::ptr_eq(&self.payload, &other.payload)
+    }
+}
+
 /// Application-authored semantic metadata for a visual widget that does not
 /// have a more specific built-in semantic role. Incular keeps this data in its
 /// retained `SemanticsTree`; native adapters only project that tree.
@@ -318,6 +361,7 @@ pub(crate) enum WidgetKind {
         controller: AnimationController,
         auto_start: bool,
         revision: Rc<Cell<u64>>,
+        retarget: Option<AnimationRetargetBridge>,
         child: Widget,
     },
     Gesture {

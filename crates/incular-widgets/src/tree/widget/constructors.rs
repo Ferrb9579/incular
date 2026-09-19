@@ -592,12 +592,25 @@ impl Widget {
         revision: Rc<Cell<u64>>,
         child: impl Into<Self>,
     ) -> Self {
+        Self::animation_ticker_with_retarget(controller, auto_start, revision, None, child)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn animation_ticker_with_retarget(
+        controller: AnimationController,
+        auto_start: bool,
+        revision: Rc<Cell<u64>>,
+        retarget: Option<AnimationRetargetBridge>,
+        child: impl Into<Self>,
+    ) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::AnimationTicker {
                 controller,
                 auto_start,
                 revision,
+                retarget,
                 child: child.into(),
             },
             semantics: SemanticProperties::default(),

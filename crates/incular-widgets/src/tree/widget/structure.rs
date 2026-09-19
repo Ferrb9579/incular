@@ -176,12 +176,14 @@ impl std::fmt::Debug for WidgetKind {
                 controller,
                 auto_start,
                 revision,
+                retarget,
                 child,
             } => f
                 .debug_struct("AnimationTicker")
                 .field("controller", controller)
                 .field("auto_start", auto_start)
                 .field("revision", &revision.get())
+                .field("retarget", retarget)
                 .field("child", child)
                 .finish(),
             Self::Gesture { child, .. } => f
@@ -769,15 +771,23 @@ impl PartialEq for WidgetKind {
                     controller: a,
                     auto_start: a_start,
                     revision: a_revision,
+                    retarget: a_retarget,
                     child: b,
                 },
                 Self::AnimationTicker {
                     controller: c,
                     auto_start: c_start,
                     revision: c_revision,
+                    retarget: c_retarget,
                     child: d,
                 },
-            ) => a == c && a_start == c_start && Rc::ptr_eq(a_revision, c_revision) && b == d,
+            ) => {
+                a == c
+                    && a_start == c_start
+                    && Rc::ptr_eq(a_revision, c_revision)
+                    && a_retarget == c_retarget
+                    && b == d
+            }
             (
                 Self::Gesture {
                     behavior: a_behavior,

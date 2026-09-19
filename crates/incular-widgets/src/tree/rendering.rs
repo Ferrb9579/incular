@@ -111,6 +111,16 @@ pub(super) fn carry_replaced_transition(old: &RenderKind, new: &RenderKind) {
 
     match (old, new) {
         (
+            RenderKind::AnimationTicker {
+                retarget: Some(old),
+                ..
+            },
+            RenderKind::AnimationTicker {
+                retarget: Some(new),
+                ..
+            },
+        ) => new.carry_from(old),
+        (
             RenderKind::Opacity {
                 alpha: old_alpha,
                 controller: old_controller,
