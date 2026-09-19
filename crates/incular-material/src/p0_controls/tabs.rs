@@ -1,10 +1,11 @@
-use crate::foundation::StateProperty;
+use crate::foundation::{StateProperty, Theme, ThemeData};
 use crate::{TabAlignment, TabBarIndicatorSize};
 use incular_config::{CrossAxisAlignment, MainAxisAlignment};
 use incular_core::Color;
 use incular_text::TextStyle;
 use incular_widgets::{
-    Column, Container, ExcludeSemantics, IgnorePointer, PageView, Row, Text, Widget,
+    Column, Container, ExcludeSemantics, IgnorePointer, PageView, Positioned, Row, Stack, Text,
+    Widget,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -14,8 +15,8 @@ use typed_builder::TypedBuilder;
 /// a tab may also contain an arbitrary retained widget.
 #[derive(Clone, TypedBuilder)]
 pub struct Tab {
-    #[builder(setter(into))]
-    child: Widget,
+    #[builder(default, setter(strip_option, into))]
+    child: Option<Widget>,
     #[builder(default, setter(strip_option, into))]
     icon: Option<Widget>,
     #[builder(default, setter(strip_option, into))]
@@ -28,7 +29,7 @@ impl Tab {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
-            child: child.into(),
+            child: Some(child.into()),
             icon: None,
             text: None,
             enabled: true,
@@ -39,7 +40,7 @@ impl Tab {
     pub fn text(value: impl Into<String>) -> Self {
         let text = value.into();
         Self {
-            child: Text::new(text.clone()).into(),
+            child: None,
             icon: None,
             text: Some(text),
             enabled: true,
@@ -50,7 +51,7 @@ impl Tab {
     pub fn icon(icon: impl Into<Widget>) -> Self {
         let icon = icon.into();
         Self {
-            child: icon.clone(),
+            child: None,
             icon: Some(icon),
             text: None,
             enabled: true,
@@ -61,11 +62,8 @@ impl Tab {
     pub fn icon_and_text(icon: impl Into<Widget>, text: impl Into<String>) -> Self {
         let text = text.into();
         Self {
-            child: Row::new([icon.into(), Text::new(text.clone()).into()])
-                .spacing(8.0)
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .into(),
-            icon: None,
+            child: None,
+            icon: Some(icon.into()),
             text: Some(text),
             enabled: true,
         }
@@ -73,7 +71,7 @@ impl Tab {
 
     #[must_use]
     pub fn child(mut self, child: impl Into<Widget>) -> Self {
-        self.child = child.into();
+        self.child = Some(child.into());
         self
     }
 
@@ -87,15 +85,44 @@ impl Tab {
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
+
+    fn content(&self, style: Option<TextStyle>, color: Option<Color>) -> Widget {
+        if let Some(child) = self.child.as_ref() {
+            return child.clone();
+        }
+
+        let label = self.text.as_ref().map(|text| {
+            let mut text = Text::new(text.clone());
+            if let Some(style) = style.clone() {
+                text = text.style(match color {
+                    Some(color) => style.color(color),
+                    None => style,
+                });
+            } else if let Some(color) = color {
+                text = text.color(color);
+            }
+            Widget::from(text)
+        });
+
+        match (self.icon.as_ref(), label) {
+            (Some(icon), Some(label)) => Row::new([icon.clone(), label])
+                .spacing(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into(),
+            (Some(icon), None) => icon.clone(),
+            (None, Some(label)) => label,
+            (None, None) => incular_widgets::SizedBox::shrink().into(),
+        }
+    }
 }
 
 impl From<Tab> for Widget {
     fn from(value: Tab) -> Self {
-        let _ = (value.icon, value.text);
+        let child = value.content(None, None);
         if value.enabled {
-            value.child
+            child
         } else {
-            IgnorePointer::new(ExcludeSemantics::new(value.child)).into()
+            IgnorePointer::new(ExcludeSemantics::new(child)).into()
         }
     }
 }
@@ -118,7 +145,7 @@ impl TabController {
             index: Rc::new(Cell::new(0)),
             revision: Rc::new(Cell::new(0)),
             page_controller: incular_scroll::ScrollController::new(),
-            page_extent: Rc::new(Cell::new(600.0)),
+            page_extent: Rc::new(Cell::new(1.0)),
         }
     }
 
@@ -134,6 +161,9 @@ impl TabController {
 
     pub fn set_index(&self, value: usize) {
         let index = value.min(self.length.saturating_sub(1));
+        if index == self.index() {
+            return;
+        }
         self.index.set(index);
         let offset = index as f32 * self.page_extent.get();
         if self.page_controller.max_offset() > 0.0 {
@@ -164,13 +194,20 @@ impl TabController {
     }
 
     fn set_page_extent(&self, extent: f32) {
-        self.page_extent.set(extent.max(1.0));
-        let offset = self.index() as f32 * self.page_extent.get();
-        if self.page_controller.max_offset() > 0.0 {
-            self.page_controller.jump_to(offset);
+        let extent = if extent.is_finite() {
+            extent.max(1.0)
         } else {
-            self.page_controller.deferred_jump_to(offset);
+            1.0
+        };
+        if (self.page_extent.get() - extent).abs() <= f32::EPSILON {
+            return;
         }
+        self.page_extent.set(extent);
+        let offset = self.index() as f32 * self.page_extent.get();
+        // LayoutBuilder runs before the PageView publishes its new metrics.
+        // Always defer the extent-derived target so a resize cannot clamp the
+        // new page offset against the previous viewport's max extent.
+        self.page_controller.deferred_jump_to(offset);
     }
 }
 
@@ -197,8 +234,8 @@ pub struct TabBar {
     selected_index: usize,
     #[builder(default)]
     scrollable: bool,
-    #[builder(default = TabAlignment::Center)]
-    alignment: TabAlignment,
+    #[builder(default, setter(strip_option))]
+    alignment: Option<TabAlignment>,
     #[builder(default = TabBarIndicatorSize::Tab)]
     indicator_size: TabBarIndicatorSize,
     #[builder(default, setter(strip_option))]
@@ -231,7 +268,7 @@ impl TabBar {
             controller: None,
             selected_index: 0,
             scrollable: false,
-            alignment: TabAlignment::Center,
+            alignment: None,
             indicator_size: TabBarIndicatorSize::Tab,
             indicator_color: None,
             on_tap: None,
@@ -258,7 +295,7 @@ impl TabBar {
 
     #[must_use]
     pub fn tab_alignment(mut self, value: TabAlignment) -> Self {
-        self.alignment = value;
+        self.alignment = Some(value);
         self
     }
 
@@ -282,7 +319,9 @@ impl TabBar {
 }
 
 impl TabBar {
-    fn build(&self) -> Widget {
+    fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
+        let theme = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
+        let tab_theme = &theme.navigation().tab_bar_theme;
         let selected = self
             .controller
             .as_ref()
@@ -291,9 +330,15 @@ impl TabBar {
         let controller = self.controller.clone();
         let indicator = self
             .indicator_color
-            .unwrap_or(Color::rgba(103, 80, 164, 255));
+            .or(tab_theme.indicator_color)
+            .unwrap_or(theme.core().color_scheme.primary);
+        let indicator_weight = tab_theme.indicator_weight.unwrap_or(2.0).max(0.0);
         let scrollable = self.scrollable;
-        let alignment = match self.alignment {
+        let tab_alignment = self
+            .alignment
+            .or(tab_theme.tab_alignment)
+            .unwrap_or(TabAlignment::Center);
+        let alignment = match tab_alignment {
             TabAlignment::Start | TabAlignment::StartOffset => MainAxisAlignment::Start,
             TabAlignment::Center => MainAxisAlignment::Center,
             TabAlignment::Fill => MainAxisAlignment::SpaceEvenly,
@@ -301,8 +346,31 @@ impl TabBar {
         let indicator_size = self.indicator_size;
         let children = self.tabs.iter().cloned().enumerate().map(|(index, tab)| {
             let enabled = tab.enabled;
-            let child: Widget = tab.child;
-            let mut button = crate::TextButton::with_child(child);
+            let is_selected = index == selected;
+            let label_style = if is_selected {
+                tab_theme.label_style.clone()
+            } else {
+                tab_theme.unselected_label_style.clone()
+            };
+            let label_color = if is_selected {
+                tab_theme.label_color
+            } else {
+                tab_theme.unselected_label_color
+            };
+            let mut content = tab.content(label_style, label_color);
+            if is_selected && indicator_size == TabBarIndicatorSize::Label && indicator_weight > 0.0
+            {
+                content = Column::new([
+                    content,
+                    Container::new()
+                        .height(indicator_weight)
+                        .color(indicator)
+                        .into(),
+                ])
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into();
+            }
+            let mut button = crate::TextButton::with_child(content);
             button = button.enabled(enabled);
             if enabled {
                 let controller = controller.clone();
@@ -318,17 +386,14 @@ impl TabBar {
                 }
             }
             let visual: Widget = button.into();
-            if index == selected {
-                let indicator_width = match indicator_size {
-                    TabBarIndicatorSize::Tab => 48.0,
-                    TabBarIndicatorSize::Label => 32.0,
-                };
-                Column::new([
+            if is_selected && indicator_size == TabBarIndicatorSize::Tab && indicator_weight > 0.0 {
+                Stack::new([
                     visual,
-                    Container::new()
-                        .height(2.0)
-                        .width(indicator_width)
-                        .color(indicator)
+                    Positioned::new(Container::new().color(indicator))
+                        .left(0.0)
+                        .right(0.0)
+                        .bottom(0.0)
+                        .height(indicator_weight)
                         .into(),
                 ])
                 .into()
@@ -358,7 +423,7 @@ impl From<TabBar> for Widget {
             .as_ref()
             .map(TabController::revision_cell)
             .unwrap_or_else(|| Rc::new(Cell::new(0)));
-        Widget::stateful_layout_builder(revision, move |_, _| value.build())
+        Widget::stateful_layout_builder(revision, move |context, _| value.build(context))
     }
 }
 
@@ -421,15 +486,26 @@ impl From<TabBarView> for Widget {
         let controller = value
             .controller
             .unwrap_or_else(|| TabController::new(value.children.len()));
-        let page_extent = 600.0 * value.viewport_fraction.max(0.01);
-        controller.set_page_extent(page_extent);
-        let mut page_view = PageView::new(value.children)
-            .controller(controller.page_controller())
-            .viewport_fraction(value.viewport_fraction);
-        if let Some(physics) = value.physics {
-            page_view = page_view.physics(physics);
-        }
-        page_view.into()
+        let children = value.children;
+        let viewport_fraction = value.viewport_fraction.max(0.01);
+        let physics = value.physics;
+        Widget::from(incular_widgets::LayoutBuilder::new(
+            move |_, constraints| {
+                let viewport_width = if constraints.is_width_bounded() {
+                    constraints.max_width()
+                } else {
+                    constraints.min_width()
+                };
+                controller.set_page_extent(viewport_width * viewport_fraction);
+                let mut page_view = PageView::new(children.clone())
+                    .controller(controller.page_controller())
+                    .viewport_fraction(viewport_fraction);
+                if let Some(physics) = physics {
+                    page_view = page_view.physics(physics);
+                }
+                page_view.into()
+            },
+        ))
     }
 }
 
