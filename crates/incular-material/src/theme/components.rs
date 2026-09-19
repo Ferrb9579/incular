@@ -760,4 +760,4 @@ component_theme_wrappers!(
 #[allow(dead_code)]
 pub type PopupMenuTheme = crate::menus::PopupMenuThemeData;
 #[allow(dead_code)]
-pub type TabBarTheme = crate::p0_controls::TabBarThemeData;
+pub type TabBarTheme = crate::navigation::TabBarThemeData;

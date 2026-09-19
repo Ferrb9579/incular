@@ -11,7 +11,9 @@ mod common;
 mod icon_floating;
 mod style;
 mod variants;
+mod vocabulary;
 
 pub use icon_floating::{FloatingActionButton, IconButton};
 pub use style::{ButtonStyleConfig, StyleFrom, style_from};
 pub use variants::{ElevatedButton, FilledButton, OutlinedButton, TextButton};
+pub use vocabulary::*;

@@ -1,4 +1,4 @@
-use crate::foundation::{StateProperty, WidgetState, WidgetStates};
+use crate::material_theme::{StateProperty, WidgetState, WidgetStates};
 use incular_core::Color;
 use incular_widgets::Widget;
 use std::rc::Rc;

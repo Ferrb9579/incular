@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use super::common::finite_non_negative;
-use crate::foundation::Material;
+use super::Material;
+use crate::material_theme::helpers::finite_non_negative;
 use incular_config::{Alignment, Clip, EdgeInsets, StackFit};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;

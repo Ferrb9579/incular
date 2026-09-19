@@ -1,4 +1,4 @@
-use crate::foundation::{StateProperty, Theme, ThemeData};
+use crate::material_theme::{StateProperty, Theme, ThemeData};
 use crate::{TabAlignment, TabBarIndicatorSize};
 use incular_config::{CrossAxisAlignment, MainAxisAlignment};
 use incular_core::Color;

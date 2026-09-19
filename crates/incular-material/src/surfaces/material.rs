@@ -9,8 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 use typed_builder::TypedBuilder;
 
-use super::helpers::mix;
-use super::theme_data::Theme;
+use crate::material_theme::{Theme, helpers::mix};
 
 /// Material density adjustment used by layout and hit-target calculations.
 #[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]

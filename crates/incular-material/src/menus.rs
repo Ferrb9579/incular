@@ -11,6 +11,7 @@ mod controls;
 mod dropdown;
 mod popup;
 mod style;
+mod vocabulary;
 
 #[allow(unused_imports)]
 pub use anchor::{MenuAnchor, MenuAnchorBuilder};
@@ -37,3 +38,4 @@ pub use style::{
     DropdownMenuThemeData, DropdownMenuThemeDataBuilder, MenuStyle, MenuStyleBuilder,
     MenuThemeData, MenuThemeDataBuilder, PopupMenuThemeData, PopupMenuThemeDataBuilder,
 };
+pub use vocabulary::*;

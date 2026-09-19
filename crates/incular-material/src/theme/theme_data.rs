@@ -12,10 +12,10 @@ use std::rc::Rc;
 use std::time::Duration;
 use typed_builder::TypedBuilder;
 
+use super::components::*;
 use super::helpers::alpha;
-use super::input::InputDecorationThemeData;
-use super::surfaces::{MaterialTapTargetSize, VisualDensity};
-use super::theme::*;
+use crate::inputs::InputDecorationThemeData;
+use crate::surfaces::{MaterialTapTargetSize, VisualDensity};
 
 /// Platform policy used by Material adaptive components.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -126,14 +126,14 @@ pub struct NavigationComponentThemes {
     pub navigation_bar_theme: NavigationBarThemeData,
     pub navigation_drawer_theme: NavigationDrawerThemeData,
     pub navigation_rail_theme: NavigationRailThemeData,
-    pub tab_bar_theme: crate::p0_controls::TabBarThemeData,
+    pub tab_bar_theme: crate::navigation::TabBarThemeData,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SelectionControlThemes {
     pub checkbox_theme: CheckboxThemeData,
     pub radio_theme: RadioThemeData,
-    pub slider_theme: crate::p0_controls::SliderThemeData,
+    pub slider_theme: crate::material_selection::SliderThemeData,
     pub switch_theme: SwitchThemeData,
     pub text_selection_theme: TextSelectionThemeData,
 }
@@ -244,10 +244,10 @@ pub struct ThemeDataPatch {
     pub popup_menu_theme: Option<crate::menus::PopupMenuThemeData>,
     pub progress_indicator_theme: Option<crate::feedback::ProgressIndicatorThemeData>,
     pub radio_theme: Option<RadioThemeData>,
-    pub slider_theme: Option<crate::p0_controls::SliderThemeData>,
+    pub slider_theme: Option<crate::material_selection::SliderThemeData>,
     pub snack_bar_theme: Option<SnackBarThemeData>,
     pub switch_theme: Option<SwitchThemeData>,
-    pub tab_bar_theme: Option<crate::p0_controls::TabBarThemeData>,
+    pub tab_bar_theme: Option<crate::navigation::TabBarThemeData>,
     pub text_button_theme: Option<TextButtonThemeData>,
     pub tooltip_theme: Option<TooltipThemeData>,
     pub button_bar_theme: Option<Option<ButtonBarThemeData>>,

@@ -6,7 +6,7 @@ use super::{
     popup::{PopupMenuButton, PopupMenuItem, menu_panel},
     style::MenuStyle,
 };
-use crate::foundation::{InputDecoration, InputDecorationThemeData};
+use crate::inputs::{InputDecoration, InputDecorationThemeData};
 use crate::{DropdownMenuCloseBehavior, TextField};
 use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets};
 use incular_controls::{ButtonStyle, ControlIcon, current_control_theme};

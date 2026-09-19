@@ -1,5 +1,5 @@
 use crate::SliderInteraction;
-use crate::foundation::{StateProperty, Theme, WidgetState, WidgetStates};
+use crate::material_theme::{StateProperty, Theme, WidgetState, WidgetStates};
 use incular_config::EdgeInsets;
 use incular_controls::current_control_theme;
 use incular_core::{Color, KeyboardKey, NamedKey};

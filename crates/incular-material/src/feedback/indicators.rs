@@ -1,7 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
-use super::common::{finite_non_negative, normalized, with_alpha};
 use crate::feedback::current_progress_indicator_theme;
+use crate::material_theme::helpers::{finite_non_negative, normalized, with_alpha};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::{Color, Offset, Size};
 use incular_rendering::{Canvas, LineCap, LineJoin, Path, Stroke};

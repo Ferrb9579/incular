@@ -1,5 +1,5 @@
 use super::environment::MaterialScrollBehavior;
-use crate::foundation::Theme;
+use crate::material_theme::Theme;
 use crate::{ThemeData, ThemeMode};
 use incular_config::{Brightness, Locale, LocaleResolver};
 use incular_widgets::{

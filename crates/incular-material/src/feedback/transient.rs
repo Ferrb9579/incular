@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use super::helpers::{finite_non_negative, semantic_state};
-use crate::extras::SnackBarBehavior;
+use super::vocabulary::SnackBarBehavior;
 use incular_config::{CrossAxisAlignment, EdgeInsets, MainAxisAlignment, MainAxisSize};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::{Color, Offset};

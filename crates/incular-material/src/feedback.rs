@@ -9,15 +9,19 @@
 mod dialog;
 mod dialog_handles;
 mod helpers;
+mod indicators;
 mod progress;
 mod transient;
+mod vocabulary;
 
 pub use dialog::{AlertDialog, Dialog, SimpleDialog, SimpleDialogOption};
 pub use dialog_handles::{
     DialogHandle, DialogResultHandle, DialogRoute, show_dialog, show_dialog_result,
 };
+pub use indicators::{CircularProgressIndicator, LinearProgressIndicator};
 pub use progress::{
     ProgressIndicatorStrokeCap, ProgressIndicatorTheme, ProgressIndicatorThemeData,
     current_progress_indicator_theme,
 };
 pub use transient::{SnackBar, SnackBarAction, Tooltip, TooltipController, TooltipTriggerMode};
+pub use vocabulary::*;

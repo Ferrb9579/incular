@@ -6,11 +6,14 @@
 //! implementation here. The navigation crate can later attach a
 //! `Navigator`/`Overlay` to the route hooks without changing these widgets.
 
+mod bars;
 mod environment;
 mod material_app;
 mod navigation;
 mod shell;
+mod vocabulary;
 
+pub use bars::{AppBar, Scaffold, SliverAppBar};
 pub use environment::{MaterialPointerDevice, MaterialScrollBehavior};
 pub use material_app::MaterialApp;
 pub use navigation::{
@@ -21,3 +24,4 @@ pub use shell::{
     DrawerButtonIcon, DrawerHeader, EndDrawerButton, EndDrawerButtonIcon, ScaffoldMessenger,
     ScaffoldMessengerController,
 };
+pub use vocabulary::*;

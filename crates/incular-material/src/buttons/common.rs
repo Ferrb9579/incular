@@ -1,7 +1,7 @@
 //! Shared button construction, theme resolution, and layout policy.
 
 use super::style::ButtonKind;
-use crate::foundation::{ComponentThemeData, Theme, ThemeData};
+use crate::material_theme::{ComponentThemeData, Theme, ThemeData};
 use incular_config::{Constraints, CrossAxisAlignment};
 use incular_controls::{Button as ControlButton, ControlTheme};
 use incular_core::{Color, Size};
@@ -272,9 +272,9 @@ fn apply_constraints(
     theme: &ThemeData,
 ) -> Widget {
     let density = style.visual_density.unwrap_or_else(|| {
-        if theme.core().visual_density == crate::foundation::VisualDensity::COMPACT {
+        if theme.core().visual_density == crate::surfaces::VisualDensity::COMPACT {
             incular_controls::ControlDensity::Compact
-        } else if theme.core().visual_density == crate::foundation::VisualDensity::COMFORTABLE {
+        } else if theme.core().visual_density == crate::surfaces::VisualDensity::COMFORTABLE {
             incular_controls::ControlDensity::Comfortable
         } else {
             incular_controls::ControlDensity::Standard
@@ -287,7 +287,7 @@ fn apply_constraints(
     };
     let target = style.tap_target_size.unwrap_or_else(|| {
         if theme.core().material_tap_target_size
-            == crate::foundation::MaterialTapTargetSize::ShrinkWrap
+            == crate::surfaces::MaterialTapTargetSize::ShrinkWrap
         {
             incular_controls::TapTargetSize::ShrinkWrap
         } else {

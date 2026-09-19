@@ -4,7 +4,7 @@ use super::{
     controls::{MenuController, MenuItemButton},
     style::MenuStyle,
 };
-use crate::foundation::Material;
+use crate::surfaces::Material;
 use incular_config::{Clip, EdgeInsets};
 use incular_controls::{
     Button as ControlButton, ButtonStyle, ButtonVariant, ControlIcon, ControlState, StateValue,
