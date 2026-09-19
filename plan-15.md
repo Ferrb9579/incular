@@ -3418,7 +3418,13 @@ notification, window drain, mobile diagnostics parity).
 Execution plan: [W7 completion plan](docs/W7_COMPLETION_PLAN.md), prepared
 against `b65751b` on 2026-09-18. It records source-confirmed gaps, file-level
 implementation steps, ownership decisions, regression scenarios, migrations,
-and final validation gates. Planning is complete; W7 implementation is pending.
+and final validation gates. W7 implementation is complete; executed evidence is
+recorded in [the W7 completion report](docs/W7_COMPLETION_REPORT.md) and public
+migrations in [W7 API migrations](docs/W7_API_MIGRATIONS.md). The final
+source-derived ledgers cover 172 controls symbols / 619 accepted options and 221
+Material symbols / 1,299 accepted options. The historical private
+`component_impl`, `p0_controls` and `foundation` buckets are retired in favor of
+behavior-owner modules.
 
 1. Inventory exported control/Material fields against W3's ledger, including
    generated builders. Cover buttons, selection controls, text fields, sliders,
@@ -3433,6 +3439,12 @@ and final validation gates. Planning is complete; W7 implementation is pending.
 
 Exit: same control behaves identically under different visuals; theme changes
 invalidate appropriate consumers; all accepted fields reach execution.
+
+**W7 complete.** Default/custom visual parity, family-specific theme
+invalidation, retained action/editing/slider/menu/tab/progress motion, exhaustive
+public-option discovery and the W6/performance regressions are pinned by the W7
+focused matrix. Repository-wide closure gates are recorded in the W7 completion
+report. Native outcome verification remains W8 and is not implied by this close.
 
 ## W8 — Native verification and historical campaign closure
 

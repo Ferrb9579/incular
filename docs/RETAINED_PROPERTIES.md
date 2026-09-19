@@ -1,8 +1,8 @@
 # Retained property audit
 
-Stage F is in progress. This ledger distinguishes verified contracts from the
-remaining property audit; it is not a claim that every exported builder option
-has been verified.
+Stage F is in progress outside the closed W7 controls/Material slice. This
+ledger distinguishes verified contracts from remaining primitive-family audit;
+controls and Material now have a source-derived exhaustive W7 surface ledger.
 
 ## Phase ownership
 
@@ -24,14 +24,16 @@ If that changes, their phase masks must be consumed by the new caches.
 | Text content, style, alignment, wrap, lines, overflow | Text descriptor → visual lowering | Render update comparisons separate color from shaping metrics; text color/font-size dirty-phase tests | Inventory every style field and overflow/alignment combination |
 | Editing controller, size, style, placeholder, multiline, line bounds, expands, alignment, enabled, read-only, obscuring, cursor geometry/visibility/colors, selection color | `TextFieldSpec` → `lowering/visual.rs` preserves every render field; submit callback stays in widget/runtime interaction | Editing suite covers graphemes, IME preedit, restoration, selection and focus painting | Per-option update/invalidation tests and constructor/TypedBuilder validation parity |
 | Scroll controller, axis, reverse, physics | `WidgetKind::Scroll` → scrolling lowering → viewport | Existing scrolling/sliver and retained performance suites | Per-property phase matrix; activity ownership is Stage G |
-| Button visuals, enabled/focus policy and action | `ButtonSpec` → visual lowering; callbacks stay in interaction | Color-only updates avoid layout; Stage A checkbox behavior is independent of visual slot | Inventory all control/Material options and reduce redundant presentation policy |
+| Button visuals, enabled/focus policy and action | Controls button descriptor → one retained `ActionSurface`; Material resolves sparse family tokens above it | W7 action-presentation/button regressions cover live state, real padded hit targets, theme rebuild during press, cursor/policy and custom/default ownership | W7 complete; preserve the single action owner |
+| Controls + Material public options | Qualified source discovery covers public declarations/fields, constructors/fluent methods and generated `TypedBuilder` setters | `w7_*_ledger` snapshots: controls 172 symbols / 619 options; Material 221 symbols / 1,299 options, plus focused behavior/theme invalidation tests | W7 complete; future public-surface drift must update execution/tests before snapshot regeneration |
 | Box constraints: four bounds | Private fields, validated `new`/`try_new`, read-only accessors | `incular-config/tests/constraints.rs` covers invalid floats/order, unbounded limits, clamping, deflation and constructor panic policy | Completed boundary migration; preserve invariants in future helpers |
 
 ## Remaining Stage F scope
 
-Complete the exported-widget property inventory beyond the initial families,
-including generated builders. Group primitive-family comparisons with their
-behavior where that reduces duplicate decisions. Audit sibling-crate uses of
-`internal` and narrow exports without exposing retained mutable storage. Finish
-control/Material token and behavior ownership checks. Existing enum dispatch
-remains closed; this work does not introduce a dynamic primitive registry.
+Complete the exported-widget property inventory for remaining primitive
+families outside controls/Material. Group primitive-family comparisons with
+their behavior where that reduces duplicate decisions. Audit sibling-crate uses
+of `internal` and narrow exports without exposing retained mutable storage.
+Controls/Material token and behavior ownership is closed by W7. Existing enum
+dispatch remains closed; this work does not introduce a dynamic primitive
+registry.

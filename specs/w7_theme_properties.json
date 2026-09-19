@@ -2257,6 +2257,2518 @@
         "option": "track_gap",
         "status": "implemented",
         "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:background"
+        ],
+        "option": "background",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:brightness"
+        ],
+        "option": "brightness",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:dark"
+        ],
+        "option": "dark",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:error"
+        ],
+        "option": "error",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:error_container"
+        ],
+        "option": "error_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:from_seed"
+        ],
+        "option": "from_seed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:from_seed_with_brightness"
+        ],
+        "option": "from_seed_with_brightness",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:inverse_primary"
+        ],
+        "option": "inverse_primary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:inverse_surface"
+        ],
+        "option": "inverse_surface",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:lerp"
+        ],
+        "option": "lerp",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:light"
+        ],
+        "option": "light",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_background"
+        ],
+        "option": "on_background",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_error"
+        ],
+        "option": "on_error",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_error_container"
+        ],
+        "option": "on_error_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_inverse_surface"
+        ],
+        "option": "on_inverse_surface",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_primary"
+        ],
+        "option": "on_primary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_primary_container"
+        ],
+        "option": "on_primary_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_primary_fixed"
+        ],
+        "option": "on_primary_fixed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_primary_fixed_variant"
+        ],
+        "option": "on_primary_fixed_variant",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_secondary"
+        ],
+        "option": "on_secondary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_secondary_container"
+        ],
+        "option": "on_secondary_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_secondary_fixed"
+        ],
+        "option": "on_secondary_fixed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_secondary_fixed_variant"
+        ],
+        "option": "on_secondary_fixed_variant",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_surface"
+        ],
+        "option": "on_surface",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_surface_variant"
+        ],
+        "option": "on_surface_variant",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_tertiary"
+        ],
+        "option": "on_tertiary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_tertiary_container"
+        ],
+        "option": "on_tertiary_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_tertiary_fixed"
+        ],
+        "option": "on_tertiary_fixed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:on_tertiary_fixed_variant"
+        ],
+        "option": "on_tertiary_fixed_variant",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:outline"
+        ],
+        "option": "outline",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:outline_variant"
+        ],
+        "option": "outline_variant",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:primary"
+        ],
+        "option": "primary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:primary_container"
+        ],
+        "option": "primary_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:primary_fixed"
+        ],
+        "option": "primary_fixed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:primary_fixed_dim"
+        ],
+        "option": "primary_fixed_dim",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:scrim"
+        ],
+        "option": "scrim",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:secondary"
+        ],
+        "option": "secondary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:secondary_container"
+        ],
+        "option": "secondary_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:secondary_fixed"
+        ],
+        "option": "secondary_fixed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:secondary_fixed_dim"
+        ],
+        "option": "secondary_fixed_dim",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:shadow"
+        ],
+        "option": "shadow",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface"
+        ],
+        "option": "surface",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_bright"
+        ],
+        "option": "surface_bright",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_container"
+        ],
+        "option": "surface_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_container_high"
+        ],
+        "option": "surface_container_high",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_container_highest"
+        ],
+        "option": "surface_container_highest",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_container_low"
+        ],
+        "option": "surface_container_low",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_container_lowest"
+        ],
+        "option": "surface_container_lowest",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_dim"
+        ],
+        "option": "surface_dim",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_tint"
+        ],
+        "option": "surface_tint",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:surface_variant"
+        ],
+        "option": "surface_variant",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:tertiary"
+        ],
+        "option": "tertiary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:tertiary_container"
+        ],
+        "option": "tertiary_container",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:tertiary_fixed"
+        ],
+        "option": "tertiary_fixed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:tertiary_fixed_dim"
+        ],
+        "option": "tertiary_fixed_dim",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:with_on_surface"
+        ],
+        "option": "with_on_surface",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:with_primary"
+        ],
+        "option": "with_primary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "method:with_surface"
+        ],
+        "option": "with_surface",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "entrypoints": [
+          "field:active_track_color",
+          "method:active_track_color"
+        ],
+        "option": "active_track_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:animation_duration"
+        ],
+        "option": "animation_duration",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:background_color",
+          "method:background_color"
+        ],
+        "option": "background_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:border_on_foreground"
+        ],
+        "option": "border_on_foreground",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:center_title"
+        ],
+        "option": "center_title",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:check_color",
+          "method:check_color"
+        ],
+        "option": "check_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:clip_behavior"
+        ],
+        "option": "clip_behavior",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:color",
+          "method:color"
+        ],
+        "option": "color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:disabled_color",
+          "method:disabled_color"
+        ],
+        "option": "disabled_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:divider_color"
+        ],
+        "option": "divider_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:elevation",
+          "method:elevation"
+        ],
+        "option": "elevation",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:fill_color",
+          "method:fill_color"
+        ],
+        "option": "fill_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:foreground_color",
+          "method:foreground_color"
+        ],
+        "option": "foreground_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:icon_color"
+        ],
+        "option": "icon_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:icon_size",
+          "method:icon_size"
+        ],
+        "option": "icon_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:inactive_track_color",
+          "method:inactive_track_color"
+        ],
+        "option": "inactive_track_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:indicator_size"
+        ],
+        "option": "indicator_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:label_color"
+        ],
+        "option": "label_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:leading_width"
+        ],
+        "option": "leading_width",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:margin",
+          "method:margin"
+        ],
+        "option": "margin",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:maximum_size"
+        ],
+        "option": "maximum_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:min_size"
+        ],
+        "option": "min_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:minimum_size"
+        ],
+        "option": "minimum_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:mouse_cursor",
+          "method:mouse_cursor"
+        ],
+        "option": "mouse_cursor",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:opacity",
+          "method:opacity"
+        ],
+        "option": "opacity",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:outline_color",
+          "method:outline_color"
+        ],
+        "option": "outline_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:overlay_color",
+          "method:overlay_color"
+        ],
+        "option": "overlay_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:padding",
+          "method:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:selected_icon_color"
+        ],
+        "option": "selected_icon_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:selected_item_color"
+        ],
+        "option": "selected_item_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:shadow_color"
+        ],
+        "option": "shadow_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:shape",
+          "method:shape"
+        ],
+        "option": "shape",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:side"
+        ],
+        "option": "side",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:size"
+        ],
+        "option": "size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:style",
+          "method:style"
+        ],
+        "option": "style",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:surface_color"
+        ],
+        "option": "surface_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:surface_tint_color"
+        ],
+        "option": "surface_tint_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:text_style"
+        ],
+        "option": "text_style",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:thumb_color",
+          "method:thumb_color"
+        ],
+        "option": "thumb_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:thumb_size"
+        ],
+        "option": "thumb_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:title_spacing"
+        ],
+        "option": "title_spacing",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:toolbar_height"
+        ],
+        "option": "toolbar_height",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:track_color",
+          "method:track_color"
+        ],
+        "option": "track_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:track_height"
+        ],
+        "option": "track_height",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:unselected_item_color"
+        ],
+        "option": "unselected_item_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:unselected_label_color"
+        ],
+        "option": "unselected_label_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:body_large"
+        ],
+        "option": "body_large",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:body_medium"
+        ],
+        "option": "body_medium",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:body_small"
+        ],
+        "option": "body_small",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "constructor:with_color:color"
+        ],
+        "option": "color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "method:dark"
+        ],
+        "option": "dark",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:display_large"
+        ],
+        "option": "display_large",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:display_medium"
+        ],
+        "option": "display_medium",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:display_small"
+        ],
+        "option": "display_small",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:headline_large"
+        ],
+        "option": "headline_large",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:headline_medium"
+        ],
+        "option": "headline_medium",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:headline_small"
+        ],
+        "option": "headline_small",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:label_large"
+        ],
+        "option": "label_large",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:label_medium"
+        ],
+        "option": "label_medium",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:label_small"
+        ],
+        "option": "label_small",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "method:lerp"
+        ],
+        "option": "lerp",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "method:light"
+        ],
+        "option": "light",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "method:merge"
+        ],
+        "option": "merge",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:title_large"
+        ],
+        "option": "title_large",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:title_medium"
+        ],
+        "option": "title_medium",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:title_small"
+        ],
+        "option": "title_small",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "method:with_body_medium"
+        ],
+        "option": "with_body_medium",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "entrypoints": [
+          "field:black"
+        ],
+        "option": "black",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::Typography"
+      },
+      {
+        "entrypoints": [
+          "field:dense"
+        ],
+        "option": "dense",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::Typography"
+      },
+      {
+        "entrypoints": [
+          "field:english_like"
+        ],
+        "option": "english_like",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::Typography"
+      },
+      {
+        "entrypoints": [
+          "method:material2021"
+        ],
+        "option": "material2021",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::Typography"
+      },
+      {
+        "entrypoints": [
+          "field:tall"
+        ],
+        "option": "tall",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::Typography"
+      },
+      {
+        "entrypoints": [
+          "field:white"
+        ],
+        "option": "white",
+        "status": "implemented",
+        "symbol": "incular_material::theme::components::Typography"
+      },
+      {
+        "entrypoints": [
+          "method:all"
+        ],
+        "option": "all",
+        "status": "implemented",
+        "symbol": "incular_material::theme::state::StateProperty"
+      },
+      {
+        "entrypoints": [
+          "method:from_map"
+        ],
+        "option": "from_map",
+        "status": "implemented",
+        "symbol": "incular_material::theme::state::StateProperty"
+      },
+      {
+        "entrypoints": [
+          "method:resolve_with"
+        ],
+        "option": "resolve_with",
+        "status": "implemented",
+        "symbol": "incular_material::theme::state::StateProperty"
+      },
+      {
+        "entrypoints": [
+          "method:from_bits_retain"
+        ],
+        "option": "from_bits_retain",
+        "status": "implemented",
+        "symbol": "incular_material::theme::state::WidgetStates"
+      },
+      {
+        "entrypoints": [
+          "method:with"
+        ],
+        "option": "with",
+        "status": "implemented",
+        "symbol": "incular_material::theme::state::WidgetStates"
+      },
+      {
+        "entrypoints": [
+          "method:without"
+        ],
+        "option": "without",
+        "status": "implemented",
+        "symbol": "incular_material::theme::state::WidgetStates"
+      },
+      {
+        "entrypoints": [
+          "builder:child",
+          "constructor:new:child",
+          "field:child"
+        ],
+        "option": "child",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::AnimatedTheme"
+      },
+      {
+        "entrypoints": [
+          "builder:data",
+          "constructor:new:data",
+          "field:data"
+        ],
+        "option": "data",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::AnimatedTheme"
+      },
+      {
+        "entrypoints": [
+          "builder:duration",
+          "constructor:new:duration",
+          "field:duration"
+        ],
+        "option": "duration",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::AnimatedTheme"
+      },
+      {
+        "entrypoints": [
+          "field:button_bar_theme"
+        ],
+        "option": "button_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:button_theme"
+        ],
+        "option": "button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:elevated_button_theme"
+        ],
+        "option": "elevated_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:filled_button_theme"
+        ],
+        "option": "filled_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:floating_action_button_theme"
+        ],
+        "option": "floating_action_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:icon_button_theme"
+        ],
+        "option": "icon_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:outlined_button_theme"
+        ],
+        "option": "outlined_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:segmented_button_theme"
+        ],
+        "option": "segmented_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:text_button_theme"
+        ],
+        "option": "text_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:toggle_buttons_theme"
+        ],
+        "option": "toggle_buttons_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "builder:height",
+          "field:height"
+        ],
+        "option": "height",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:min_width",
+          "field:min_width"
+        ],
+        "option": "min_width",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:shape",
+          "field:shape"
+        ],
+        "option": "shape",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:style",
+          "field:style"
+        ],
+        "option": "style",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ButtonThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:data_table_theme"
+        ],
+        "option": "data_table_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:date_picker_theme"
+        ],
+        "option": "date_picker_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:expansion_tile_theme"
+        ],
+        "option": "expansion_tile_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:list_tile_theme"
+        ],
+        "option": "list_tile_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:search_bar_theme"
+        ],
+        "option": "search_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:search_view_theme"
+        ],
+        "option": "search_view_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:time_picker_theme"
+        ],
+        "option": "time_picker_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:tooltip_theme"
+        ],
+        "option": "tooltip_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:apply_elevation_overlay_color"
+        ],
+        "option": "apply_elevation_overlay_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:brightness"
+        ],
+        "option": "brightness",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:color_scheme"
+        ],
+        "option": "color_scheme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:material_tap_target_size"
+        ],
+        "option": "material_tap_target_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:page_transitions_theme"
+        ],
+        "option": "page_transitions_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:platform"
+        ],
+        "option": "platform",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:primary_text_theme"
+        ],
+        "option": "primary_text_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:splash_factory"
+        ],
+        "option": "splash_factory",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:text_theme"
+        ],
+        "option": "text_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:typography"
+        ],
+        "option": "typography",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:use_material3"
+        ],
+        "option": "use_material3",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:visual_density"
+        ],
+        "option": "visual_density",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "entrypoints": [
+          "field:progress_indicator_theme"
+        ],
+        "option": "progress_indicator_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::FeedbackComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:snack_bar_theme"
+        ],
+        "option": "snack_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::FeedbackComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:action_icon_theme"
+        ],
+        "option": "action_icon_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::IconAndInputThemes"
+      },
+      {
+        "entrypoints": [
+          "field:icon_theme"
+        ],
+        "option": "icon_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::IconAndInputThemes"
+      },
+      {
+        "entrypoints": [
+          "field:input_decoration_theme"
+        ],
+        "option": "input_decoration_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::IconAndInputThemes"
+      },
+      {
+        "entrypoints": [
+          "field:primary_icon_theme"
+        ],
+        "option": "primary_icon_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::IconAndInputThemes"
+      },
+      {
+        "entrypoints": [
+          "field:canvas_color"
+        ],
+        "option": "canvas_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:card_color"
+        ],
+        "option": "card_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:dialog_background_color"
+        ],
+        "option": "dialog_background_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:disabled_color"
+        ],
+        "option": "disabled_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:divider_color"
+        ],
+        "option": "divider_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:focus_color"
+        ],
+        "option": "focus_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:highlight_color"
+        ],
+        "option": "highlight_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:hint_color"
+        ],
+        "option": "hint_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:hover_color"
+        ],
+        "option": "hover_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:indicator_color"
+        ],
+        "option": "indicator_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:primary_color"
+        ],
+        "option": "primary_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:primary_color_dark"
+        ],
+        "option": "primary_color_dark",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:primary_color_light"
+        ],
+        "option": "primary_color_light",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:scaffold_background_color"
+        ],
+        "option": "scaffold_background_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:secondary_header_color"
+        ],
+        "option": "secondary_header_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:shadow_color"
+        ],
+        "option": "shadow_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:splash_color"
+        ],
+        "option": "splash_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:unselected_widget_color"
+        ],
+        "option": "unselected_widget_color",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "entrypoints": [
+          "field:dropdown_menu_theme"
+        ],
+        "option": "dropdown_menu_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::MenuComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:menu_bar_theme"
+        ],
+        "option": "menu_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::MenuComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:menu_button_theme"
+        ],
+        "option": "menu_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::MenuComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:menu_theme"
+        ],
+        "option": "menu_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::MenuComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:popup_menu_theme"
+        ],
+        "option": "popup_menu_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::MenuComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:app_bar_theme"
+        ],
+        "option": "app_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:bottom_app_bar_theme"
+        ],
+        "option": "bottom_app_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:bottom_navigation_bar_theme"
+        ],
+        "option": "bottom_navigation_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:drawer_theme"
+        ],
+        "option": "drawer_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:navigation_bar_theme"
+        ],
+        "option": "navigation_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:navigation_drawer_theme"
+        ],
+        "option": "navigation_drawer_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:navigation_rail_theme"
+        ],
+        "option": "navigation_rail_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:tab_bar_theme"
+        ],
+        "option": "tab_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "builder:duration",
+          "field:duration"
+        ],
+        "option": "duration",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::PageTransitionsTheme"
+      },
+      {
+        "entrypoints": [
+          "builder:reduced_motion",
+          "field:reduced_motion"
+        ],
+        "option": "reduced_motion",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::PageTransitionsTheme"
+      },
+      {
+        "entrypoints": [
+          "field:checkbox_theme"
+        ],
+        "option": "checkbox_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SelectionControlThemes"
+      },
+      {
+        "entrypoints": [
+          "field:radio_theme"
+        ],
+        "option": "radio_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SelectionControlThemes"
+      },
+      {
+        "entrypoints": [
+          "field:slider_theme"
+        ],
+        "option": "slider_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SelectionControlThemes"
+      },
+      {
+        "entrypoints": [
+          "field:switch_theme"
+        ],
+        "option": "switch_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SelectionControlThemes"
+      },
+      {
+        "entrypoints": [
+          "field:text_selection_theme"
+        ],
+        "option": "text_selection_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SelectionControlThemes"
+      },
+      {
+        "entrypoints": [
+          "field:badge_theme"
+        ],
+        "option": "badge_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:banner_theme"
+        ],
+        "option": "banner_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:bottom_sheet_theme"
+        ],
+        "option": "bottom_sheet_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:card_theme"
+        ],
+        "option": "card_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:carousel_view_theme"
+        ],
+        "option": "carousel_view_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:chip_theme"
+        ],
+        "option": "chip_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:dialog_theme"
+        ],
+        "option": "dialog_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "field:divider_theme"
+        ],
+        "option": "divider_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "entrypoints": [
+          "builder:child",
+          "constructor:new:child",
+          "field:child"
+        ],
+        "option": "child",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::Theme"
+      },
+      {
+        "entrypoints": [
+          "builder:data",
+          "constructor:new:data",
+          "field:data"
+        ],
+        "option": "data",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::Theme"
+      },
+      {
+        "entrypoints": [
+          "method:copy_with"
+        ],
+        "option": "copy_with",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:dark"
+        ],
+        "option": "dark",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:fallback"
+        ],
+        "option": "fallback",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:from_color_scheme"
+        ],
+        "option": "from_color_scheme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:from_seed"
+        ],
+        "option": "from_seed",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:lerp"
+        ],
+        "option": "lerp",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:light"
+        ],
+        "option": "light",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_button_bar_theme"
+        ],
+        "option": "with_button_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_color_scheme"
+        ],
+        "option": "with_color_scheme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_extension"
+        ],
+        "option": "with_extension",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_input_decoration_theme"
+        ],
+        "option": "with_input_decoration_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_page_transitions_theme"
+        ],
+        "option": "with_page_transitions_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_platform"
+        ],
+        "option": "with_platform",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_splash_factory"
+        ],
+        "option": "with_splash_factory",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_tap_target_size"
+        ],
+        "option": "with_tap_target_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_use_material3"
+        ],
+        "option": "with_use_material3",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:with_visual_density"
+        ],
+        "option": "with_visual_density",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:adaptation_map",
+          "field:adaptation_map"
+        ],
+        "option": "adaptation_map",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:app_bar_theme",
+          "field:app_bar_theme"
+        ],
+        "option": "app_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:badge_theme",
+          "field:badge_theme"
+        ],
+        "option": "badge_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:bottom_app_bar_theme",
+          "field:bottom_app_bar_theme"
+        ],
+        "option": "bottom_app_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:bottom_navigation_bar_theme",
+          "field:bottom_navigation_bar_theme"
+        ],
+        "option": "bottom_navigation_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:brightness",
+          "field:brightness"
+        ],
+        "option": "brightness",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:button_bar_theme",
+          "field:button_bar_theme"
+        ],
+        "option": "button_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:card_theme",
+          "field:card_theme"
+        ],
+        "option": "card_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:checkbox_theme",
+          "field:checkbox_theme"
+        ],
+        "option": "checkbox_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:color_scheme",
+          "field:color_scheme"
+        ],
+        "option": "color_scheme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:cupertino_override_theme",
+          "field:cupertino_override_theme"
+        ],
+        "option": "cupertino_override_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:dialog_theme",
+          "field:dialog_theme"
+        ],
+        "option": "dialog_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:divider_theme",
+          "field:divider_theme"
+        ],
+        "option": "divider_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:drawer_theme",
+          "field:drawer_theme"
+        ],
+        "option": "drawer_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:dropdown_menu_theme",
+          "field:dropdown_menu_theme"
+        ],
+        "option": "dropdown_menu_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:elevated_button_theme",
+          "field:elevated_button_theme"
+        ],
+        "option": "elevated_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:filled_button_theme",
+          "field:filled_button_theme"
+        ],
+        "option": "filled_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:floating_action_button_theme",
+          "field:floating_action_button_theme"
+        ],
+        "option": "floating_action_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:icon_button_theme",
+          "field:icon_button_theme"
+        ],
+        "option": "icon_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:icon_theme",
+          "field:icon_theme"
+        ],
+        "option": "icon_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:input_decoration_theme",
+          "field:input_decoration_theme"
+        ],
+        "option": "input_decoration_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:list_tile_theme",
+          "field:list_tile_theme"
+        ],
+        "option": "list_tile_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:material_tap_target_size",
+          "field:material_tap_target_size"
+        ],
+        "option": "material_tap_target_size",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:menu_bar_theme",
+          "field:menu_bar_theme"
+        ],
+        "option": "menu_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:menu_button_theme",
+          "field:menu_button_theme"
+        ],
+        "option": "menu_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:menu_theme",
+          "field:menu_theme"
+        ],
+        "option": "menu_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:navigation_bar_theme",
+          "field:navigation_bar_theme"
+        ],
+        "option": "navigation_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:navigation_drawer_theme",
+          "field:navigation_drawer_theme"
+        ],
+        "option": "navigation_drawer_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:navigation_rail_theme",
+          "field:navigation_rail_theme"
+        ],
+        "option": "navigation_rail_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:outlined_button_theme",
+          "field:outlined_button_theme"
+        ],
+        "option": "outlined_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:page_transitions_theme",
+          "field:page_transitions_theme"
+        ],
+        "option": "page_transitions_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:platform",
+          "field:platform"
+        ],
+        "option": "platform",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:popup_menu_theme",
+          "field:popup_menu_theme"
+        ],
+        "option": "popup_menu_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:primary_icon_theme",
+          "field:primary_icon_theme"
+        ],
+        "option": "primary_icon_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:primary_text_theme",
+          "field:primary_text_theme"
+        ],
+        "option": "primary_text_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:progress_indicator_theme",
+          "field:progress_indicator_theme"
+        ],
+        "option": "progress_indicator_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:radio_theme",
+          "field:radio_theme"
+        ],
+        "option": "radio_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:slider_theme",
+          "field:slider_theme"
+        ],
+        "option": "slider_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:snack_bar_theme",
+          "field:snack_bar_theme"
+        ],
+        "option": "snack_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:splash_factory",
+          "field:splash_factory"
+        ],
+        "option": "splash_factory",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:switch_theme",
+          "field:switch_theme"
+        ],
+        "option": "switch_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:tab_bar_theme",
+          "field:tab_bar_theme"
+        ],
+        "option": "tab_bar_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:text_button_theme",
+          "field:text_button_theme"
+        ],
+        "option": "text_button_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:text_selection_theme",
+          "field:text_selection_theme"
+        ],
+        "option": "text_selection_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:text_theme",
+          "field:text_theme"
+        ],
+        "option": "text_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:tooltip_theme",
+          "field:tooltip_theme"
+        ],
+        "option": "tooltip_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:use_material3",
+          "field:use_material3"
+        ],
+        "option": "use_material3",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "builder:visual_density",
+          "field:visual_density"
+        ],
+        "option": "visual_density",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "entrypoints": [
+          "field:adaptation_map"
+        ],
+        "option": "adaptation_map",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeExtensions"
+      },
+      {
+        "entrypoints": [
+          "field:cupertino_override_theme"
+        ],
+        "option": "cupertino_override_theme",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeExtensions"
+      },
+      {
+        "entrypoints": [
+          "field:extensions"
+        ],
+        "option": "extensions",
+        "status": "implemented",
+        "symbol": "incular_material::theme::theme_data::ThemeExtensions"
+      },
+      {
+        "entrypoints": [
+          "builder:x1",
+          "constructor:new:x1",
+          "field:x1"
+        ],
+        "option": "x1",
+        "status": "implemented",
+        "symbol": "incular_material::theme::vocabulary::EasingCurve"
+      },
+      {
+        "entrypoints": [
+          "builder:x2",
+          "constructor:new:x2",
+          "field:x2"
+        ],
+        "option": "x2",
+        "status": "implemented",
+        "symbol": "incular_material::theme::vocabulary::EasingCurve"
+      },
+      {
+        "entrypoints": [
+          "builder:y1",
+          "constructor:new:y1",
+          "field:y1"
+        ],
+        "option": "y1",
+        "status": "implemented",
+        "symbol": "incular_material::theme::vocabulary::EasingCurve"
+      },
+      {
+        "entrypoints": [
+          "builder:y2",
+          "constructor:new:y2",
+          "field:y2"
+        ],
+        "option": "y2",
+        "status": "implemented",
+        "symbol": "incular_material::theme::vocabulary::EasingCurve"
+      },
+      {
+        "entrypoints": [
+          "builder:primary",
+          "constructor:new:primary",
+          "field:primary"
+        ],
+        "option": "primary",
+        "status": "implemented",
+        "symbol": "incular_material::theme::vocabulary::MaterialColor"
+      },
+      {
+        "entrypoints": [
+          "builder:shades",
+          "constructor:new:shades",
+          "field:shades"
+        ],
+        "option": "shades",
+        "status": "implemented",
+        "symbol": "incular_material::theme::vocabulary::MaterialColor"
       }
     ],
     "schema_version": 3,
@@ -2272,6 +4784,186 @@
       {
         "kind": "struct",
         "qualified": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::components::ColorScheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::components::ComponentThemeData"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::components::PopupMenuTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::components::TabBarTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::components::TextTheme"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::components::ThemeExtensionValue"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::components::Typography"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::MaterialState"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::MaterialStateProperty"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::MaterialStatePropertyAll"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::MaterialStates"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::MaterialStatesController"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::state::StateProperty"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::state::WidgetState"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::WidgetStateProperty"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::state::WidgetStatePropertyAll"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::state::WidgetStates"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::state::WidgetStatesController"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::AnimatedTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::ButtonComponentThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::ButtonThemeData"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::ContentComponentThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::CoreThemeData"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::FeedbackComponentThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::IconAndInputThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::LegacyThemeColors"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::MenuComponentThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::NavigationComponentThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::PageTransitionsTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::SelectionControlThemes"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::SurfaceComponentThemes"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::theme_data::TargetPlatform"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::Theme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::ThemeData"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::ThemeDataPatch"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::theme_data::ThemeExtensions"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::vocabulary::Colors"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::vocabulary::Durations"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::vocabulary::DynamicSchemeVariant"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::vocabulary::Easing"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::vocabulary::EasingCurve"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_material::theme::vocabulary::MaterialAccentColor"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::theme::vocabulary::MaterialColor"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::vocabulary::ScriptCategory"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_material::theme::vocabulary::ThemeMode"
       }
     ]
   },

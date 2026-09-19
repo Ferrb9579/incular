@@ -163,8 +163,18 @@
     },
     {
       "entrypoints": [
+        "builder:icon",
+        "constructor:with_icon_label:icon"
+      ],
+      "option": "icon",
+      "status": "implemented",
+      "symbol": "incular_controls::button::Button"
+    },
+    {
+      "entrypoints": [
         "builder:label",
         "constructor:new:label",
+        "constructor:with_icon_label:label",
         "method:label"
       ],
       "option": "label",
@@ -1069,6 +1079,15 @@
         "method:label"
       ],
       "option": "label",
+      "status": "implemented",
+      "symbol": "incular_controls::field::Root"
+    },
+    {
+      "entrypoints": [
+        "builder:required",
+        "method:required"
+      ],
+      "option": "required",
       "status": "implemented",
       "symbol": "incular_controls::field::Root"
     },

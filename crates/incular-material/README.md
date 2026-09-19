@@ -27,9 +27,8 @@ from any static hint) and the toolbar fills the remainder when bounded or
 resolves its natural height when unbounded. No bottom size is guessed and
 stretching is never silently disabled. Stretching needs bouncing physics and
 a leading position; clamping and non-leading headers keep existing behavior.
-Conversion to an ordinary `Widget` keeps the existing static box
-presentation; stretching applies only to the retained sliver. Snapping
-remains pending.
+Conversion to an ordinary `Widget` keeps the existing static box presentation;
+stretching and snapping policies execute through the retained sliver path.
 
 The `incular-widgets` crate contains renderer-neutral Flutter `widgets`-layer
 primitives. This crate contains Material-layer controls such as concrete
@@ -45,6 +44,17 @@ Flutter's low-level Material entry point is available here as
 `RawMaterialButton`; new code should prefer a concrete Material button variant.
 Multiline editing uses `TextField::max_lines`/`TextField::multiline`, just as it
 does in Flutter.
+
+W7 organizes implementation by behavior owner: `theme`, `inputs`, `selection`,
+`surfaces`, `lists`, `navigation`, `app_shell`, `feedback`, `buttons`, and
+`menus`. The former private staging buckets `component_impl`, `p0_controls` and
+`foundation` are retired. Root/prelude/components imports remain the supported
+application boundary.
+
+The W7 source-derived API ledger covers 221 Material public symbols and 1,299
+accepted options, including generated builders. Public-surface drift must be
+paired with execution/value semantics and regression evidence before its
+snapshot is intentionally regenerated.
 
 Material menus, popup menus, dropdowns, context-menu anchors, and tooltips do not
 own a second popup-positioning implementation. They supply Material defaults to

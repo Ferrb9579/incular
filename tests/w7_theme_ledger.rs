@@ -22,8 +22,8 @@ fn w7_theme_options_match_source() {
         "crates/incular-material/src",
         |path| {
             let text = path.to_string_lossy().replace('\\', "/");
-            text.contains("/foundation/theme")
-                || text.ends_with("/foundation/state.rs")
+            text.contains("/theme/")
+                || text.ends_with("/theme.rs")
                 || text.ends_with("/feedback/progress.rs")
         },
     );

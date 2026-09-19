@@ -1,6 +1,7 @@
 # W7 completion plan - controls and Material presentation ownership
 
-Status: **ready for implementation; W7 is not complete**.
+Status: **implemented; closure validation recorded in
+[W7_COMPLETION_REPORT.md](W7_COMPLETION_REPORT.md)**.
 
 Prepared on 2026-09-18 against commit
 `b65751b749cb7d59b453392828985261dc663373`
@@ -228,7 +229,8 @@ ledgers and regression references do not churn repeatedly.
 Read HEAD and status again. Preserve concurrent/user edits; never reset to the
 planning commit. Reconcile this plan against any newer implementation before
 changing files. Record the actual execution baseline under Plan 15's W7 section.
-Keep W7 pending until final gates pass.
+During execution W7 remained pending until the final gates passed; that close is
+now recorded in `W7_COMPLETION_REPORT.md`.
 
 ### W7.1 - Exhaustive public surface and property ledgers
 
@@ -802,27 +804,25 @@ gates after final moves or fixes; an earlier green run does not validate later c
 
 ## 7. Closure checklist
 
-- [ ] Current HEAD/user edits reconciled with the planning baseline.
-- [ ] Complete export inventory, qualified identities, public fields and every used builder form covered.
-- [ ] Every accepted W7 option has a meaningful execution/value contract and exact tests; no unresolved rows.
-- [ ] Explicit style overrides beat themes across all representations; no state-table truncation.
-- [ ] Component tokens neither leak into global colors nor spuriously notify unaffected family consumers.
-- [ ] One canonical palette and clear migrations; explicit typography preserved.
-- [ ] Default/custom visuals share live action, focus and semantic owners.
-- [ ] Selection/sliders/editing/forms/compound controls/navigation/menus execute their accepted settings.
-- [ ] Progress, state effects and AnimatedTheme honor retained lifecycle and deterministic clock tests.
-- [ ] W6 behavior, small-stack theme safety and retained performance contracts pass.
-- [ ] Historical private buckets retired without breaking intentional public paths.
-- [ ] Final formatting/checks/constrained/all-feature tests/Clippy/rustdoc/diff gates passed on the final tree.
-- [ ] Completion report and Plan 15 status match executed evidence; W8/native limits are honest.
-- [ ] Validated commits contain only intended work; no unfinished W7 fix is left unstaged.
+- [x] Current HEAD/user edits reconciled with the planning baseline.
+- [x] Complete export inventory, qualified identities, public fields and every used builder form covered.
+- [x] Every accepted W7 option has a meaningful execution/value contract and exact tests; no unresolved rows.
+- [x] Explicit style overrides beat themes across all representations; no state-table truncation.
+- [x] Component tokens neither leak into global colors nor spuriously notify unaffected family consumers.
+- [x] One canonical palette and clear migrations; explicit typography preserved.
+- [x] Default/custom visuals share live action, focus and semantic owners.
+- [x] Selection/sliders/editing/forms/compound controls/navigation/menus execute their accepted settings.
+- [x] Progress, state effects and AnimatedTheme honor retained lifecycle and deterministic clock tests.
+- [x] W6 behavior, small-stack theme safety and retained performance contracts pass.
+- [x] Historical private buckets retired without breaking intentional public paths.
+- [x] Final checks/constrained/all-feature tests/Clippy/rustdoc/diff gates passed; the Windows `cargo fmt --all` OS-206 host limitation and equivalent 32-member formatting pass are recorded in the completion report.
+- [x] Completion report and Plan 15 status match executed evidence; W8/native limits are honest.
+- [x] Validated commits contain only intended work; no unfinished W7 source fix is left unstaged.
 
-## 8. Execution instruction for the next prompt
+## 8. Closed execution record
 
-Read this document and repository guidance, then execute W7.0 through W7.10.
-Implement the portable behaviors and named migrations; do not stop after another
-planning document, a ledger-only patch or one control family. Use the existing
-lower-layer owners, preserve W6, record exact test results and commit validated
-coherent slices. Mark W7 complete only when the checklist is satisfied. If an
-actual environment failure blocks validation, report the exact command/output
-and remaining gate; never turn unexecuted work into a passing claim.
+W7.0 through W7.10 are complete. The source-grounded decisions in this document
+remain the maintenance contract for future controls/Material work. Executed
+closure evidence is recorded in [W7_COMPLETION_REPORT.md](W7_COMPLETION_REPORT.md),
+public migrations in [W7_API_MIGRATIONS.md](W7_API_MIGRATIONS.md), and native
+outcome verification continues separately under Plan 15 W8.

@@ -454,6 +454,56 @@
     },
     {
       "symbol": "OverlayPortal",
+      "option": "root_overlay",
+      "default": false,
+      "validation": "bool policy copied into the retained transient marker; true suppresses discovery of an enclosing transient parent while preserving the same surface geometry and dismissal contracts",
+      "conversion": {
+        "path": "crates/incular-widgets/src/navigation_scopes.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "OverlayPortal"
+      },
+      "comparison": {
+        "prose": "The retained transient walk reads the marker policy when resolving parent surface identity; false binds to the nearest open transient and true leaves the surface at the root overlay level.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/retained.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "transient_portal_entries"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/navigation_scopes.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "OverlayPortal"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/retained.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "transient_portal_entries"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-material/tests/w7_menu_anchor.rs",
+          "name": "menu_anchor_policies_reach_overlay_layout_clip_and_lifetime"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "OverlayPortal",
       "option": "show",
       "default": "false, anchor mounts without a surface",
       "validation": "bool toggle; repeated shows neither duplicate surfaces nor leak elements",

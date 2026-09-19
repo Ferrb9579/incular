@@ -50,3 +50,11 @@ Widgets `Listener` metadata path. It receives the original `RawPointerEvent`
 (including local position and button chord) and never converts a right click
 into a primary tap. Menu open state and overlay presentation remain owned by the
 normal popup/menu model rather than by a second pointer recognizer.
+
+## W7 retained-control contract
+
+Custom/default visuals do not replace action, focus, editing, selection or
+semantic ownership. Theme/state resolution is sparse, and the source-derived W7
+ledger fails when public fields, fluent setters or generated builders drift.
+`ControlTheme::colors` is the canonical semantic color store; use `palette()`
+for the compatibility read view and `with_palette(...)` to replace those tokens.

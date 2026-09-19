@@ -7,9 +7,11 @@ The [original audit](ARCHITECTURE_AUDIT.md) is a historical baseline; the
 [implementation plan](../plan-14.md) records completed and pending fixes.
 
 The remaining quality campaign is tracked in [Plan 15](../plan-15.md).
-The [W7 completion plan](W7_COMPLETION_PLAN.md) provides the implementation
+The [W7 completion plan](W7_COMPLETION_PLAN.md) records the implementation
 sequence for controls/Material ownership, themes, property coverage and
-validation. It is an execution plan, not a claim that W7 is implemented.
+validation. W7's executed result is in the
+[completion report](W7_COMPLETION_REPORT.md), with public migration notes in
+[W7 API migrations](W7_API_MIGRATIONS.md).
 
 The phase notes below describe existing implementation, including migration
 seams; they do not override the architecture contract.

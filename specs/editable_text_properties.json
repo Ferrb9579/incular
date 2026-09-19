@@ -311,6 +311,100 @@
     },
     {
       "symbol": "EditableText",
+      "option": "placeholder_color",
+      "default": "rgba(150, 154, 170, 255)",
+      "validation": "stored color, no normalization; used only while empty placeholder text is presented",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "TextField descriptor/render equality includes placeholder color so a changed presentation reaches retained render update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-controls/tests/w7_form_text.rs",
+          "name": "text_field_style_placeholder_color_reaches_editable_text"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "focused_border",
+      "default": "none",
+      "validation": "optional border is converted to rendering Border; radius is clamped at zero and presentation is gated by the retained editor focus state",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "TextField descriptor/render equality includes the optional focused border so replacement updates retained presentation without creating a second focus owner.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-controls/tests/w7_form_text.rs",
+          "name": "focused_border_uses_the_editors_existing_focus_owner"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
       "option": "on_submit",
       "default": "none",
       "validation": "Rc callback compared by allocation identity; invoked with controller text on submit actions",
