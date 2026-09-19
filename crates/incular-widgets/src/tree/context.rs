@@ -275,4 +275,11 @@ impl InheritedScopeValue {
             value: Rc::new(value),
         }
     }
+
+    pub(super) fn from_shared<T: Any>(value: Rc<T>) -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            value,
+        }
+    }
 }

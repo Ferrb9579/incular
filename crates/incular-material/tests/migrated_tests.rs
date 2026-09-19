@@ -594,6 +594,24 @@ mod menu_tests {
     }
 
     #[test]
+    fn dropdown_form_saves_typed_selection_with_duplicate_labels() {
+        let form = incular_widgets::Form::new();
+        let saved = Rc::new(Cell::new(None::<u32>));
+        let observed = saved.clone();
+        let descriptor = DropdownButtonFormField::new([
+            PopupMenuItem::label("Same label").value(1_u32),
+            PopupMenuItem::label("Same label").value(2_u32),
+        ])
+        .value(2_u32)
+        .on_saved(move |value| observed.set(value.copied()));
+        let registration = descriptor.register_with_form(&form);
+
+        assert!(form.save());
+        assert_eq!(saved.get(), Some(2));
+        drop(registration);
+    }
+
+    #[test]
     fn menu_bar_builds_a_retained_material_surface() {
         let children: Vec<Widget> = vec![
             MenuItemButton::label("File").into(),

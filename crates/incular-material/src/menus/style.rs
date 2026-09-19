@@ -1,5 +1,6 @@
 use crate::PopupMenuPosition;
 use crate::inputs::InputDecorationThemeData;
+use crate::material_theme::ComponentThemeData;
 use incular_config::{Alignment, Constraints, EdgeInsets};
 use incular_controls::{ControlState, StateValue};
 use incular_core::{Color, Size};
@@ -215,6 +216,41 @@ impl MenuStyle {
                 .into()
         }
     }
+}
+
+pub(super) fn component_menu_style(theme: &ComponentThemeData) -> MenuStyle {
+    let mut style = MenuStyle::new();
+    if let Some(color) = theme.background_color.or(theme.color) {
+        style = style.background_color(color);
+    }
+    if let Some(color) = theme.shadow_color {
+        style = style.shadow_color(color);
+    }
+    if let Some(color) = theme.surface_tint_color {
+        style = style.surface_tint_color(color);
+    }
+    if let Some(elevation) = theme.elevation {
+        style = style.elevation(elevation);
+    }
+    if let Some(padding) = theme.padding {
+        style = style.padding(padding);
+    }
+    if let Some(size) = theme.minimum_size.or(theme.min_size) {
+        style = style.minimum_size(size);
+    }
+    if let Some(size) = theme.maximum_size {
+        style = style.maximum_size(size);
+    }
+    if let Some(side) = theme.side {
+        style = style.side(side);
+    }
+    if let Some(shape) = theme.shape {
+        style = style.shape(shape);
+    }
+    if let Some(cursor) = theme.mouse_cursor.clone() {
+        style = style.mouse_cursor(cursor);
+    }
+    style
 }
 
 /// Theme data for `MenuAnchor`, `MenuItemButton`, and `SubmenuButton`.

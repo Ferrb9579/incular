@@ -1,4 +1,4 @@
-use crate::material_theme::{StateProperty, WidgetState, WidgetStates};
+use crate::material_theme::{ComponentThemeData, StateProperty, WidgetState, WidgetStates};
 use incular_controls::CheckedState;
 use incular_core::Color;
 use incular_widgets::{Border, BorderRadius, Widget};
@@ -146,7 +146,11 @@ impl Checkbox {
         self.value
     }
 
-    fn build(self, theme: &incular_controls::ControlTheme) -> Widget {
+    fn build(
+        self,
+        theme: &incular_controls::ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
         let state = match self.value {
             Some(true) => CheckedState::Checked,
             Some(false) => CheckedState::Unchecked,
@@ -180,14 +184,25 @@ impl Checkbox {
             if state == CheckedState::Indeterminate {
                 root = root.inactive_color(color);
             }
+        } else if let Some(property) = inherited.and_then(|theme| theme.fill_color.as_ref()) {
+            let color = property.resolve(states.into_control_state());
+            root = root.active_color(color);
+            if state == CheckedState::Indeterminate {
+                root = root.inactive_color(color);
+            }
         }
         if let Some(property) = self.check_color {
             root = root.check_color(property.resolve(states));
+        } else if let Some(property) = inherited.and_then(|theme| theme.check_color.as_ref()) {
+            root = root.check_color(property.resolve(states.into_control_state()));
         }
-        if let Some(side) = self.side {
+        if let Some(side) = self.side.or_else(|| inherited.and_then(|theme| theme.side)) {
             root = root.side(side);
         }
-        if let Some(shape) = self.shape {
+        if let Some(shape) = self
+            .shape
+            .or_else(|| inherited.and_then(|theme| theme.shape))
+        {
             root = root.shape(shape);
         }
         if let Some(callback) = self.on_changed {
@@ -214,9 +229,13 @@ impl Checkbox {
 impl From<Checkbox> for Widget {
     fn from(value: Checkbox) -> Self {
         incular_widgets::LayoutBuilder::new(move |context, _| {
-            value
-                .clone()
-                .build(&incular_controls::current_control_theme(context))
+            let (theme, selection) = super::resolved_control_theme(context);
+            value.clone().build(
+                &theme,
+                selection
+                    .as_ref()
+                    .map(|selection| &selection.checkbox_theme),
+            )
         })
         .into()
     }
@@ -344,16 +363,34 @@ impl<T: Clone + PartialEq + 'static> From<Radio<T>> for Widget {
             (value.group_state.clone(), value.group_revision.clone())
         {
             let value = Rc::new(value);
-            return Widget::stateful_layout_builder(revision, move |_, _| {
-                value.build_with_group(state.borrow().clone())
+            return Widget::stateful_layout_builder(revision, move |context, _| {
+                let (theme, selection) = super::resolved_control_theme(context);
+                value.build_with_group(
+                    state.borrow().clone(),
+                    &theme,
+                    selection.as_ref().map(|selection| &selection.radio_theme),
+                )
             });
         }
-        value.build_with_group(value.group_value.clone())
+        let value = Rc::new(value);
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            let (theme, selection) = super::resolved_control_theme(context);
+            value.build_with_group(
+                value.group_value.clone(),
+                &theme,
+                selection.as_ref().map(|selection| &selection.radio_theme),
+            )
+        }))
     }
 }
 
 impl<T: Clone + PartialEq + 'static> Radio<T> {
-    fn build_with_group(&self, group_value: Option<T>) -> Widget {
+    fn build_with_group(
+        &self,
+        group_value: Option<T>,
+        theme: &incular_controls::ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
         let autofocus = self.autofocus;
         let selected = group_value.as_ref() == Some(&self.value);
         let mut selected_states = WidgetStates::default();
@@ -372,11 +409,17 @@ impl<T: Clone + PartialEq + 'static> Radio<T> {
             root = root
                 .active_color(property.resolve(selected_states))
                 .inactive_color(property.resolve(normal_states));
+        } else if let Some(property) = inherited.and_then(|theme| theme.fill_color.as_ref()) {
+            root = root
+                .active_color(property.resolve(selected_states.into_control_state()))
+                .inactive_color(property.resolve(normal_states.into_control_state()));
         }
         if let Some(property) = self.check_color.as_ref() {
             root = root.dot_color(property.resolve(selected_states));
+        } else if let Some(property) = inherited.and_then(|theme| theme.check_color.as_ref()) {
+            root = root.dot_color(property.resolve(selected_states.into_control_state()));
         }
-        if let Some(side) = self.side {
+        if let Some(side) = self.side.or_else(|| inherited.and_then(|theme| theme.side)) {
             root = root
                 .border_color(side.top.color)
                 .border_width(side.top.width);
@@ -384,7 +427,7 @@ impl<T: Clone + PartialEq + 'static> Radio<T> {
         if let Some(callback) = self.on_changed.clone() {
             root = root.on_changed(move |next| callback(next));
         }
-        let widget: Widget = root.into();
+        let widget = root.build(theme);
         if autofocus {
             incular_widgets::Focus::new(widget).autofocus(true).into()
         } else {

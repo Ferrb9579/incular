@@ -12,6 +12,203 @@ use std::cell::Cell;
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
+/// Neutral two-thumb range values shared by styled range-slider adapters.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RangeValues {
+    pub start: f32,
+    pub end: f32,
+}
+
+impl RangeValues {
+    #[must_use]
+    pub const fn new(start: f32, end: f32) -> Self {
+        Self { start, end }
+    }
+
+    #[must_use]
+    pub fn normalized(self) -> Self {
+        if self.start <= self.end {
+            self
+        } else {
+            Self::new(self.end, self.start)
+        }
+    }
+}
+
+/// Identifies one logical thumb of a neutral range slider.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeThumb {
+    Start,
+    End,
+}
+
+/// Retained value/constraint owner for two-thumb sliders.
+///
+/// Material and other design systems provide visuals and vocabulary while this
+/// model owns normalization, quantization, separation, no-op filtering and the
+/// revision that invalidates presentation.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct RangeSliderModel {
+    values: Rc<Cell<RangeValues>>,
+    revision: Rc<Cell<u64>>,
+    min: f32,
+    max: f32,
+    step: f32,
+    minimum_separation: f32,
+}
+
+impl RangeSliderModel {
+    #[must_use]
+    pub fn new(
+        values: RangeValues,
+        min: f32,
+        max: f32,
+        step: f32,
+        minimum_separation: f32,
+    ) -> Self {
+        let min = min.min(max);
+        let max = max.max(min);
+        let span = (max - min).max(f32::EPSILON);
+        let step = if step.is_finite() {
+            step.abs().max(f32::EPSILON)
+        } else {
+            0.01_f32.min(span)
+        };
+        let minimum_separation = if minimum_separation.is_finite() {
+            minimum_separation.max(0.0).min(span)
+        } else {
+            0.0
+        };
+        let mut values = values.normalized();
+        values.start = values.start.clamp(min, max);
+        values.end = values
+            .end
+            .clamp((values.start + minimum_separation).min(max), max);
+        let model = Self {
+            values: Rc::new(Cell::new(values)),
+            revision: Rc::new(Cell::new(0)),
+            min,
+            max,
+            step,
+            minimum_separation,
+        };
+        let normalized = model.normalize(values);
+        model.values.set(normalized);
+        model
+    }
+
+    #[must_use]
+    pub fn values(&self) -> RangeValues {
+        self.values.get()
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Rc<Cell<u64>> {
+        self.revision.clone()
+    }
+
+    #[must_use]
+    pub const fn min(&self) -> f32 {
+        self.min
+    }
+
+    #[must_use]
+    pub const fn max(&self) -> f32 {
+        self.max
+    }
+
+    #[must_use]
+    pub const fn step(&self) -> f32 {
+        self.step
+    }
+
+    #[must_use]
+    pub const fn minimum_separation(&self) -> f32 {
+        self.minimum_separation
+    }
+
+    #[must_use]
+    pub fn quantize(&self, raw: f32) -> f32 {
+        ((raw.clamp(self.min, self.max) - self.min) / self.step)
+            .round()
+            .mul_add(self.step, self.min)
+            .clamp(self.min, self.max)
+    }
+
+    #[must_use]
+    pub fn adjust(&self, thumb: RangeThumb, delta: f32) -> Option<RangeValues> {
+        let current = self.values();
+        let raw = match thumb {
+            RangeThumb::Start => current.start + delta,
+            RangeThumb::End => current.end + delta,
+        };
+        self.set_thumb(thumb, raw)
+    }
+
+    #[must_use]
+    pub fn set_thumb(&self, thumb: RangeThumb, raw: f32) -> Option<RangeValues> {
+        let mut next = self.values();
+        match thumb {
+            RangeThumb::Start => {
+                next.start = self
+                    .quantize(raw)
+                    .min((next.end - self.minimum_separation).max(self.min));
+            }
+            RangeThumb::End => {
+                next.end = self
+                    .quantize(raw)
+                    .max((next.start + self.minimum_separation).min(self.max));
+            }
+        }
+        self.commit(next)
+    }
+
+    #[must_use]
+    pub fn set_from_origin(
+        &self,
+        thumb: RangeThumb,
+        origin: RangeValues,
+        total_delta_value: f32,
+    ) -> Option<RangeValues> {
+        let raw = match thumb {
+            RangeThumb::Start => origin.start + total_delta_value,
+            RangeThumb::End => origin.end + total_delta_value,
+        };
+        self.set_thumb(thumb, raw)
+    }
+
+    #[must_use]
+    pub fn set_edge(&self, thumb: RangeThumb, maximum: bool) -> Option<RangeValues> {
+        self.set_thumb(thumb, if maximum { self.max } else { self.min })
+    }
+
+    fn normalize(&self, mut values: RangeValues) -> RangeValues {
+        values = values.normalized();
+        values.start = self.quantize(values.start);
+        values.end = self.quantize(values.end);
+        if values.end - values.start < self.minimum_separation {
+            values.end = (values.start + self.minimum_separation).min(self.max);
+            if values.end - values.start < self.minimum_separation {
+                values.start = (values.end - self.minimum_separation).max(self.min);
+            }
+        }
+        values
+    }
+
+    fn commit(&self, values: RangeValues) -> Option<RangeValues> {
+        let next = self.normalize(values);
+        if next == self.values.get() {
+            return None;
+        }
+        self.values.set(next);
+        self.revision.set(self.revision.get().wrapping_add(1));
+        Some(next)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct Range {
     #[builder(default = 0.0)]

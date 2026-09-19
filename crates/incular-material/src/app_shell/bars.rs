@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
-use crate::material_theme::{Theme, helpers::finite_non_negative};
+use crate::material_theme::{
+    ComponentThemeData, NavigationComponentThemes, helpers::finite_non_negative,
+};
 use crate::surfaces::Material;
 use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets, MainAxisSize};
 use incular_controls::{ControlTheme, current_control_theme};
@@ -34,14 +36,14 @@ pub struct AppBar {
     background: Option<Color>,
     #[builder(default, setter(strip_option))]
     foreground: Option<Color>,
-    #[builder(default = 0.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    elevation: f32,
-    #[builder(default = 64.0, setter(transform = |value: f32| finite_non_negative(value).max(1.0)))]
-    toolbar_height: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    elevation: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value).max(1.0))))]
+    toolbar_height: Option<f32>,
     #[builder(default = true)]
     automatically_imply_leading: bool,
-    #[builder(default)]
-    center_title: bool,
+    #[builder(default, setter(transform = |value: bool| Some(value)))]
+    center_title: Option<bool>,
     #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     title_spacing: Option<f32>,
     #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
@@ -66,10 +68,10 @@ impl AppBar {
             bottom: None,
             background: None,
             foreground: None,
-            elevation: 0.0,
-            toolbar_height: 64.0,
+            elevation: None,
+            toolbar_height: None,
             automatically_imply_leading: true,
-            center_title: false,
+            center_title: None,
             title_spacing: None,
             leading_width: None,
             flexible_space: None,
@@ -117,13 +119,13 @@ impl AppBar {
 
     #[must_use]
     pub fn elevation(mut self, elevation: f32) -> Self {
-        self.elevation = finite_non_negative(elevation);
+        self.elevation = Some(finite_non_negative(elevation));
         self
     }
 
     #[must_use]
     pub fn toolbar_height(mut self, height: f32) -> Self {
-        self.toolbar_height = finite_non_negative(height).max(1.0);
+        self.toolbar_height = Some(finite_non_negative(height).max(1.0));
         self
     }
 
@@ -140,7 +142,7 @@ impl AppBar {
     /// slots keep their reserved sizes and positions.
     #[must_use]
     pub fn center_title(mut self, value: bool) -> Self {
-        self.center_title = value;
+        self.center_title = Some(value);
         self
     }
 
@@ -190,9 +192,38 @@ impl AppBar {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        let background = self.background.unwrap_or(theme.colors.surface);
-        let foreground = self.foreground.unwrap_or(theme.colors.foreground);
-        let spacing = self.title_spacing.unwrap_or(16.0);
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
+        let background = self
+            .background
+            .or(inherited.background_color)
+            .or(inherited.color)
+            .unwrap_or(theme.colors.surface);
+        let foreground = self
+            .foreground
+            .or(inherited.foreground_color)
+            .unwrap_or(theme.colors.foreground);
+        let spacing = self
+            .title_spacing
+            .or(inherited.title_spacing)
+            .unwrap_or(16.0);
+        let leading_width = self.leading_width.or(inherited.leading_width);
+        let center_title = self
+            .center_title
+            .or(inherited.center_title)
+            .unwrap_or(false);
+        let toolbar_height = self
+            .toolbar_height
+            .or(inherited.toolbar_height)
+            .unwrap_or(64.0)
+            .max(1.0);
         // Shared slot geometry for both alignments, composed from neutral
         // primitives. The Row measures fixed slots first — the leading slot
         // at exactly `leading_width` when configured (around explicit
@@ -207,24 +238,22 @@ impl AppBar {
         // its own alignment: leading edge with the exact gap, or centered
         // in the remaining width with the gap kept as the minimum on each
         // side.
-        let leading_slot: Option<Widget> = match (self.leading.clone(), self.leading_width) {
+        let leading_slot: Option<Widget> = match (self.leading.clone(), leading_width) {
             (Some(leading), Some(width)) => {
                 Some(SizedBox::new().width(width).child(leading).into())
             }
             (Some(leading), None) => Some(leading),
-            (None, _) if self.automatically_imply_leading => Some(
-                SizedBox::new()
-                    .width(self.leading_width.unwrap_or(0.0))
-                    .into(),
-            ),
+            (None, _) if self.automatically_imply_leading => {
+                Some(SizedBox::new().width(leading_width.unwrap_or(0.0)).into())
+            }
             (None, _) => None,
         };
-        let title_content: Widget = if self.center_title {
+        let title_content: Widget = if center_title {
             Padding::symmetric(spacing, 0.0, self.title.clone()).into()
         } else {
             Padding::new(EdgeInsets::only(spacing, 0.0, 0.0, 0.0), self.title.clone()).into()
         };
-        let title_alignment = if self.center_title {
+        let title_alignment = if center_title {
             Alignment::CENTER
         } else {
             Alignment::CENTER_LEFT
@@ -245,16 +274,28 @@ impl AppBar {
             row
         };
         let toolbar = Container::new()
-            .height(self.toolbar_height)
-            .padding(EdgeInsets::symmetric(16.0, 0.0))
+            .height(toolbar_height)
+            .padding(
+                inherited
+                    .padding
+                    .unwrap_or_else(|| EdgeInsets::symmetric(16.0, 0.0)),
+            )
             .color(background)
             .child(toolbar_child);
         let toolbar: Widget = Material::new(toolbar)
             .color(background)
-            .shadow_color(self.shadow_color.unwrap_or(Color::rgba(0, 0, 0, 80)))
-            .surface_tint_color(self.surface_tint_color.unwrap_or(Color::TRANSPARENT))
-            .elevation(self.elevation)
-            .border_radius(self.shape.unwrap_or(BorderRadius::ZERO))
+            .shadow_color(
+                self.shadow_color
+                    .or(inherited.shadow_color)
+                    .unwrap_or(Color::rgba(0, 0, 0, 80)),
+            )
+            .surface_tint_color(
+                self.surface_tint_color
+                    .or(inherited.surface_tint_color)
+                    .unwrap_or(Color::TRANSPARENT),
+            )
+            .elevation(self.elevation.or(inherited.elevation).unwrap_or(0.0))
+            .border_radius(self.shape.or(inherited.shape).unwrap_or(BorderRadius::ZERO))
             .into();
         // Carry AppBar foreground policy through the normal inherited text and
         // icon environments so title/action descendants resolve the same
@@ -277,7 +318,11 @@ impl From<AppBar> for Widget {
     fn from(value: AppBar) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let navigation = context.depend_on_shared::<NavigationComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                navigation.as_ref().map(|themes| &themes.app_bar_theme),
+            )
         }))
     }
 }
@@ -406,9 +451,8 @@ impl SliverAppBar {
         let height = self
             .collapsed_height
             .or(self.expanded_height)
-            .unwrap_or(self.app_bar.toolbar_height);
+            .unwrap_or(self.app_bar.toolbar_height.unwrap_or(64.0));
         let app_bar = self.app_bar.clone().toolbar_height(height);
-        let _ = (self.pinned, self.floating, self.snap, self.stretch);
         app_bar.build(theme)
     }
 }
@@ -457,7 +501,9 @@ impl SliverAppBar {
                 SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior, SliverResizingHeader,
             };
 
-            let min = self.collapsed_height.unwrap_or(self.app_bar.toolbar_height);
+            let min = self
+                .collapsed_height
+                .unwrap_or(self.app_bar.toolbar_height.unwrap_or(64.0));
             let max = self.expanded_height.unwrap_or(min).max(min);
             let behavior = match (self.pinned, floating) {
                 (false, false) => SliverHeaderScrollBehavior::Scroll,
@@ -526,7 +572,7 @@ impl SliverAppBar {
     fn resizing_child(&self) -> Widget {
         let mut app_bar = self.app_bar.clone();
         let bottom = app_bar.bottom.take();
-        let natural_toolbar = app_bar.toolbar_height;
+        let natural_toolbar = app_bar.toolbar_height.unwrap_or(64.0);
         // Flex measures the bottom first under real cross constraints, then
         // gives the toolbar the remainder when bounded. While unbounded the
         // flex children degrade to natural measurement, so resolve the
@@ -708,9 +754,10 @@ impl Scaffold {
         {
             children.push(app_bar.build(theme).with_key("scaffold-app-bar"));
         }
-        let scaffold_background = Theme::of_shared(context)
-            .map_or(theme.colors.background, |theme| {
-                theme.colors().scaffold_background_color
+        let scaffold_background = context
+            .depend_on_shared::<crate::material_theme::LegacyThemeColors>()
+            .map_or(theme.colors.background, |colors| {
+                colors.scaffold_background_color
             });
         let body = Expanded::new(
             Material::new(self.body.clone()).color(self.background.unwrap_or(scaffold_background)),

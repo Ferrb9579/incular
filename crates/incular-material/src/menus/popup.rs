@@ -4,6 +4,7 @@ use super::{
     controls::{MenuController, MenuItemButton},
     style::MenuStyle,
 };
+use crate::material_theme::MenuComponentThemes;
 use crate::surfaces::Material;
 use incular_config::{Clip, EdgeInsets};
 use incular_controls::{
@@ -751,7 +752,34 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
                 item.build_with_selection(context, Some(select.clone()), Some(close.clone()))
             })
             .collect::<Vec<Widget>>();
+        let menus = context.depend_on_shared::<MenuComponentThemes>();
         let mut style = self.menu_style.clone().unwrap_or_default();
+        if let Some(menus) = menus.as_ref() {
+            let popup = &menus.popup_menu_theme;
+            if let Some(generic) = menus.menu_theme.style.as_ref() {
+                style = style.merge(generic);
+            }
+            let mut inherited = MenuStyle::new();
+            if let Some(color) = popup.color {
+                inherited = inherited.background_color(color);
+            }
+            if let Some(shape) = popup.shape {
+                inherited = inherited.shape(shape);
+            }
+            if let Some(padding) = popup.menu_padding {
+                inherited = inherited.padding(padding);
+            }
+            if let Some(elevation) = popup.elevation {
+                inherited = inherited.elevation(elevation);
+            }
+            if let Some(color) = popup.shadow_color {
+                inherited = inherited.shadow_color(color);
+            }
+            if let Some(color) = popup.surface_tint_color {
+                inherited = inherited.surface_tint_color(color);
+            }
+            style = style.merge(&inherited);
+        }
         if let Some(padding) = self.menu_padding {
             style = style.padding(padding);
         }

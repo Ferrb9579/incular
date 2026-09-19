@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use crate::material_theme::{ComponentThemeData, NavigationComponentThemes};
 use crate::{
     BottomNavigationBarType, K_BOTTOM_NAVIGATION_BAR_HEIGHT, NavigationDestinationLabelBehavior,
     TextButton,
@@ -124,8 +125,25 @@ impl BottomNavigationBar {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let selected = self.current_index.min(self.items.len().saturating_sub(1));
-        let accent = theme.colors.accent;
+        let accent = inherited
+            .selected_item_color
+            .or(inherited.selected_icon_color)
+            .or(inherited.label_color)
+            .unwrap_or(theme.colors.accent);
+        let unselected = inherited
+            .unselected_item_color
+            .or(inherited.unselected_label_color)
+            .unwrap_or(theme.colors.foreground_muted);
         let children = self.items.iter().enumerate().map(|(index, item)| {
             let icon = if index == selected {
                 item.active_icon
@@ -137,7 +155,7 @@ impl BottomNavigationBar {
             let label = Text::new(item.label.clone()).color(if index == selected {
                 accent
             } else {
-                theme.colors.foreground_muted
+                unselected
             });
             let child: Widget = Column::new([icon, label.into()])
                 .spacing(2.0)
@@ -160,8 +178,20 @@ impl BottomNavigationBar {
             .main_axis_alignment(MainAxisAlignment::SpaceEvenly)
             .cross_axis_alignment(CrossAxisAlignment::Center);
         Container::new()
-            .height(K_BOTTOM_NAVIGATION_BAR_HEIGHT)
-            .color(self.background.unwrap_or(theme.colors.surface))
+            .height(
+                inherited
+                    .minimum_size
+                    .map(|size| size.height)
+                    .or_else(|| inherited.min_size.map(|size| size.height))
+                    .unwrap_or(K_BOTTOM_NAVIGATION_BAR_HEIGHT),
+            )
+            .color(
+                self.background
+                    .or(inherited.background_color)
+                    .or(inherited.color)
+                    .or(inherited.surface_color)
+                    .unwrap_or(theme.colors.surface),
+            )
             .child(row)
             .into()
     }
@@ -171,7 +201,13 @@ impl From<BottomNavigationBar> for Widget {
     fn from(value: BottomNavigationBar) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let navigation = context.depend_on_shared::<NavigationComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                navigation
+                    .as_ref()
+                    .map(|themes| &themes.bottom_navigation_bar_theme),
+            )
         }))
     }
 }
@@ -288,6 +324,12 @@ impl NavigationBar {
     }
 
     fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
+        let navigation = context.depend_on_shared::<NavigationComponentThemes>();
+        let inherited = navigation
+            .as_ref()
+            .map(|themes| themes.navigation_bar_theme.clone())
+            .unwrap_or_default();
+        let controls = current_control_theme(context);
         let selected = self
             .selected_index
             .min(self.destinations.len().saturating_sub(1));
@@ -309,8 +351,19 @@ impl NavigationBar {
                         behavior,
                         NavigationDestinationLabelBehavior::OnlyShowSelected
                     ) && index == selected);
+                let label_color = if index == selected {
+                    inherited
+                        .label_color
+                        .or(inherited.selected_item_color)
+                        .unwrap_or(controls.colors.accent)
+                } else {
+                    inherited
+                        .unselected_label_color
+                        .or(inherited.unselected_item_color)
+                        .unwrap_or(controls.colors.foreground_muted)
+                };
                 let child: Widget = if show_label {
-                    Column::new([icon, Text::new(item.label).into()])
+                    Column::new([icon, Text::new(item.label).color(label_color).into()])
                         .spacing(2.0)
                         .into()
                 } else {
@@ -325,8 +378,20 @@ impl NavigationBar {
                 Widget::from(button)
             });
         Container::new()
-            .height(80.0)
-            .color(current_control_theme(context).colors.surface)
+            .height(
+                inherited
+                    .minimum_size
+                    .map(|size| size.height)
+                    .or_else(|| inherited.min_size.map(|size| size.height))
+                    .unwrap_or(80.0),
+            )
+            .color(
+                inherited
+                    .background_color
+                    .or(inherited.color)
+                    .or(inherited.surface_color)
+                    .unwrap_or(controls.colors.surface),
+            )
             .child(Row::new(children).main_axis_alignment(MainAxisAlignment::SpaceEvenly))
             .into()
     }

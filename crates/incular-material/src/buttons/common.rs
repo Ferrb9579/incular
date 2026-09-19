@@ -1,9 +1,11 @@
 //! Shared button construction, theme resolution, and layout policy.
 
 use super::style::ButtonKind;
-use crate::material_theme::{ComponentThemeData, Theme, ThemeData};
+use crate::material_theme::{
+    ButtonComponentThemes, ComponentThemeData, CoreThemeData, Theme, ThemeData,
+};
 use incular_config::{Constraints, CrossAxisAlignment};
-use incular_controls::{Button as ControlButton, ControlTheme};
+use incular_controls::{Button as ControlButton, ControlTheme, current_control_theme};
 use incular_core::{Color, Size};
 use incular_widgets::{Border, Container, Row, SizedBox, Widget};
 use std::rc::Rc;
@@ -201,8 +203,10 @@ impl ButtonSpec {
             .filter(|label| !label.trim().is_empty())
             .or_else(|| spec.child.as_ref().and_then(Widget::semantic_text));
         let widget = Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            let theme = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
-            let controls_theme = theme.control_theme();
+            let _ = context.depend_on_shared::<CoreThemeData>();
+            let _ = context.depend_on_shared::<ButtonComponentThemes>();
+            let theme = Theme::find_shared(context).unwrap_or_else(ThemeData::light_shared);
+            let controls_theme = current_control_theme(context);
             spec.build(&theme, &controls_theme)
         }));
         match semantic_label {

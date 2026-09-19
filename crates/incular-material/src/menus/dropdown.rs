@@ -7,6 +7,7 @@ use super::{
     style::MenuStyle,
 };
 use crate::inputs::{InputDecoration, InputDecorationThemeData};
+use crate::material_theme::MenuComponentThemes;
 use crate::{DropdownMenuCloseBehavior, TextField};
 use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets};
 use incular_controls::{ButtonStyle, ControlIcon, current_control_theme};
@@ -424,42 +425,45 @@ impl<T> DropdownButtonFormField<T> {
         self
     }
 
-    /// Registers this descriptor's selection with a core [`Form`].
+    /// Registers this descriptor's typed selection with a core [`Form`].
     ///
-    /// The form field stores the selected entry's rendered text, so
-    /// [`Form::save`] revalidates and dispatches [`Self::on_saved`] with the
-    /// currently selected value. Unselected fields save `None`.
+    /// The text-backed form registry stores the selected *entry index* as its
+    /// opaque token. Display labels are presentation only and may legitimately
+    /// be duplicated; they are never used to recover typed identity.
     pub fn register_with_form(&self, form: &Form) -> incular_widgets::FormField
     where
         T: Clone + PartialEq + 'static,
     {
-        let selected_text = self.dropdown.value.as_ref().and_then(|selected| {
+        let selected_index = self.dropdown.value.as_ref().and_then(|selected| {
             self.dropdown
                 .items
                 .iter()
-                .find(|item| item.item_value() == Some(selected))
-                .and_then(|item| item.item_child().text_if_any())
+                .position(|item| item.item_value() == Some(selected))
         });
-        let controller = TextEditingController::with_text(selected_text.unwrap_or_default());
+        let controller = TextEditingController::with_text(
+            selected_index.map_or_else(String::new, |index| index.to_string()),
+        );
         let saved = self.on_saved.clone();
         let validator = self.validator.clone();
         let items = self.dropdown.items.clone();
         let mut field = form.register(controller);
         if let Some(validator) = validator {
             let items = items.clone();
-            field = field.validator(move |text| {
-                let selected = items
-                    .iter()
-                    .find(|item| item.item_child().text_if_any().as_deref() == Some(text))
+            field = field.validator(move |token| {
+                let selected = token
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| items.get(index))
                     .and_then(PopupMenuItem::item_value);
                 validator(selected)
             });
         }
         if let Some(callback) = saved {
-            field = field.on_saved(move |text| {
-                let selected = items
-                    .iter()
-                    .find(|item| item.item_child().text_if_any().as_deref() == Some(&text))
+            field = field.on_saved(move |token| {
+                let selected = token
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| items.get(index))
                     .and_then(PopupMenuItem::item_value);
                 callback(selected)
             });
@@ -468,6 +472,9 @@ impl<T> DropdownButtonFormField<T> {
     }
 }
 
+/// Presentation-only conversion. Form lifecycle callbacks such as `on_saved`
+/// execute only after explicit [`DropdownButtonFormField::register_with_form`]
+/// registration, because an ordinary widget conversion has no form owner.
 impl<T: Clone + PartialEq + 'static> From<DropdownButtonFormField<T>> for Widget {
     fn from(value: DropdownButtonFormField<T>) -> Self {
         let mut children = Vec::new();
@@ -490,7 +497,6 @@ impl<T: Clone + PartialEq + 'static> From<DropdownButtonFormField<T>> for Widget
         {
             children.push(Text::new(helper).into());
         }
-        let _ = value.on_saved;
         Column::new(children)
             .spacing(4.0)
             .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -765,6 +771,11 @@ impl<T: Clone + PartialEq + 'static> From<DropdownMenu<T>> for Widget {
 impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
     fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
         let theme = current_control_theme(context);
+        let menus = context.depend_on_shared::<MenuComponentThemes>();
+        let dropdown_theme = menus
+            .as_ref()
+            .map(|menus| menus.dropdown_menu_theme.clone())
+            .unwrap_or_default();
         let query = self.controller.text().to_lowercase();
         let visible = self
             .entries
@@ -824,6 +835,15 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
             })
             .collect::<Vec<Widget>>();
         let mut style = self.menu_style.clone().unwrap_or_default();
+        if let Some(inherited) = dropdown_theme.menu_style.as_ref() {
+            style = style.merge(inherited);
+        }
+        if let Some(generic) = menus
+            .as_ref()
+            .and_then(|menus| menus.menu_theme.style.as_ref())
+        {
+            style = style.merge(generic);
+        }
         if let Some(width) = self.width {
             style = style.fixed_size(Size::new(width, f32::INFINITY));
         }
@@ -846,7 +866,11 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
         if let Some(error) = self.error_text.clone() {
             decoration = decoration.error(error);
         }
-        if let Some(theme_data) = self.input_decoration_theme.as_ref() {
+        if let Some(theme_data) = self
+            .input_decoration_theme
+            .as_ref()
+            .or(dropdown_theme.input_decoration_theme.as_ref())
+        {
             decoration = decoration.merge(&InputDecoration::default());
             if let Some(filled) = theme_data.filled {
                 decoration = decoration.filled(filled);
@@ -881,6 +905,16 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
             .read_only(self.select_only || !self.enable_search)
             .can_request_focus(request_focus)
             .enabled(self.enabled);
+        if let Some(style) = dropdown_theme.text_style.clone() {
+            let style = if self.enabled {
+                style
+            } else if let Some(color) = dropdown_theme.disabled_color {
+                style.color(color)
+            } else {
+                style
+            };
+            field = field.style(style);
+        }
         if let Some(width) = self.width {
             field = field.size(Size::new(width, 0.0));
         }

@@ -4,6 +4,7 @@ use incular_widgets::internal::{
     ActionInteractionController, ActionInteractionState, ActionSurface,
 };
 use incular_widgets::{Widget, internal::WidgetTree};
+use std::time::{Duration, Instant};
 
 #[test]
 fn interaction_controller_notifies_only_on_effective_changes() {
@@ -63,4 +64,40 @@ fn independently_mounted_actions_do_not_share_interaction_state() {
         .expect("interact first");
     assert!(first.state().hovered && first.state().pressed);
     assert_eq!(second.state(), ActionInteractionState::default());
+}
+
+#[test]
+fn unmounted_presentation_has_no_subscriptions_or_animation_work() {
+    let controller = ActionInteractionController::new();
+    let revision = controller.revision();
+    let mut tree = WidgetTree::new();
+    let action = tree
+        .mount(Widget::from(
+            ActionSurface::new("Action")
+                .interaction_controller(controller.clone())
+                .size(Size::new(80.0, 32.0)),
+        ))
+        .expect("mount action");
+    tree.layout(Constraints::loose(Size::new(120.0, 60.0)))
+        .expect("layout");
+    tree.set_button_interaction(action, Some(true), Some(true), Some(true))
+        .expect("present interaction");
+    assert_eq!(revision.get(), 1);
+
+    tree.mount(incular_widgets::SizedBox::shrink().into())
+        .expect("replace and unmount action");
+    assert!(!tree.element_exists(action));
+    let before = tree.diagnostics().animation_ticks;
+    let origin = Instant::now();
+    tree.update_compositor(origin)
+        .expect("idle compositor update");
+    tree.update_compositor(origin + Duration::from_secs(1))
+        .expect("later idle compositor update");
+
+    assert_eq!(tree.diagnostics().animation_ticks, before);
+    assert_eq!(
+        revision.get(),
+        1,
+        "detached action cannot publish new presentation"
+    );
 }

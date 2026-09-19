@@ -1,7 +1,9 @@
 use std::rc::Rc;
 
 use super::Material;
-use crate::material_theme::helpers::finite_non_negative;
+use crate::material_theme::{
+    ComponentThemeData, SurfaceComponentThemes, helpers::finite_non_negative,
+};
 use incular_config::{Alignment, Clip, EdgeInsets, StackFit};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;
@@ -95,22 +97,22 @@ pub struct Card {
     shadow_color: Option<Color>,
     #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
-    #[builder(default = 1.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    elevation: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    elevation: Option<f32>,
     #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     radius: Option<f32>,
     #[builder(default, setter(strip_option))]
     shape: Option<BorderRadius>,
-    #[builder(default = Some(EdgeInsets::all(16.0)))]
+    #[builder(default)]
     padding: Option<EdgeInsets>,
     #[builder(default, setter(strip_option))]
     margin: Option<EdgeInsets>,
     #[builder(default, setter(strip_option))]
     border: Option<Border>,
-    #[builder(default = Clip::None)]
-    clip_behavior: Clip,
-    #[builder(default)]
-    border_on_foreground: bool,
+    #[builder(default, setter(transform = |value: Clip| Some(value)))]
+    clip_behavior: Option<Clip>,
+    #[builder(default, setter(transform = |value: bool| Some(value)))]
+    border_on_foreground: Option<bool>,
     #[builder(default = true)]
     semantic_container: bool,
 }
@@ -124,14 +126,14 @@ impl Card {
             color: None,
             shadow_color: None,
             surface_tint_color: None,
-            elevation: 1.0,
+            elevation: None,
             radius: None,
             shape: None,
-            padding: Some(EdgeInsets::all(16.0)),
+            padding: None,
             margin: None,
             border: None,
-            clip_behavior: Clip::None,
-            border_on_foreground: false,
+            clip_behavior: None,
+            border_on_foreground: None,
             semantic_container: true,
         }
     }
@@ -178,7 +180,7 @@ impl Card {
 
     #[must_use]
     pub fn elevation(mut self, elevation: f32) -> Self {
-        self.elevation = finite_non_negative(elevation);
+        self.elevation = Some(finite_non_negative(elevation));
         self
     }
 
@@ -216,14 +218,14 @@ impl Card {
 
     #[must_use]
     pub fn clip_behavior(mut self, clip_behavior: Clip) -> Self {
-        self.clip_behavior = clip_behavior;
+        self.clip_behavior = Some(clip_behavior);
         self
     }
 
     /// Paints the border after the content when true, before it when false.
     #[must_use]
     pub fn border_on_foreground(mut self, value: bool) -> Self {
-        self.border_on_foreground = value;
+        self.border_on_foreground = Some(value);
         self
     }
 
@@ -235,13 +237,27 @@ impl Card {
     }
 
     #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
+    pub fn build(&self, theme: &ControlTheme, inherited: Option<&ComponentThemeData>) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let radius = self
             .shape
+            .or(inherited.shape)
             .unwrap_or_else(|| BorderRadius::circular(self.radius.unwrap_or(theme.radius.md)));
-        let mut content: Widget =
-            Padding::new(self.padding.unwrap_or_default(), self.child.clone()).into();
-        if let Some(border) = self.border {
+        let padding = self
+            .padding
+            .or(inherited.padding)
+            .unwrap_or_else(|| EdgeInsets::all(16.0));
+        let border = self.border.or(inherited.side);
+        let border_on_foreground = self
+            .border_on_foreground
+            .or(inherited.border_on_foreground)
+            .unwrap_or(false);
+        let clip_behavior = self
+            .clip_behavior
+            .or(inherited.clip_behavior)
+            .unwrap_or(Clip::None);
+        let mut content: Widget = Padding::new(padding, self.child.clone()).into();
+        if let Some(border) = border {
             let decoration: Widget = Container::new()
                 .decoration(BoxDecoration::new().border(border).border_radius(radius))
                 .into();
@@ -251,7 +267,7 @@ impl Card {
             // application's child. Changing paint order must preserve its state.
             let outline = outline.with_key(0_u64);
             content = content.with_key(1_u64);
-            let layers = if self.border_on_foreground {
+            let layers = if border_on_foreground {
                 [content, outline]
             } else {
                 [outline, content]
@@ -262,12 +278,21 @@ impl Card {
                 .into();
         }
         let mut material = Material::new(content)
-            .color(self.color.unwrap_or(theme.colors.surface))
-            .elevation(self.elevation)
-            .shadow_color(self.shadow_color.unwrap_or(Color::rgba(0, 0, 0, 100)))
+            .color(
+                self.color
+                    .or(inherited.color)
+                    .or(inherited.background_color)
+                    .unwrap_or(theme.colors.surface),
+            )
+            .elevation(self.elevation.or(inherited.elevation).unwrap_or(1.0))
+            .shadow_color(
+                self.shadow_color
+                    .or(inherited.shadow_color)
+                    .unwrap_or(Color::rgba(0, 0, 0, 100)),
+            )
             .border_radius(radius)
-            .clip_behavior(self.clip_behavior);
-        if let Some(tint) = self.surface_tint_color {
+            .clip_behavior(clip_behavior);
+        if let Some(tint) = self.surface_tint_color.or(inherited.surface_tint_color) {
             material = material.surface_tint_color(tint);
         }
         let material: Widget = material.into();
@@ -279,7 +304,7 @@ impl Card {
             material
         };
         let mut surface = Container::with_child(material);
-        if let Some(margin) = self.margin {
+        if let Some(margin) = self.margin.or(inherited.margin) {
             surface = surface.margin(margin);
         }
         surface.into()
@@ -290,7 +315,11 @@ impl From<Card> for Widget {
     fn from(value: Card) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            value.build(
+                &current_control_theme(context),
+                surfaces.as_ref().map(|themes| &themes.card_theme),
+            )
         }))
     }
 }
@@ -300,8 +329,8 @@ impl From<Card> for Widget {
 pub struct Divider {
     #[builder(default, setter(strip_option))]
     color: Option<Color>,
-    #[builder(default = 1.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    thickness: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    thickness: Option<f32>,
     #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
     indent: f32,
     #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
@@ -313,7 +342,7 @@ impl Divider {
     pub fn new() -> Self {
         Self {
             color: None,
-            thickness: 1.0,
+            thickness: None,
             indent: 0.0,
             end_indent: 0.0,
         }
@@ -327,7 +356,7 @@ impl Divider {
 
     #[must_use]
     pub fn thickness(mut self, thickness: f32) -> Self {
-        self.thickness = finite_non_negative(thickness);
+        self.thickness = Some(finite_non_negative(thickness));
         self
     }
 
@@ -344,11 +373,21 @@ impl Divider {
     }
 
     #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
+    pub fn build(&self, theme: &ControlTheme, inherited: Option<&ComponentThemeData>) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
+        let thickness = self
+            .thickness
+            .or_else(|| inherited.side.map(|side| side.top.width))
+            .unwrap_or(1.0);
         Container::new()
-            .height(self.thickness.max(0.1))
+            .height(thickness.max(0.1))
             .margin(EdgeInsets::only(self.indent, 0.0, self.end_indent, 0.0))
-            .color(self.color.unwrap_or(theme.colors.border))
+            .color(
+                self.color
+                    .or(inherited.divider_color)
+                    .or(inherited.color)
+                    .unwrap_or(theme.colors.border),
+            )
             .into()
     }
 }
@@ -363,7 +402,11 @@ impl From<Divider> for Widget {
     fn from(value: Divider) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            value.build(
+                &current_control_theme(context),
+                surfaces.as_ref().map(|themes| &themes.divider_theme),
+            )
         }))
     }
 }
@@ -373,8 +416,8 @@ impl From<Divider> for Widget {
 pub struct VerticalDivider {
     #[builder(default, setter(strip_option))]
     color: Option<Color>,
-    #[builder(default = 1.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    thickness: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    thickness: Option<f32>,
     #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
     indent: f32,
     #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
@@ -386,7 +429,7 @@ impl VerticalDivider {
     pub fn new() -> Self {
         Self {
             color: None,
-            thickness: 1.0,
+            thickness: None,
             indent: 0.0,
             end_indent: 0.0,
         }
@@ -400,7 +443,7 @@ impl VerticalDivider {
 
     #[must_use]
     pub fn thickness(mut self, thickness: f32) -> Self {
-        self.thickness = finite_non_negative(thickness);
+        self.thickness = Some(finite_non_negative(thickness));
         self
     }
 
@@ -417,11 +460,21 @@ impl VerticalDivider {
     }
 
     #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
+    pub fn build(&self, theme: &ControlTheme, inherited: Option<&ComponentThemeData>) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
+        let thickness = self
+            .thickness
+            .or_else(|| inherited.side.map(|side| side.top.width))
+            .unwrap_or(1.0);
         Container::new()
-            .width(self.thickness.max(0.1))
+            .width(thickness.max(0.1))
             .margin(EdgeInsets::only(0.0, self.indent, 0.0, self.end_indent))
-            .color(self.color.unwrap_or(theme.colors.border))
+            .color(
+                self.color
+                    .or(inherited.divider_color)
+                    .or(inherited.color)
+                    .unwrap_or(theme.colors.border),
+            )
             .into()
     }
 }
@@ -436,7 +489,11 @@ impl From<VerticalDivider> for Widget {
     fn from(value: VerticalDivider) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            value.build(
+                &current_control_theme(context),
+                surfaces.as_ref().map(|themes| &themes.divider_theme),
+            )
         }))
     }
 }

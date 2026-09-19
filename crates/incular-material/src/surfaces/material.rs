@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::time::Duration;
 use typed_builder::TypedBuilder;
 
-use crate::material_theme::{Theme, helpers::mix};
+use crate::material_theme::helpers::mix;
 
 /// Material density adjustment used by layout and hit-target calculations.
 #[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
@@ -198,9 +198,11 @@ impl From<Material> for Widget {
     fn from(value: Material) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            let text_style = Theme::of_shared(context).map_or_else(TextStyle::default, |theme| {
-                theme.core().text_theme.body_medium.clone()
-            });
+            let text_style = context
+                .depend_on_shared::<crate::material_theme::CoreThemeData>()
+                .map_or_else(TextStyle::default, |core| {
+                    core.text_theme.body_medium.clone()
+                });
             let child: Widget = DefaultTextStyle::new(text_style, value.child.clone()).into();
             let mut surface_color = value.color;
             if let Some(tint) = value.surface_tint_color {

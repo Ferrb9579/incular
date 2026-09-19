@@ -684,6 +684,19 @@ impl Widget {
         })
     }
 
+    pub(crate) fn shared_environment_scope<T: Any>(value: Rc<T>, child: Self) -> Self {
+        Self::from_node(WidgetNode {
+            key: None,
+            kind: WidgetKind::LayoutBuilder {
+                builder: Rc::new(move |_, _| child.clone()),
+                environment: Some(InheritedScopeValue::from_shared(value)),
+                environment_boundary: false,
+                revision: None,
+            },
+            semantics: SemanticProperties::default(),
+        })
+    }
+
     /// Creates a transparent retained node that prevents descendants from
     /// reading typed environments installed above it.
     #[must_use]

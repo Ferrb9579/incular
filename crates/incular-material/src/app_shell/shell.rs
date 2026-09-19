@@ -1,4 +1,5 @@
 use crate::feedback::SnackBar;
+use crate::material_theme::{ComponentThemeData, NavigationComponentThemes};
 use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets, MainAxisAlignment};
 use incular_controls::overlay::Side;
 use incular_controls::{ControlTheme, current_control_theme};
@@ -25,12 +26,12 @@ pub struct BottomAppBar {
     actions: Vec<Widget>,
     #[builder(default, setter(strip_option, into))]
     floating_action_button: Option<Widget>,
-    #[builder(default = 80.0, setter(transform = |height: f32| height.max(0.0)))]
-    height: f32,
+    #[builder(default, setter(transform = |height: f32| Some(height.max(0.0))))]
+    height: Option<f32>,
     #[builder(default, setter(strip_option))]
     background: Option<Color>,
-    #[builder(default = EdgeInsets::symmetric(16.0, 8.0))]
-    padding: EdgeInsets,
+    #[builder(default, setter(transform = |padding: EdgeInsets| Some(padding)))]
+    padding: Option<EdgeInsets>,
 }
 
 /// Header surface for a Material [`Drawer`].
@@ -205,9 +206,9 @@ impl BottomAppBar {
             child: None,
             actions: Vec::new(),
             floating_action_button: None,
-            height: 80.0,
+            height: None,
             background: None,
-            padding: EdgeInsets::symmetric(16.0, 8.0),
+            padding: None,
         }
     }
 
@@ -237,7 +238,7 @@ impl BottomAppBar {
 
     #[must_use]
     pub fn height(mut self, height: f32) -> Self {
-        self.height = height.max(0.0);
+        self.height = Some(height.max(0.0));
         self
     }
 
@@ -249,20 +250,43 @@ impl BottomAppBar {
 
     #[must_use]
     pub fn padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
+        let height = self
+            .height
+            .or_else(|| inherited.minimum_size.map(|size| size.height))
+            .or_else(|| inherited.min_size.map(|size| size.height))
+            .unwrap_or(80.0);
+        let padding = self
+            .padding
+            .or(inherited.padding)
+            .unwrap_or_else(|| EdgeInsets::symmetric(16.0, 8.0));
         let mut row_children = self.actions.clone();
         if let Some(child) = self.child.clone() {
             row_children.push(child);
         }
         let bar: Widget = Container::new()
-            .height(self.height)
-            .padding(self.padding)
-            .color(self.background.unwrap_or(theme.colors.surface))
+            .height(height)
+            .padding(padding)
+            .color(
+                self.background
+                    .or(inherited.background_color)
+                    .or(inherited.color)
+                    .unwrap_or(theme.colors.surface),
+            )
             .child(
                 Row::new(row_children)
                     .spacing(8.0)
@@ -276,7 +300,7 @@ impl BottomAppBar {
                 [
                     bar,
                     incular_widgets::Positioned::new(fab)
-                        .bottom(self.height - 28.0)
+                        .bottom(height - 28.0)
                         .into(),
                 ],
             )
@@ -297,7 +321,13 @@ impl From<BottomAppBar> for Widget {
     fn from(value: BottomAppBar) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let navigation = context.depend_on_shared::<NavigationComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                navigation
+                    .as_ref()
+                    .map(|themes| &themes.bottom_app_bar_theme),
+            )
         }))
     }
 }
@@ -399,7 +429,7 @@ impl ScaffoldMessengerController {
             .as_ref()
             .is_some_and(|bar| now.saturating_duration_since(started) >= bar.duration_value());
         if expired {
-            let _ = self.hide_current_snack_bar();
+            drop(self.hide_current_snack_bar());
             true
         } else {
             false

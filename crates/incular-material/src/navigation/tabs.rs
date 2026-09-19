@@ -1,4 +1,4 @@
-use crate::material_theme::{StateProperty, Theme, ThemeData};
+use crate::material_theme::{StateProperty, ThemeData};
 use crate::{TabAlignment, TabBarIndicatorSize};
 use incular_config::{CrossAxisAlignment, MainAxisAlignment};
 use incular_core::Color;
@@ -320,8 +320,16 @@ impl TabBar {
 
 impl TabBar {
     fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
-        let theme = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
-        let tab_theme = &theme.navigation().tab_bar_theme;
+        let tab_theme = context
+            .depend_on_shared::<crate::material_theme::NavigationComponentThemes>()
+            .map(|themes| themes.tab_bar_theme.clone())
+            .unwrap_or_default();
+        let primary = context
+            .depend_on_shared::<crate::material_theme::CoreThemeData>()
+            .map_or_else(
+                || ThemeData::light().core().color_scheme.primary,
+                |core| core.color_scheme.primary,
+            );
         let selected = self
             .controller
             .as_ref()
@@ -331,7 +339,7 @@ impl TabBar {
         let indicator = self
             .indicator_color
             .or(tab_theme.indicator_color)
-            .unwrap_or(theme.core().color_scheme.primary);
+            .unwrap_or(primary);
         let indicator_weight = tab_theme.indicator_weight.unwrap_or(2.0).max(0.0);
         let scrollable = self.scrollable;
         let tab_alignment = self

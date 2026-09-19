@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
-use crate::material_theme::helpers::finite_non_negative;
+use crate::material_theme::{
+    ComponentThemeData, SurfaceComponentThemes, helpers::finite_non_negative,
+};
 use incular_config::{CrossAxisAlignment, EdgeInsets, MainAxisSize};
 use incular_controls::{ControlIcon, ControlTheme, current_control_theme};
 use incular_core::{Color, Offset};
@@ -77,10 +79,10 @@ pub struct RawChip {
     disabled_color: Option<Color>,
     #[builder(default, setter(strip_option))]
     label_style: Option<TextStyle>,
-    #[builder(default = EdgeInsets::symmetric(12.0, 6.0))]
-    padding: EdgeInsets,
-    #[builder(default = 0.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    elevation: f32,
+    #[builder(default, setter(transform = |value: EdgeInsets| Some(value)))]
+    padding: Option<EdgeInsets>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    elevation: Option<f32>,
     #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
@@ -109,8 +111,8 @@ impl RawChip {
             selected_color: None,
             disabled_color: None,
             label_style: None,
-            padding: EdgeInsets::symmetric(12.0, 6.0),
-            elevation: 0.0,
+            padding: None,
+            elevation: None,
             semantic_label: None,
         }
     }
@@ -137,7 +139,7 @@ impl RawChip {
 
     #[must_use]
     pub fn elevation_value(&self) -> f32 {
-        self.elevation
+        self.elevation.unwrap_or(0.0)
     }
 
     #[must_use]
@@ -214,13 +216,13 @@ impl RawChip {
 
     #[must_use]
     pub fn padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     #[must_use]
     pub fn elevation(mut self, elevation: f32) -> Self {
-        self.elevation = finite_non_negative(elevation);
+        self.elevation = Some(finite_non_negative(elevation));
         self
     }
 
@@ -232,12 +234,28 @@ impl RawChip {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let background = if !self.enabled {
-            self.disabled_color.unwrap_or(theme.colors.disabled_surface)
+            self.disabled_color
+                .or(inherited.disabled_color)
+                .unwrap_or(theme.colors.disabled_surface)
         } else if self.selected {
-            self.selected_color.unwrap_or(theme.colors.accent)
+            self.selected_color
+                .or(inherited.selected_item_color)
+                .unwrap_or(theme.colors.accent)
         } else {
-            self.color.unwrap_or(theme.colors.surface_variant)
+            self.color
+                .or(inherited.color)
+                .or(inherited.background_color)
+                .unwrap_or(theme.colors.surface_variant)
         };
         let foreground = if !self.enabled {
             theme.colors.disabled_foreground
@@ -257,6 +275,7 @@ impl RawChip {
         let label_style = self
             .label_style
             .clone()
+            .or(inherited.text_style.clone())
             .unwrap_or_else(|| theme.typography.body.clone())
             .color(foreground);
         children.push(Text::new(self.label.clone()).style(label_style).into());
@@ -291,20 +310,33 @@ impl RawChip {
             .spacing(6.0)
             .into();
         let decorated: Widget = Container::new()
-            .padding(self.padding)
+            .padding(
+                self.padding
+                    .or(inherited.padding)
+                    .unwrap_or_else(|| EdgeInsets::symmetric(12.0, 6.0)),
+            )
             .decoration(
                 BoxDecoration::new()
                     .color(background)
-                    .border(Border::new(1.0, theme.colors.border_subtle))
-                    .border_radius(BorderRadius::circular(999.0)),
+                    .border(
+                        inherited
+                            .side
+                            .unwrap_or_else(|| Border::new(1.0, theme.colors.border_subtle)),
+                    )
+                    .border_radius(
+                        inherited
+                            .shape
+                            .unwrap_or_else(|| BorderRadius::circular(999.0)),
+                    ),
             )
             .child(content)
             .into();
-        let decorated = if self.elevation > 0.0 {
+        let elevation = self.elevation.or(inherited.elevation).unwrap_or(0.0);
+        let decorated = if elevation > 0.0 {
             Widget::from(incular_widgets::internal::DropShadow::new(
-                Offset::new(0.0, (self.elevation * 0.2).min(8.0)),
-                (self.elevation * 0.45).clamp(1.0, 16.0),
-                Color::rgba(0, 0, 0, 64),
+                Offset::new(0.0, (elevation * 0.2).min(8.0)),
+                (elevation * 0.45).clamp(1.0, 16.0),
+                inherited.shadow_color.unwrap_or(Color::rgba(0, 0, 0, 64)),
                 decorated,
             ))
         } else {
@@ -349,7 +381,11 @@ impl From<RawChip> for Widget {
     fn from(value: RawChip) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                surfaces.as_ref().map(|themes| &themes.chip_theme),
+            )
         }))
     }
 }

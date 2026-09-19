@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use super::helpers::{blend_color, finite_non_negative, semantic_state};
+use crate::material_theme::{ComponentThemeData, SurfaceComponentThemes};
 use incular_config::{
     Alignment, Clip, CrossAxisAlignment, EdgeInsets, MainAxisAlignment, MainAxisSize,
 };
@@ -27,16 +28,16 @@ pub struct Dialog {
     background_color: Option<Color>,
     #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
-    #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    elevation: f32,
-    #[builder(default = EdgeInsets::symmetric(40.0, 24.0))]
-    inset_padding: EdgeInsets,
-    #[builder(default = BorderRadius::circular(4.0))]
-    shape: BorderRadius,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    elevation: Option<f32>,
+    #[builder(default, setter(transform = |value: EdgeInsets| Some(value)))]
+    inset_padding: Option<EdgeInsets>,
+    #[builder(default, setter(transform = |value: BorderRadius| Some(value)))]
+    shape: Option<BorderRadius>,
     #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
-    #[builder(default = Clip::None)]
-    clip_behavior: Clip,
+    #[builder(default, setter(transform = |value: Clip| Some(value)))]
+    clip_behavior: Option<Clip>,
     #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
@@ -66,18 +67,18 @@ pub struct AlertDialog {
     background_color: Option<Color>,
     #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
-    #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    elevation: f32,
-    #[builder(default = EdgeInsets::symmetric(40.0, 24.0))]
-    inset_padding: EdgeInsets,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    elevation: Option<f32>,
+    #[builder(default, setter(transform = |value: EdgeInsets| Some(value)))]
+    inset_padding: Option<EdgeInsets>,
     #[builder(default, setter(strip_option))]
     title_padding: Option<EdgeInsets>,
     #[builder(default, setter(strip_option))]
     content_padding: Option<EdgeInsets>,
     #[builder(default = EdgeInsets::symmetric(24.0, 8.0))]
     actions_padding: EdgeInsets,
-    #[builder(default = BorderRadius::circular(4.0))]
-    shape: BorderRadius,
+    #[builder(default, setter(transform = |value: BorderRadius| Some(value)))]
+    shape: Option<BorderRadius>,
     #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
     #[builder(default, setter(strip_option, into))]
@@ -100,12 +101,12 @@ impl AlertDialog {
             scrollable: false,
             background_color: None,
             surface_tint_color: None,
-            elevation: 24.0,
-            inset_padding: EdgeInsets::symmetric(40.0, 24.0),
+            elevation: None,
+            inset_padding: None,
             title_padding: None,
             content_padding: None,
             actions_padding: EdgeInsets::symmetric(24.0, 8.0),
-            shape: BorderRadius::circular(4.0),
+            shape: None,
             alignment: Alignment::CENTER,
             semantic_label: None,
         }
@@ -160,13 +161,13 @@ impl AlertDialog {
 
     #[must_use]
     pub fn elevation(mut self, value: f32) -> Self {
-        self.elevation = finite_non_negative(value);
+        self.elevation = Some(finite_non_negative(value));
         self
     }
 
     #[must_use]
     pub fn inset_padding(mut self, value: EdgeInsets) -> Self {
-        self.inset_padding = value;
+        self.inset_padding = Some(value);
         self
     }
 
@@ -190,7 +191,7 @@ impl AlertDialog {
 
     #[must_use]
     pub fn shape(mut self, value: BorderRadius) -> Self {
-        self.shape = value;
+        self.shape = Some(value);
         self
     }
 
@@ -206,7 +207,11 @@ impl AlertDialog {
         self
     }
 
-    fn build(&self, theme: &ControlTheme) -> Widget {
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
         let mut children: Vec<Widget> = Vec::with_capacity(3);
         if let Some(title) = self.title.clone() {
             children.push(
@@ -250,23 +255,28 @@ impl AlertDialog {
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .into();
         let mut dialog = Dialog::new(content)
-            .background_color(
-                self.background_color
-                    .unwrap_or(theme.colors.surface_elevated),
-            )
-            .elevation(self.elevation)
-            .inset_padding(self.inset_padding)
-            .shape(self.shape)
             .alignment(self.alignment)
             .semantic_label(
                 self.semantic_label
                     .clone()
                     .unwrap_or_else(|| "Alert dialog".to_owned()),
             );
+        if let Some(color) = self.background_color {
+            dialog = dialog.background_color(color);
+        }
+        if let Some(elevation) = self.elevation {
+            dialog = dialog.elevation(elevation);
+        }
+        if let Some(padding) = self.inset_padding {
+            dialog = dialog.inset_padding(padding);
+        }
+        if let Some(shape) = self.shape {
+            dialog = dialog.shape(shape);
+        }
         if let Some(tint) = self.surface_tint_color {
             dialog = dialog.surface_tint_color(tint);
         }
-        dialog.build(theme)
+        dialog.build_with_theme(theme, inherited)
     }
 }
 
@@ -274,7 +284,10 @@ impl From<AlertDialog> for Widget {
     fn from(value: AlertDialog) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            let theme = current_control_theme(context);
+            let inherited = surfaces.as_ref().map(|themes| &themes.dialog_theme);
+            value.build_with_theme(&theme, inherited)
         }))
     }
 }
@@ -287,11 +300,11 @@ impl Dialog {
             child: child.into(),
             background_color: None,
             surface_tint_color: None,
-            elevation: 24.0,
-            inset_padding: EdgeInsets::symmetric(40.0, 24.0),
-            shape: BorderRadius::circular(4.0),
+            elevation: None,
+            inset_padding: None,
+            shape: None,
             alignment: Alignment::CENTER,
-            clip_behavior: Clip::None,
+            clip_behavior: None,
             semantic_label: None,
         }
     }
@@ -328,25 +341,25 @@ impl Dialog {
 
     #[must_use]
     pub fn elevation(mut self, elevation: f32) -> Self {
-        self.elevation = finite_non_negative(elevation);
+        self.elevation = Some(finite_non_negative(elevation));
         self
     }
 
     #[must_use]
     pub fn inset_padding(mut self, padding: EdgeInsets) -> Self {
-        self.inset_padding = padding;
+        self.inset_padding = Some(padding);
         self
     }
 
     #[must_use]
     pub fn shape(mut self, shape: BorderRadius) -> Self {
-        self.shape = shape;
+        self.shape = Some(shape);
         self
     }
 
     #[must_use]
     pub fn radius(mut self, radius: f32) -> Self {
-        self.shape = BorderRadius::circular(finite_non_negative(radius));
+        self.shape = Some(BorderRadius::circular(finite_non_negative(radius)));
         self
     }
 
@@ -358,7 +371,7 @@ impl Dialog {
 
     #[must_use]
     pub fn clip_behavior(mut self, clip_behavior: Clip) -> Self {
-        self.clip_behavior = clip_behavior;
+        self.clip_behavior = Some(clip_behavior);
         self
     }
 
@@ -371,32 +384,62 @@ impl Dialog {
     /// Materializes this dialog using the current control theme.
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
+        let elevation = self.elevation.or(inherited.elevation).unwrap_or(24.0);
+        let shape = self
+            .shape
+            .or(inherited.shape)
+            .unwrap_or_else(|| BorderRadius::circular(4.0));
+        let clip_behavior = self
+            .clip_behavior
+            .or(inherited.clip_behavior)
+            .unwrap_or(Clip::None);
+        let inset_padding = self
+            .inset_padding
+            .or(inherited.margin)
+            .unwrap_or_else(|| EdgeInsets::symmetric(40.0, 24.0));
         let mut surface_color = self
             .background_color
+            .or(inherited.background_color)
+            .or(inherited.color)
             .unwrap_or(theme.colors.surface_elevated);
-        if let Some(tint) = self.surface_tint_color {
+        if let Some(tint) = self.surface_tint_color.or(inherited.surface_tint_color) {
             // Material surface tint is intentionally subtle at the default
             // elevation. The blend stays renderer-independent and keeps the
             // descriptor useful to non-GPU hosts.
-            surface_color = blend_color(surface_color, tint, (self.elevation / 24.0) * 0.12);
+            surface_color = blend_color(surface_color, tint, (elevation / 24.0) * 0.12);
         }
 
         let surface: Widget = Container::with_child(self.child.clone())
             .color(surface_color)
-            .decoration(BoxDecoration::new().border_radius(self.shape))
-            .clip_behavior(self.clip_behavior)
+            .decoration(
+                BoxDecoration::new().border_radius(shape).border(
+                    inherited
+                        .side
+                        .unwrap_or_else(|| incular_widgets::Border::new(0.0, Color::TRANSPARENT)),
+                ),
+            )
+            .clip_behavior(clip_behavior)
             .into();
-        let surface = if self.elevation > 0.0 {
+        let surface = if elevation > 0.0 {
             Widget::from(incular_widgets::internal::DropShadow::new(
-                Offset::new(0.0, self.elevation * 0.16),
-                (self.elevation * 0.45).max(1.0),
-                Color::rgba(0, 0, 0, 90),
+                Offset::new(0.0, elevation * 0.16),
+                (elevation * 0.45).max(1.0),
+                inherited.shadow_color.unwrap_or(Color::rgba(0, 0, 0, 90)),
                 surface,
             ))
         } else {
             surface
         };
-        let surface = Padding::new(self.inset_padding, surface);
+        let surface = Padding::new(inset_padding, surface);
         let mut semantics = Semantics::new(surface)
             .role(SemanticRole::Dialog)
             .state(semantic_state(true))
@@ -412,7 +455,11 @@ impl From<Dialog> for Widget {
     fn from(value: Dialog) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                surfaces.as_ref().map(|themes| &themes.dialog_theme),
+            )
         }))
     }
 }

@@ -1,14 +1,13 @@
 use crate::SliderInteraction;
-use crate::material_theme::{StateProperty, Theme, WidgetState, WidgetStates};
+use crate::material_theme::{StateProperty, WidgetState, WidgetStates};
 use incular_config::EdgeInsets;
-use incular_controls::current_control_theme;
-use incular_core::{Color, KeyboardKey, NamedKey};
-use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
+use incular_controls::slider::{RangeSliderModel, RangeThumb, RangeValues as ControlRangeValues};
+use incular_core::{Color, KeyboardEvent, KeyboardKey, NamedKey};
+use incular_semantics::{Role as SemanticRole, SemanticAction, SemanticState};
 use incular_text::TextStyle;
-use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{
     Border, Container, FocusNode, GestureDetector, HitTestBehavior, KeyboardListener, Positioned,
-    Stack, Widget,
+    Semantics, Stack, TapUpDetails, Widget,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -413,6 +412,7 @@ impl From<Slider> for Widget {
                 SliderInteraction::TapOnly => (true, false),
                 SliderInteraction::SlideOnly | SliderInteraction::SlideThumb => (false, true),
             };
+            let (theme, selection) = super::resolved_control_theme(context);
             let mut root = incular_controls::slider::Root::new()
                 .range(value.min, value.max)
                 .step(step)
@@ -429,8 +429,8 @@ impl From<Slider> for Widget {
             if let Some(label) = value.label.clone() {
                 root = root.semantic_value(label);
             }
-            if let Some(theme) = Theme::of_shared(context) {
-                let slider_theme = &theme.selection_controls().slider_theme;
+            if let Some(selection) = selection.as_ref() {
+                let slider_theme = &selection.slider_theme;
                 let state = if value.enabled {
                     WidgetStates::default()
                 } else {
@@ -482,7 +482,7 @@ impl From<Slider> for Widget {
             if let Some(callback) = value.on_change_end {
                 root = root.on_change_end(move |next| callback(next));
             }
-            root.into()
+            root.build(&theme)
         }))
     }
 }
@@ -657,12 +657,7 @@ impl RangeSlider {
 
 impl From<RangeSlider> for Widget {
     fn from(value: RangeSlider) -> Self {
-        // `incular-controls` currently exposes the single-thumb slider.  The
-        // Material range adapter owns only the coordination of two thumbs and
-        // delegates gesture recognition to the same retained GestureDetector
-        // primitive, so focus/semantics/layout still follow the shared stack.
         let initial_values = value.values.normalized();
-        let revision = Rc::new(Cell::new(0_u64));
         let min = value.min.min(value.max);
         let max = value.max.max(value.min);
         let span = (max - min).max(f32::EPSILON);
@@ -671,360 +666,354 @@ impl From<RangeSlider> for Widget {
             .map(|count| span / count.max(1) as f32)
             .unwrap_or(0.01);
         let minimum_separation = value.minimum_separation.unwrap_or(0.0).min(span);
-        let initial_start = initial_values.start.clamp(min, max);
-        let initial_end = initial_values
-            .end
-            .clamp((initial_start + minimum_separation).min(max), max);
-        let current = Rc::new(Cell::new(RangeValues::new(initial_start, initial_end)));
-        let active_thumb = Rc::new(Cell::new(true));
+        let model = RangeSliderModel::new(
+            ControlRangeValues::new(initial_values.start, initial_values.end),
+            min,
+            max,
+            step,
+            minimum_separation,
+        );
+        let revision = model.revision();
         let start_dragging = Rc::new(Cell::new(false));
         let end_dragging = Rc::new(Cell::new(false));
-        let start_drag_origin = Rc::new(Cell::new(None::<RangeValues>));
-        let end_drag_origin = Rc::new(Cell::new(None::<RangeValues>));
+        let start_drag_origin = Rc::new(Cell::new(None::<ControlRangeValues>));
+        let end_drag_origin = Rc::new(Cell::new(None::<ControlRangeValues>));
         let on_changed = value.on_changed;
         let on_start = value.on_change_start;
         let on_end = value.on_change_end;
         let enabled = value.enabled;
         let labels = value.labels;
         let rtl = value.rtl;
-        let focus_node = value.focus_node;
+        let start_focus = value.focus_node.unwrap_or_default();
+        let end_focus = FocusNode::new();
         let autofocus = value.autofocus;
-        let keyboard_quantize: Rc<dyn Fn(f32) -> f32> = Rc::new(move |raw: f32| {
-            ((raw.clamp(min, max) - min) / step)
-                .round()
-                .mul_add(step, min)
-                .clamp(min, max)
-        });
-        let keyboard_on_changed = on_changed.clone();
-        let keyboard_on_start = on_start.clone();
-        let keyboard_on_end = on_end.clone();
-        let content = {
-            // The retained builder is an `Fn` and may run for many frames;
-            // give it its own cheap `Rc` handles so keyboard state remains
-            // available after the first materialization.
-            let current = current.clone();
-            let revision = revision.clone();
-            let active_thumb = active_thumb.clone();
-            let start_dragging = start_dragging.clone();
-            let end_dragging = end_dragging.clone();
-            let start_drag_origin = start_drag_origin.clone();
-            let end_drag_origin = end_drag_origin.clone();
-            Widget::stateful_layout_builder(revision.clone(), move |context, constraints| {
-                // Use the available width when the parent is bounded, while
-                // retaining a compact intrinsic size for unconstrained overlays.
-                let track_width = if constraints.max_width().is_finite() {
-                    constraints.max_width().clamp(1.0, 480.0)
-                } else {
-                    180.0
-                };
-                let theme = current_control_theme(context);
-                let track_height = theme.slider.track_height.max(1.0);
-                let thumb_size = theme.slider.thumb_size.max(track_height);
-                let active_color = theme.colors.accent;
-                let inactive_color = theme.colors.border_strong;
-                let disabled_color = theme.colors.disabled_foreground;
-                let quantize: Rc<dyn Fn(f32) -> f32> = Rc::new(move |raw: f32| {
-                    ((raw.clamp(min, max) - min) / step)
-                        .round()
-                        .mul_add(step, min)
-                        .clamp(min, max)
+        let model_for_build = model.clone();
+        Widget::stateful_layout_builder(revision, move |context, constraints| {
+            let track_width = if constraints.max_width().is_finite() {
+                constraints.max_width().clamp(1.0, 480.0)
+            } else {
+                180.0
+            };
+            let (theme, selection) = super::resolved_control_theme(context);
+            let track_height = theme.slider.track_height.max(1.0);
+            let thumb_size = theme.slider.thumb_size.max(track_height);
+            let states = if enabled {
+                WidgetStates::default()
+            } else {
+                WidgetStates::default().with(WidgetState::Disabled)
+            };
+            let slider_theme = selection.as_ref().map(|selection| &selection.slider_theme);
+            let active_color = slider_theme
+                .and_then(|theme| theme.active_track_color.as_ref())
+                .map_or(theme.colors.accent, |property| property.resolve(states));
+            let inactive_color = slider_theme
+                .and_then(|theme| theme.inactive_track_color.as_ref())
+                .map_or(theme.colors.border_strong, |property| {
+                    property.resolve(states)
                 });
-                let values = current.get().normalized();
-                let start_ratio = ((values.start - min) / span).clamp(0.0, 1.0);
-                let end_ratio = ((values.end - min) / span).clamp(0.0, 1.0);
-                let track = Container::new()
-                    .width(track_width)
-                    .height(track_height)
-                    .radius(track_height * 0.5)
-                    .color(if enabled {
-                        inactive_color
-                    } else {
-                        disabled_color
-                    });
-                let active = Container::new()
-                    .width((end_ratio - start_ratio) * track_width)
-                    .height(track_height)
-                    .radius(track_height * 0.5)
-                    .color(if enabled {
-                        active_color
-                    } else {
-                        disabled_color
-                    });
-                let thumb = |selected: bool| {
-                    Container::new()
-                        .width(thumb_size)
-                        .height(thumb_size)
-                        .radius(thumb_size * 0.5)
-                        .color(if selected {
+            let thumb_color = slider_theme
+                .and_then(|theme| theme.thumb_color.as_ref())
+                .map_or(theme.colors.surface, |property| property.resolve(states));
+            let disabled_color = if enabled {
+                theme.colors.disabled_foreground
+            } else {
+                slider_theme
+                    .and_then(|theme| theme.disabled_inactive_track_color)
+                    .unwrap_or(theme.colors.disabled_foreground)
+            };
+            let values = model_for_build.values();
+            let start_ratio = ((values.start - min) / span).clamp(0.0, 1.0);
+            let end_ratio = ((values.end - min) / span).clamp(0.0, 1.0);
+
+            let track = Container::new()
+                .width(track_width)
+                .height(track_height)
+                .radius(track_height * 0.5)
+                .color(if enabled {
+                    inactive_color
+                } else {
+                    disabled_color
+                });
+            let active = Container::new()
+                .width((end_ratio - start_ratio) * track_width)
+                .height(track_height)
+                .radius(track_height * 0.5)
+                .color(if enabled {
+                    active_color
+                } else {
+                    disabled_color
+                });
+            let thumb = || {
+                Container::new()
+                    .width(thumb_size)
+                    .height(thumb_size)
+                    .radius(thumb_size * 0.5)
+                    .color(thumb_color)
+                    .border(Border::new(
+                        1.0,
+                        if enabled {
                             active_color
                         } else {
-                            theme.colors.surface
-                        })
-                        .border(Border::new(
-                            1.0,
-                            if enabled {
-                                active_color
-                            } else {
-                                disabled_color
-                            },
-                        ))
-                };
+                            disabled_color
+                        },
+                    ))
+            };
 
-                let track_active_thumb = active_thumb.clone();
-                let track_hit: Widget = GestureDetector::new(
-                    Container::new()
-                        .width(track_width)
-                        .height(32.0)
-                        .color(Color::TRANSPARENT),
-                )
-                .behavior(HitTestBehavior::Opaque)
-                .on_tap({
-                    let current = current.clone();
-                    let revision = revision.clone();
-                    let on_changed = on_changed.clone();
-                    move || {
-                        if !enabled {
-                            return;
-                        }
-                        let mut next = current.get();
-                        // Accessible activation advances the nearer thumb by one
-                        // division, matching the single-slider fallback.
-                        if (next.start - min) <= (max - next.end) {
-                            next.start =
-                                (next.start + step).min((next.end - minimum_separation).max(min));
-                            track_active_thumb.set(true);
-                        } else {
-                            next.end = (next.end + step)
-                                .max(next.start + minimum_separation)
-                                .min(max);
-                            track_active_thumb.set(false);
-                        }
-                        current.set(next);
-                        revision.set(revision.get().wrapping_add(1));
-                        if let Some(callback) = on_changed.as_ref() {
-                            callback(next);
-                        }
-                    }
-                })
-                .into();
-
-                let start_thumb: Widget = GestureDetector::new(thumb(false))
-                    .behavior(HitTestBehavior::Opaque)
-                    .on_horizontal_drag_update({
-                        let current = current.clone();
-                        let revision = revision.clone();
-                        let on_changed = on_changed.clone();
-                        let on_start = on_start.clone();
-                        let quantize = quantize.clone();
-                        let began = start_dragging.clone();
-                        let origin = start_drag_origin.clone();
-                        let active_thumb = active_thumb.clone();
-                        move |delta| {
-                            if !enabled {
-                                return;
-                            }
-                            if !began.replace(true) {
-                                active_thumb.set(true);
-                                origin.set(Some(current.get()));
-                                if let Some(callback) = on_start.as_ref() {
-                                    callback(current.get());
-                                }
-                            }
-                            let origin_values = origin.get().unwrap_or_else(|| current.get());
-                            let mut next = current.get();
-                            let direction = if rtl { -1.0 } else { 1.0 };
-                            next.start = quantize(
-                                origin_values.start + direction * delta.x / track_width * span,
-                            )
-                            .min((next.end - minimum_separation).max(min));
-                            if next == current.get() {
-                                return;
-                            }
-                            current.set(next);
-                            revision.set(revision.get().wrapping_add(1));
-                            if let Some(callback) = on_changed.as_ref() {
-                                callback(next);
-                            }
-                        }
-                    })
-                    .on_horizontal_drag_end({
-                        let current = current.clone();
-                        let on_end = on_end.clone();
-                        let began = start_dragging.clone();
-                        let origin = start_drag_origin.clone();
-                        move |_| {
-                            origin.set(None);
-                            if began.replace(false)
-                                && let Some(callback) = on_end.as_ref()
-                            {
-                                callback(current.get());
-                            }
-                        }
-                    })
-                    .into();
-                let end_thumb: Widget = GestureDetector::new(thumb(false))
-                    .behavior(HitTestBehavior::Opaque)
-                    .on_horizontal_drag_update({
-                        let current = current.clone();
-                        let revision = revision.clone();
-                        let on_changed = on_changed.clone();
-                        let on_start = on_start.clone();
-                        let quantize = quantize.clone();
-                        let began = end_dragging.clone();
-                        let origin = end_drag_origin.clone();
-                        let active_thumb = active_thumb.clone();
-                        move |delta| {
-                            if !enabled {
-                                return;
-                            }
-                            if !began.replace(true) {
-                                active_thumb.set(false);
-                                origin.set(Some(current.get()));
-                                if let Some(callback) = on_start.as_ref() {
-                                    callback(current.get());
-                                }
-                            }
-                            let origin_values = origin.get().unwrap_or_else(|| current.get());
-                            let mut next = current.get();
-                            let direction = if rtl { -1.0 } else { 1.0 };
-                            next.end = quantize(
-                                origin_values.end + direction * delta.x / track_width * span,
-                            )
-                            .max((next.start + minimum_separation).min(max));
-                            if next == current.get() {
-                                return;
-                            }
-                            current.set(next);
-                            revision.set(revision.get().wrapping_add(1));
-                            if let Some(callback) = on_changed.as_ref() {
-                                callback(next);
-                            }
-                        }
-                    })
-                    .on_horizontal_drag_end({
-                        let current = current.clone();
-                        let on_end = on_end.clone();
-                        let began = end_dragging.clone();
-                        let origin = end_drag_origin.clone();
-                        move |_| {
-                            origin.set(None);
-                            if began.replace(false)
-                                && let Some(callback) = on_end.as_ref()
-                            {
-                                callback(current.get());
-                            }
-                        }
-                    })
-                    .into();
-                let stack: Widget = Stack::new([
-                    Widget::from(Positioned::new(track).left(0.0).top(14.0)),
-                    Widget::from(
-                        Positioned::new(active)
-                            .left(start_ratio * track_width)
-                            .top(14.0),
-                    ),
-                    Widget::from(Positioned::new(track_hit).left(0.0).top(0.0)),
-                    Widget::from(
-                        Positioned::new(start_thumb)
-                            .left((start_ratio * track_width - thumb_size * 0.5).max(0.0))
-                            .top((14.0 + track_height * 0.5 - thumb_size * 0.5).max(0.0)),
-                    ),
-                    Widget::from(
-                        Positioned::new(end_thumb)
-                            .left((end_ratio * track_width - thumb_size * 0.5).max(0.0))
-                            .top((14.0 + track_height * 0.5 - thumb_size * 0.5).max(0.0)),
-                    ),
-                ])
-                .into();
-                let value_text = if let Some(labels) = labels.as_ref() {
-                    format!("{} – {}", labels.start, labels.end)
-                } else {
-                    format!("{:.3} – {:.3}", values.start, values.end)
-                };
-                let root: Widget = Container::new()
+            let track_hit: Widget = GestureDetector::new(
+                Container::new()
                     .width(track_width)
                     .height(32.0)
-                    .child(stack)
-                    .into();
-                root.semantics(
-                    ExplicitSemantics::new(SemanticRole::Slider)
-                        .value(value_text)
-                        .state(SemanticState {
-                            enabled,
-                            focusable: enabled,
-                            numeric_value: Some(f64::from(values.start)),
-                            numeric_min: Some(f64::from(min)),
-                            numeric_max: Some(f64::from(max)),
-                            numeric_step: Some(f64::from(step)),
-                            ..SemanticState::default()
-                        })
-                        .actions(if enabled {
-                            vec![
-                                SemanticActionKind::Focus,
-                                SemanticActionKind::Increment,
-                                SemanticActionKind::Decrement,
-                            ]
-                        } else {
-                            Vec::new()
-                        }),
-                )
+                    .color(Color::TRANSPARENT),
+            )
+            .behavior(HitTestBehavior::Opaque)
+            .on_tap_up({
+                let model = model_for_build.clone();
+                let on_changed = on_changed.clone();
+                move |details: TapUpDetails| {
+                    if !enabled {
+                        return;
+                    }
+                    let mut ratio = (details.local_position.x / track_width).clamp(0.0, 1.0);
+                    if rtl {
+                        ratio = 1.0 - ratio;
+                    }
+                    let raw = min + ratio * span;
+                    let current = model.values();
+                    let thumb = if (raw - current.start).abs() <= (raw - current.end).abs() {
+                        RangeThumb::Start
+                    } else {
+                        RangeThumb::End
+                    };
+                    if let Some(next) = model.set_thumb(thumb, raw) {
+                        notify_range(&on_changed, next);
+                    }
+                }
             })
-        };
-        if !enabled {
-            return content;
-        }
-        let keyboard_value = current.clone();
-        let keyboard_revision = revision.clone();
-        let keyboard_active_thumb = active_thumb.clone();
-        let keyboard_focus = focus_node.unwrap_or_default();
-        let keyboard_quantize = keyboard_quantize.clone();
-        KeyboardListener::new(content)
-            .focus_node(keyboard_focus)
+            .into();
+
+            let start_thumb = range_thumb_widget(
+                thumb().into(),
+                RangeThumb::Start,
+                &model_for_build,
+                track_width,
+                span,
+                rtl,
+                enabled,
+                start_focus.clone(),
+                autofocus,
+                start_dragging.clone(),
+                start_drag_origin.clone(),
+                on_start.clone(),
+                on_changed.clone(),
+                on_end.clone(),
+                labels.as_ref().map(|labels| labels.start.clone()),
+            );
+            let end_thumb = range_thumb_widget(
+                thumb().into(),
+                RangeThumb::End,
+                &model_for_build,
+                track_width,
+                span,
+                rtl,
+                enabled,
+                end_focus.clone(),
+                false,
+                end_dragging.clone(),
+                end_drag_origin.clone(),
+                on_start.clone(),
+                on_changed.clone(),
+                on_end.clone(),
+                labels.as_ref().map(|labels| labels.end.clone()),
+            );
+
+            let stack: Widget = Stack::new([
+                Widget::from(Positioned::new(track).left(0.0).top(14.0)),
+                Widget::from(
+                    Positioned::new(active)
+                        .left(start_ratio * track_width)
+                        .top(14.0),
+                ),
+                Widget::from(Positioned::new(track_hit).left(0.0).top(0.0)),
+                Widget::from(
+                    Positioned::new(start_thumb)
+                        .left((start_ratio * track_width - thumb_size * 0.5).max(0.0))
+                        .top((14.0 + track_height * 0.5 - thumb_size * 0.5).max(0.0)),
+                ),
+                Widget::from(
+                    Positioned::new(end_thumb)
+                        .left((end_ratio * track_width - thumb_size * 0.5).max(0.0))
+                        .top((14.0 + track_height * 0.5 - thumb_size * 0.5).max(0.0)),
+                ),
+            ])
+            .into();
+            Container::new()
+                .width(track_width)
+                .height(32.0)
+                .child(stack)
+                .into()
+        })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn range_thumb_widget(
+    visual: Widget,
+    thumb: RangeThumb,
+    model: &RangeSliderModel,
+    track_width: f32,
+    span: f32,
+    rtl: bool,
+    enabled: bool,
+    focus_node: FocusNode,
+    autofocus: bool,
+    dragging: Rc<Cell<bool>>,
+    drag_origin: Rc<Cell<Option<ControlRangeValues>>>,
+    on_start: Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    on_changed: Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    on_end: Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    semantic_label: Option<String>,
+) -> Widget {
+    let mut interactive: Widget = GestureDetector::new(visual)
+        .behavior(HitTestBehavior::Opaque)
+        .on_horizontal_drag_update({
+            let model = model.clone();
+            let dragging = dragging.clone();
+            let drag_origin = drag_origin.clone();
+            let on_start = on_start.clone();
+            let on_changed = on_changed.clone();
+            move |delta| {
+                if !enabled {
+                    return;
+                }
+                if !dragging.replace(true) {
+                    let origin = model.values();
+                    drag_origin.set(Some(origin));
+                    notify_range(&on_start, origin);
+                }
+                let origin = drag_origin.get().unwrap_or_else(|| model.values());
+                let direction = if rtl { -1.0 } else { 1.0 };
+                if let Some(next) =
+                    model.set_from_origin(thumb, origin, direction * delta.x / track_width * span)
+                {
+                    notify_range(&on_changed, next);
+                }
+            }
+        })
+        .on_horizontal_drag_end({
+            let model = model.clone();
+            let dragging = dragging.clone();
+            let drag_origin = drag_origin.clone();
+            let on_end = on_end.clone();
+            move |_| {
+                drag_origin.set(None);
+                if dragging.replace(false) {
+                    notify_range(&on_end, model.values());
+                }
+            }
+        })
+        .into();
+
+    if enabled {
+        let keyboard_model = model.clone();
+        let keyboard_on_start = on_start.clone();
+        let keyboard_on_changed = on_changed.clone();
+        let keyboard_on_end = on_end.clone();
+        interactive = KeyboardListener::new(interactive)
+            .focus_node(focus_node)
             .autofocus(autofocus)
             .on_key(move |event| {
-                if !event.state.is_down() {
-                    return false;
-                }
-                let action = match &event.key {
-                    KeyboardKey::Named(NamedKey::ArrowLeft) => Some(if rtl { 1.0 } else { -1.0 }),
-                    KeyboardKey::Named(NamedKey::ArrowRight) => Some(if rtl { -1.0 } else { 1.0 }),
-                    KeyboardKey::Named(NamedKey::ArrowUp) => Some(1.0),
-                    KeyboardKey::Named(NamedKey::ArrowDown) => Some(-1.0),
-                    KeyboardKey::Named(NamedKey::Home) => None,
-                    KeyboardKey::Named(NamedKey::End) => None,
-                    KeyboardKey::Character(text) if text == " " => Some(1.0),
-                    _ => return false,
-                };
-                let mut next = keyboard_value.get().normalized();
-                let start_thumb = keyboard_active_thumb.get();
-                let current_value = if start_thumb { next.start } else { next.end };
-                let target = match &event.key {
-                    KeyboardKey::Named(NamedKey::Home) => min,
-                    KeyboardKey::Named(NamedKey::End) => max,
-                    _ => current_value + action.unwrap_or(1.0) * step,
-                };
-                let target = keyboard_quantize(target);
-                if start_thumb {
-                    next.start = target.min((next.end - minimum_separation).max(min));
-                } else {
-                    next.end = target.max((next.start + minimum_separation).min(max));
-                }
-                if next == keyboard_value.get() {
-                    return true;
-                }
-                if let Some(callback) = keyboard_on_start.as_ref() {
-                    callback(next);
-                }
-                keyboard_value.set(next);
-                keyboard_revision.set(keyboard_revision.get().wrapping_add(1));
-                if let Some(callback) = keyboard_on_changed.as_ref() {
-                    callback(next);
-                }
-                if let Some(callback) = keyboard_on_end.as_ref() {
-                    callback(next);
-                }
-                true
+                handle_range_key(
+                    &event,
+                    &keyboard_model,
+                    thumb,
+                    rtl,
+                    &keyboard_on_start,
+                    &keyboard_on_changed,
+                    &keyboard_on_end,
+                )
             })
-            .into()
+            .into();
+    }
+
+    let values = model.values();
+    let numeric_value = match thumb {
+        RangeThumb::Start => values.start,
+        RangeThumb::End => values.end,
+    };
+    let value_text = semantic_label.unwrap_or_else(|| format!("{numeric_value:.3}"));
+    let mut semantics = Semantics::new(interactive)
+        .role(SemanticRole::Slider)
+        .label(match thumb {
+            RangeThumb::Start => "Range start",
+            RangeThumb::End => "Range end",
+        })
+        .value(value_text)
+        .state(SemanticState {
+            enabled,
+            focusable: enabled,
+            numeric_value: Some(f64::from(numeric_value)),
+            numeric_min: Some(f64::from(model.min())),
+            numeric_max: Some(f64::from(model.max())),
+            numeric_step: Some(f64::from(model.step())),
+            ..SemanticState::default()
+        });
+    if enabled {
+        semantics = semantics.action(SemanticAction::Focus);
+        let increase_model = model.clone();
+        let increase_changed = on_changed.clone();
+        semantics = semantics.on_increase(move || {
+            if let Some(next) = increase_model.adjust(thumb, increase_model.step()) {
+                notify_range(&increase_changed, next);
+            }
+        });
+        let decrease_model = model.clone();
+        let decrease_changed = on_changed;
+        semantics = semantics.on_decrease(move || {
+            if let Some(next) = decrease_model.adjust(thumb, -decrease_model.step()) {
+                notify_range(&decrease_changed, next);
+            }
+        });
+    }
+    semantics.into()
+}
+
+fn handle_range_key(
+    event: &KeyboardEvent,
+    model: &RangeSliderModel,
+    thumb: RangeThumb,
+    rtl: bool,
+    on_start: &Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    on_changed: &Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    on_end: &Option<Rc<dyn Fn(RangeValues) + 'static>>,
+) -> bool {
+    if !event.state.is_down() {
+        return false;
+    }
+    let before = model.values();
+    let next = match &event.key {
+        KeyboardKey::Named(NamedKey::ArrowLeft) => {
+            model.adjust(thumb, if rtl { model.step() } else { -model.step() })
+        }
+        KeyboardKey::Named(NamedKey::ArrowRight) => {
+            model.adjust(thumb, if rtl { -model.step() } else { model.step() })
+        }
+        KeyboardKey::Named(NamedKey::ArrowUp) => model.adjust(thumb, model.step()),
+        KeyboardKey::Named(NamedKey::ArrowDown) => model.adjust(thumb, -model.step()),
+        KeyboardKey::Named(NamedKey::Home) => model.set_edge(thumb, false),
+        KeyboardKey::Named(NamedKey::End) => model.set_edge(thumb, true),
+        KeyboardKey::Character(text) if text == " " => model.adjust(thumb, model.step()),
+        _ => return false,
+    };
+    if let Some(next) = next {
+        notify_range(on_start, before);
+        notify_range(on_changed, next);
+        notify_range(on_end, next);
+    }
+    true
+}
+
+fn notify_range(callback: &Option<Rc<dyn Fn(RangeValues) + 'static>>, values: ControlRangeValues) {
+    if let Some(callback) = callback {
+        callback(RangeValues::new(values.start, values.end));
     }
 }

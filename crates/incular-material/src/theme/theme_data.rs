@@ -181,6 +181,7 @@ pub struct FeedbackComponentThemes {
 struct ThemeDataInner {
     core: Rc<CoreThemeData>,
     colors: Rc<LegacyThemeColors>,
+    control_theme: Rc<ControlTheme>,
     extensions: Rc<ThemeExtensions>,
     icons_and_input: Rc<IconAndInputThemes>,
     buttons: Rc<ButtonComponentThemes>,
@@ -306,9 +307,17 @@ impl ThemeData {
         &self.inner.core
     }
 
+    pub(crate) fn core_shared(&self) -> Rc<CoreThemeData> {
+        self.inner.core.clone()
+    }
+
     #[must_use]
     pub fn colors(&self) -> &LegacyThemeColors {
         &self.inner.colors
+    }
+
+    pub(crate) fn colors_shared(&self) -> Rc<LegacyThemeColors> {
+        self.inner.colors.clone()
     }
 
     #[must_use]
@@ -321,9 +330,17 @@ impl ThemeData {
         &self.inner.icons_and_input
     }
 
+    pub(crate) fn icons_and_input_shared(&self) -> Rc<IconAndInputThemes> {
+        self.inner.icons_and_input.clone()
+    }
+
     #[must_use]
     pub fn buttons(&self) -> &ButtonComponentThemes {
         &self.inner.buttons
+    }
+
+    pub(crate) fn buttons_shared(&self) -> Rc<ButtonComponentThemes> {
+        self.inner.buttons.clone()
     }
 
     #[must_use]
@@ -331,9 +348,17 @@ impl ThemeData {
         &self.inner.navigation
     }
 
+    pub(crate) fn navigation_shared(&self) -> Rc<NavigationComponentThemes> {
+        self.inner.navigation.clone()
+    }
+
     #[must_use]
     pub fn selection_controls(&self) -> &SelectionControlThemes {
         &self.inner.selection_controls
+    }
+
+    pub(crate) fn selection_controls_shared(&self) -> Rc<SelectionControlThemes> {
+        self.inner.selection_controls.clone()
     }
 
     #[must_use]
@@ -341,9 +366,17 @@ impl ThemeData {
         &self.inner.surfaces
     }
 
+    pub(crate) fn surfaces_shared(&self) -> Rc<SurfaceComponentThemes> {
+        self.inner.surfaces.clone()
+    }
+
     #[must_use]
     pub fn content(&self) -> &ContentComponentThemes {
         &self.inner.content
+    }
+
+    pub(crate) fn content_shared(&self) -> Rc<ContentComponentThemes> {
+        self.inner.content.clone()
     }
 
     #[must_use]
@@ -351,13 +384,31 @@ impl ThemeData {
         &self.inner.menus
     }
 
+    pub(crate) fn menus_shared(&self) -> Rc<MenuComponentThemes> {
+        self.inner.menus.clone()
+    }
+
     #[must_use]
     pub fn feedback(&self) -> &FeedbackComponentThemes {
         &self.inner.feedback
     }
 
+    pub(crate) fn feedback_shared(&self) -> Rc<FeedbackComponentThemes> {
+        self.inner.feedback.clone()
+    }
+
     #[must_use]
     pub fn copy_with(mut self, patch: ThemeDataPatch) -> Self {
+        let global_control_projection_changed = patch.brightness.is_some()
+            || patch.color_scheme.is_some()
+            || patch.text_theme.is_some()
+            || patch.primary_text_theme.is_some()
+            || patch.use_material3.is_some()
+            || patch.visual_density.is_some()
+            || patch.material_tap_target_size.is_some()
+            || patch.platform.is_some()
+            || patch.page_transitions_theme.is_some()
+            || patch.splash_factory.is_some();
         let inner = Rc::make_mut(&mut self.inner);
         if patch.brightness.is_some()
             || patch.color_scheme.is_some()
@@ -377,6 +428,7 @@ impl ThemeData {
             if let Some(value) = patch.color_scheme {
                 core.brightness = value.brightness;
                 core.color_scheme = value;
+                inner.colors = default_legacy_colors(value);
             }
             if let Some(value) = patch.text_theme {
                 core.text_theme = value;
@@ -555,6 +607,9 @@ impl ThemeData {
                 group.snack_bar_theme = value;
             }
         }
+        if global_control_projection_changed {
+            refresh_control_theme(inner);
+        }
         self
     }
 
@@ -564,42 +619,56 @@ impl ThemeData {
         let core = Rc::make_mut(&mut inner.core);
         core.brightness = value.brightness;
         core.color_scheme = value;
+        inner.colors = default_legacy_colors(value);
+        refresh_control_theme(inner);
         self
     }
 
     #[must_use]
     pub fn with_use_material3(mut self, value: bool) -> Self {
-        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).use_material3 = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        Rc::make_mut(&mut inner.core).use_material3 = value;
+        refresh_control_theme(inner);
         self
     }
 
     #[must_use]
     pub fn with_visual_density(mut self, value: VisualDensity) -> Self {
-        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).visual_density = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        Rc::make_mut(&mut inner.core).visual_density = value;
+        refresh_control_theme(inner);
         self
     }
 
     #[must_use]
     pub fn with_tap_target_size(mut self, value: MaterialTapTargetSize) -> Self {
-        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).material_tap_target_size = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        Rc::make_mut(&mut inner.core).material_tap_target_size = value;
+        refresh_control_theme(inner);
         self
     }
 
     #[must_use]
     pub fn with_platform(mut self, value: TargetPlatform) -> Self {
-        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).platform = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        Rc::make_mut(&mut inner.core).platform = value;
+        refresh_control_theme(inner);
         self
     }
 
     #[must_use]
     pub fn with_page_transitions_theme(mut self, value: PageTransitionsTheme) -> Self {
-        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).page_transitions_theme = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        Rc::make_mut(&mut inner.core).page_transitions_theme = value;
+        refresh_control_theme(inner);
         self
     }
 
     #[must_use]
     pub fn with_splash_factory(mut self, value: SplashFactory) -> Self {
-        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).splash_factory = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        Rc::make_mut(&mut inner.core).splash_factory = value;
+        refresh_control_theme(inner);
         self
     }
 
@@ -644,6 +713,10 @@ impl ThemeData {
             .core()
             .visual_density
             .lerp(other.core().visual_density, t);
+        let scheme = core.color_scheme;
+        let inner = Rc::make_mut(&mut result.inner);
+        inner.colors = default_legacy_colors(scheme);
+        refresh_control_theme(inner);
         result
     }
 
@@ -651,78 +724,70 @@ impl ThemeData {
     /// the only bridge from Material defaults to headless control behavior.
     #[must_use]
     pub fn control_theme(&self) -> ControlTheme {
-        let core = self.core();
-        let colors = self.colors();
-        let mut controls = if core.brightness == Brightness::Light {
-            ControlTheme::light()
-        } else {
-            ControlTheme::dark()
-        };
-        controls = controls.with_palette(incular_controls::ControlColors {
-            background: colors.scaffold_background_color,
-            surface: core.color_scheme.surface,
-            surface_variant: core.color_scheme.surface_container,
-            surface_elevated: core.color_scheme.surface_container_high,
-            surface_active: core.color_scheme.surface_container_highest,
-            foreground: core.color_scheme.on_surface,
-            foreground_muted: core.color_scheme.on_surface_variant,
-            foreground_disabled: colors.disabled_color,
-            accent: core.color_scheme.primary,
-            accent_hover: alpha(core.color_scheme.primary, 0.92),
-            accent_active: core.color_scheme.primary_container,
-            accent_foreground: core.color_scheme.on_primary,
-            border: core.color_scheme.outline,
-            border_subtle: core.color_scheme.outline_variant,
-            border_strong: core.color_scheme.outline,
-            hover_overlay: colors.hover_color,
-            pressed_overlay: colors.splash_color,
-            focus_ring: colors.focus_color,
-            selection: alpha(core.color_scheme.primary, 0.24),
-            disabled_surface: core.color_scheme.surface_container_highest,
-            disabled_foreground: colors.disabled_color,
-            error: core.color_scheme.error,
-            warning: Color::rgba(160, 100, 0, 255),
-            success: Color::rgba(30, 120, 60, 255),
-            info: core.color_scheme.primary,
-        });
-        controls = controls.density(if core.visual_density == VisualDensity::COMPACT {
-            incular_controls::ControlDensity::Compact
-        } else if core.visual_density == VisualDensity::COMFORTABLE {
-            incular_controls::ControlDensity::Comfortable
-        } else {
-            incular_controls::ControlDensity::Standard
-        });
-        let selection = self.selection_controls();
-        if let Some(height) = selection.slider_theme.track_height {
-            controls.slider.track_height = height.max(1.0);
-        }
-        if let Some(size) = selection.slider_theme.thumb_size {
-            controls.slider.thumb_size = size.max(1.0);
-        }
-        if let Some(size) = selection.checkbox_theme.icon_size {
-            controls.checkbox.indicator_size = size.max(1.0);
-        }
-        if let Some(size) = selection.radio_theme.icon_size {
-            controls.radio.indicator_size = size.max(1.0);
-        }
-        if let Some(width) = selection.switch_theme.minimum_size.map(|size| size.width) {
-            controls.switch.width = width.max(1.0);
-        }
-        if let Some(height) = selection.switch_theme.minimum_size.map(|size| size.height) {
-            controls.switch.height = height.max(1.0);
-        }
-        if let Some(size) = selection.switch_theme.thumb_size {
-            controls.switch.thumb_size = size.max(1.0);
-        }
-        controls.motion.reduced_motion = core.page_transitions_theme.reduced_motion;
-        controls
+        (*self.inner.control_theme).clone()
+    }
+
+    pub(crate) fn control_theme_shared(&self) -> Rc<ControlTheme> {
+        self.inner.control_theme.clone()
     }
 }
 
+fn build_control_theme(core: &CoreThemeData, colors: &LegacyThemeColors) -> ControlTheme {
+    let mut controls = if core.brightness == Brightness::Light {
+        ControlTheme::light()
+    } else {
+        ControlTheme::dark()
+    };
+    controls = controls.with_palette(incular_controls::ControlColors {
+        background: colors.scaffold_background_color,
+        surface: core.color_scheme.surface,
+        surface_variant: core.color_scheme.surface_container,
+        surface_elevated: core.color_scheme.surface_container_high,
+        surface_active: core.color_scheme.surface_container_highest,
+        foreground: core.color_scheme.on_surface,
+        foreground_muted: core.color_scheme.on_surface_variant,
+        foreground_disabled: colors.disabled_color,
+        accent: core.color_scheme.primary,
+        accent_hover: alpha(core.color_scheme.primary, 0.92),
+        accent_active: core.color_scheme.primary_container,
+        accent_foreground: core.color_scheme.on_primary,
+        border: core.color_scheme.outline,
+        border_subtle: core.color_scheme.outline_variant,
+        border_strong: core.color_scheme.outline,
+        hover_overlay: colors.hover_color,
+        pressed_overlay: colors.splash_color,
+        focus_ring: colors.focus_color,
+        selection: alpha(core.color_scheme.primary, 0.24),
+        disabled_surface: core.color_scheme.surface_container_highest,
+        disabled_foreground: colors.disabled_color,
+        error: core.color_scheme.error,
+        warning: Color::rgba(160, 100, 0, 255),
+        success: Color::rgba(30, 120, 60, 255),
+        info: core.color_scheme.primary,
+    });
+    controls = controls.density(if core.visual_density == VisualDensity::COMPACT {
+        incular_controls::ControlDensity::Compact
+    } else if core.visual_density == VisualDensity::COMFORTABLE {
+        incular_controls::ControlDensity::Comfortable
+    } else {
+        incular_controls::ControlDensity::Standard
+    });
+    controls.motion.reduced_motion = core.page_transitions_theme.reduced_motion;
+    controls
+}
+
+fn refresh_control_theme(inner: &mut ThemeDataInner) {
+    inner.control_theme = Rc::new(build_control_theme(&inner.core, &inner.colors));
+}
+
 fn defaults_from_color_scheme(color_scheme: ColorScheme) -> ThemeDataInner {
+    let core = default_core_theme(color_scheme);
+    let colors = default_legacy_colors(color_scheme);
+    let control_theme = Rc::new(build_control_theme(&core, &colors));
     ThemeDataInner {
-        core: default_core_theme(color_scheme),
-        colors: default_legacy_colors(color_scheme),
+        core,
+        colors,
+        control_theme,
         extensions: Rc::new(ThemeExtensions::default()),
         icons_and_input: default_icons_and_input(),
         buttons: default_button_themes(),
@@ -851,17 +916,47 @@ impl Theme {
     /// the native UI stack. Material application roots use this shared form.
     #[must_use]
     pub(crate) fn of_shared(context: &BuildContext<'_>) -> Option<Rc<ThemeData>> {
-        context.depend_on::<Rc<ThemeData>>()
+        context
+            .depend_on_shared::<ThemeData>()
+            .or_else(|| context.depend_on::<Rc<ThemeData>>())
+    }
+
+    /// Reads the ambient Material theme without subscribing to the whole-theme
+    /// identity. Family adapters pair this with exact shared group dependencies.
+    #[must_use]
+    pub(crate) fn find_shared(context: &BuildContext<'_>) -> Option<Rc<ThemeData>> {
+        context
+            .find_shared::<ThemeData>()
+            .or_else(|| context.find::<Rc<ThemeData>>())
     }
 
     /// Installs one shared theme descriptor plus the derived control scopes.
     pub(crate) fn scope_shared(data: Rc<ThemeData>, child: Widget) -> Widget {
-        let controls = data.control_theme();
-        let input_decoration = data.icons_and_input().input_decoration_theme.clone();
-        Widget::environment_scope(
-            data,
-            Widget::environment_scope(input_decoration, Widget::environment_scope(controls, child)),
-        )
+        use incular_widgets::internal::shared_environment_scope;
+
+        let controls = data.control_theme_shared();
+        let core = data.core_shared();
+        let colors = data.colors_shared();
+        let icons_and_input = data.icons_and_input_shared();
+        let buttons = data.buttons_shared();
+        let navigation = data.navigation_shared();
+        let selection = data.selection_controls_shared();
+        let surfaces = data.surfaces_shared();
+        let content = data.content_shared();
+        let menus = data.menus_shared();
+        let feedback = data.feedback_shared();
+        let child = shared_environment_scope(controls, child);
+        let child = shared_environment_scope(feedback, child);
+        let child = shared_environment_scope(menus, child);
+        let child = shared_environment_scope(content, child);
+        let child = shared_environment_scope(surfaces, child);
+        let child = shared_environment_scope(selection, child);
+        let child = shared_environment_scope(navigation, child);
+        let child = shared_environment_scope(buttons, child);
+        let child = shared_environment_scope(icons_and_input, child);
+        let child = shared_environment_scope(colors, child);
+        let child = shared_environment_scope(core, child);
+        shared_environment_scope(data, child)
     }
 }
 

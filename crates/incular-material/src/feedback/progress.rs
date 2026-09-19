@@ -213,5 +213,11 @@ impl From<ProgressIndicatorTheme> for incular_widgets::Widget {
 pub fn current_progress_indicator_theme(
     context: &BuildContext<'_>,
 ) -> Option<ProgressIndicatorThemeData> {
-    context.depend_on::<ProgressIndicatorThemeData>()
+    context
+        .depend_on::<ProgressIndicatorThemeData>()
+        .or_else(|| {
+            context
+                .depend_on_shared::<crate::material_theme::FeedbackComponentThemes>()
+                .map(|themes| themes.progress_indicator_theme.clone())
+        })
 }

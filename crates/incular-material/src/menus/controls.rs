@@ -1,7 +1,11 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use super::{anchor::MenuAnchor, style::MenuStyle};
+use super::{
+    anchor::MenuAnchor,
+    style::{MenuStyle, component_menu_style},
+};
+use crate::material_theme::MenuComponentThemes;
 use crate::surfaces::Material;
 use incular_config::{Alignment, Clip, CrossAxisAlignment, EdgeInsets};
 use incular_controls::{
@@ -186,7 +190,14 @@ impl From<MenuBar> for Widget {
                 .spacing(value.spacing)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .into();
-            let style = value.style.clone().unwrap_or_default();
+            let menus = context.depend_on_shared::<MenuComponentThemes>();
+            let mut style = value.style.clone().unwrap_or_default();
+            if let Some(menus) = menus.as_ref() {
+                style = style.merge(&component_menu_style(&menus.menu_bar_theme));
+                if let Some(generic) = menus.menu_theme.style.as_ref() {
+                    style = style.merge(generic);
+                }
+            }
             let surface = Container::with_child(row)
                 .padding(style.padding.unwrap_or(value.padding))
                 .alignment(value.alignment)
@@ -389,10 +400,23 @@ impl MenuItemButton {
             .or_else(|| content.semantic_text())
             .unwrap_or_default();
 
+        let menus = context.depend_on_shared::<MenuComponentThemes>();
+        let inherited_button = menus
+            .as_ref()
+            .and_then(|menus| menus.menu_button_theme.style.clone());
         let mut style = self
             .style
             .clone()
             .unwrap_or_else(|| ButtonStyle::new().variant(ButtonVariant::Ghost));
+        if let Some(inherited) = inherited_button.as_ref() {
+            style = style.merge(inherited);
+        }
+        if let Some(menus) = menus.as_ref()
+            && style.padding.is_none()
+            && let Some(padding) = menus.menu_button_theme.padding
+        {
+            style = style.padding(padding);
+        }
         if let Some(height) = self.height {
             style = style.height(height);
         }

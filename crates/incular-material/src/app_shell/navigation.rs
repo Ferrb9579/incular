@@ -1,4 +1,5 @@
 use crate::TextButton;
+use crate::material_theme::{ComponentThemeData, NavigationComponentThemes};
 use incular_config::{CrossAxisAlignment, EdgeInsets, MainAxisAlignment};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;
@@ -156,6 +157,15 @@ impl NavigationRail {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let selected = self
             .selected_index
             .min(self.destinations.len().saturating_sub(1));
@@ -171,11 +181,25 @@ impl NavigationRail {
                 item.icon.clone()
             };
             let show_label = show_all || (show_selected && index == selected);
+            let label_color = if index == selected {
+                inherited
+                    .label_color
+                    .or(inherited.selected_item_color)
+                    .unwrap_or(theme.colors.accent)
+            } else {
+                inherited
+                    .unselected_label_color
+                    .or(inherited.unselected_item_color)
+                    .unwrap_or(theme.colors.foreground_muted)
+            };
             let content: Widget = if show_label {
-                Row::new([icon, Text::new(item.label.clone()).into()])
-                    .spacing(10.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .into()
+                Row::new([
+                    icon,
+                    Text::new(item.label.clone()).color(label_color).into(),
+                ])
+                .spacing(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into()
             } else {
                 icon
             };
@@ -197,12 +221,29 @@ impl NavigationRail {
         }
         Container::new()
             .width(if self.extended {
-                self.min_extended_width
+                inherited
+                    .maximum_size
+                    .map(|size| size.width)
+                    .unwrap_or(self.min_extended_width)
             } else {
-                self.min_width
+                inherited
+                    .minimum_size
+                    .map(|size| size.width)
+                    .or_else(|| inherited.min_size.map(|size| size.width))
+                    .unwrap_or(self.min_width)
             })
-            .padding(EdgeInsets::symmetric(8.0, 12.0))
-            .color(self.background.unwrap_or(theme.colors.surface))
+            .padding(
+                inherited
+                    .padding
+                    .unwrap_or_else(|| EdgeInsets::symmetric(8.0, 12.0)),
+            )
+            .color(
+                self.background
+                    .or(inherited.background_color)
+                    .or(inherited.color)
+                    .or(inherited.surface_color)
+                    .unwrap_or(theme.colors.surface),
+            )
             .child(
                 Column::new(children)
                     .spacing(8.0)
@@ -223,7 +264,13 @@ impl From<NavigationRail> for Widget {
     fn from(value: NavigationRail) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let navigation = context.depend_on_shared::<NavigationComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                navigation
+                    .as_ref()
+                    .map(|themes| &themes.navigation_rail_theme),
+            )
         }))
     }
 }
@@ -357,6 +404,15 @@ impl NavigationDrawer {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let selected = self
             .selected_index
             .min(self.destinations.len().saturating_sub(1));
@@ -373,10 +429,24 @@ impl NavigationDrawer {
             } else {
                 item.icon.clone()
             };
-            let content: Widget = Row::new([icon, Text::new(item.label.clone()).into()])
-                .spacing(12.0)
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .into();
+            let label_color = if index == selected {
+                inherited
+                    .label_color
+                    .or(inherited.selected_item_color)
+                    .unwrap_or(theme.colors.accent)
+            } else {
+                inherited
+                    .unselected_label_color
+                    .or(inherited.unselected_item_color)
+                    .unwrap_or(theme.colors.foreground_muted)
+            };
+            let content: Widget = Row::new([
+                icon,
+                Text::new(item.label.clone()).color(label_color).into(),
+            ])
+            .spacing(12.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .into();
             let mut button = TextButton::with_child(content).enabled(item.enabled);
             if item.enabled
                 && let Some(callback) = self.on_destination_selected.clone()
@@ -386,9 +456,25 @@ impl NavigationDrawer {
             button.into()
         }));
         Container::new()
-            .width(self.width)
-            .padding(EdgeInsets::symmetric(12.0, 16.0))
-            .color(self.background.unwrap_or(theme.colors.surface))
+            .width(
+                inherited
+                    .minimum_size
+                    .map(|size| size.width)
+                    .or_else(|| inherited.min_size.map(|size| size.width))
+                    .unwrap_or(self.width),
+            )
+            .padding(
+                inherited
+                    .padding
+                    .unwrap_or_else(|| EdgeInsets::symmetric(12.0, 16.0)),
+            )
+            .color(
+                self.background
+                    .or(inherited.background_color)
+                    .or(inherited.color)
+                    .or(inherited.surface_color)
+                    .unwrap_or(theme.colors.surface),
+            )
             .child(
                 Column::new(children)
                     .spacing(8.0)
@@ -408,7 +494,13 @@ impl From<NavigationDrawer> for Widget {
     fn from(value: NavigationDrawer) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let navigation = context.depend_on_shared::<NavigationComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                navigation
+                    .as_ref()
+                    .map(|themes| &themes.navigation_drawer_theme),
+            )
         }))
     }
 }

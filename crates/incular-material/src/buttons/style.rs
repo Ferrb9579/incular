@@ -348,14 +348,27 @@ pub fn style_from(config: ButtonStyleConfig) -> ButtonStyle {
 }
 
 fn apply_color_property(style: &mut ButtonStyle, value: StateValue<Color>, background: bool) {
-    if background {
-        style.background = None;
-        style.background_states = None;
-        style.background_property = Some(value);
-    } else {
-        style.foreground = None;
-        style.foreground_states = None;
-        style.foreground_property = Some(value);
+    match (background, value) {
+        (true, StateValue::Value(color)) => {
+            style.background = Some(color);
+            style.background_states = None;
+            style.background_property = None;
+        }
+        (false, StateValue::Value(color)) => {
+            style.foreground = Some(color);
+            style.foreground_states = None;
+            style.foreground_property = None;
+        }
+        (true, value) => {
+            style.background = None;
+            style.background_states = None;
+            style.background_property = Some(value);
+        }
+        (false, value) => {
+            style.foreground = None;
+            style.foreground_states = None;
+            style.foreground_property = Some(value);
+        }
     }
 }
 

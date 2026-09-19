@@ -117,43 +117,64 @@ impl Switch {
 
 impl From<Switch> for Widget {
     fn from(value: Switch) -> Self {
-        let mut on_states = WidgetStates::default().with(WidgetState::Selected);
-        let mut off_states = WidgetStates::default();
-        if !value.enabled {
-            on_states = on_states.with(WidgetState::Disabled);
-            off_states = off_states.with(WidgetState::Disabled);
-        }
-        let mut root = incular_controls::switch::Root::new()
-            .checked(value.value)
-            .enabled(value.enabled);
-        if let Some(property) = value.track_color.as_ref() {
-            root = root
-                .active_track_color(property.resolve(on_states))
-                .inactive_track_color(property.resolve(off_states));
-        }
-        if let Some(property) = value.thumb_color.as_ref() {
-            root = root
-                .active_thumb_color(property.resolve(on_states))
-                .inactive_thumb_color(property.resolve(off_states));
-        }
-        if let Some(property) = value.track_outline_color.as_ref() {
-            root = root.outline_color(property.resolve(if value.value {
-                on_states
+        let value = Rc::new(value);
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            let value = value.as_ref().clone();
+            let (theme, selection) = super::resolved_control_theme(context);
+            let inherited = selection.as_ref().map(|selection| &selection.switch_theme);
+            let mut on_states = WidgetStates::default().with(WidgetState::Selected);
+            let mut off_states = WidgetStates::default();
+            if !value.enabled {
+                on_states = on_states.with(WidgetState::Disabled);
+                off_states = off_states.with(WidgetState::Disabled);
+            }
+            let mut root = incular_controls::switch::Root::new()
+                .checked(value.value)
+                .enabled(value.enabled);
+            if let Some(property) = value.track_color.as_ref() {
+                root = root
+                    .active_track_color(property.resolve(on_states))
+                    .inactive_track_color(property.resolve(off_states));
+            } else if let Some(property) = inherited.and_then(|theme| theme.track_color.as_ref()) {
+                root = root
+                    .active_track_color(property.resolve(on_states.into_control_state()))
+                    .inactive_track_color(property.resolve(off_states.into_control_state()));
+            }
+            if let Some(property) = value.thumb_color.as_ref() {
+                root = root
+                    .active_thumb_color(property.resolve(on_states))
+                    .inactive_thumb_color(property.resolve(off_states));
+            } else if let Some(property) = inherited.and_then(|theme| theme.thumb_color.as_ref()) {
+                root = root
+                    .active_thumb_color(property.resolve(on_states.into_control_state()))
+                    .inactive_thumb_color(property.resolve(off_states.into_control_state()));
+            }
+            if let Some(property) = value.track_outline_color.as_ref() {
+                root = root.outline_color(property.resolve(if value.value {
+                    on_states
+                } else {
+                    off_states
+                }));
+            } else if let Some(property) = inherited.and_then(|theme| theme.outline_color.as_ref())
+            {
+                let states = if value.value { on_states } else { off_states };
+                root = root.outline_color(property.resolve(states.into_control_state()));
+            }
+            if let Some(width) = value
+                .track_outline_width
+                .or_else(|| inherited.and_then(|theme| theme.side.map(|side| side.top.width)))
+            {
+                root = root.outline_width(width);
+            }
+            if let Some(callback) = value.on_changed {
+                root = root.on_checked_change(move |next| callback(next));
+            }
+            let widget = root.build(&theme);
+            if value.autofocus {
+                incular_widgets::Focus::new(widget).autofocus(true).into()
             } else {
-                off_states
-            }));
-        }
-        if let Some(width) = value.track_outline_width {
-            root = root.outline_width(width);
-        }
-        if let Some(callback) = value.on_changed {
-            root = root.on_checked_change(move |next| callback(next));
-        }
-        let widget: Widget = root.into();
-        if value.autofocus {
-            incular_widgets::Focus::new(widget).autofocus(true).into()
-        } else {
-            widget
-        }
+                widget
+            }
+        }))
     }
 }

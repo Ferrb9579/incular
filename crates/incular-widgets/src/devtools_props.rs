@@ -439,6 +439,7 @@ pub fn kind_display_name_render(kind: &crate::tree::RenderKind) -> String {
         RenderKind::Fractional { .. } => "FractionallySizedBox",
         RenderKind::Baseline { .. } => "Baseline",
         RenderKind::RepaintBoundary => "RepaintBoundary",
+        RenderKind::AnimationTicker { .. } => "AnimationTicker",
         RenderKind::Gesture => "GestureDetector",
         RenderKind::Align { .. } => "Align",
         RenderKind::Flexible { .. } => "Flexible",

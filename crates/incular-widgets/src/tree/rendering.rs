@@ -43,6 +43,7 @@ impl RenderKind {
             RenderKind::Fractional { .. } => "FractionallySizedBox",
             RenderKind::Baseline { .. } => "Baseline",
             RenderKind::RepaintBoundary => "RepaintBoundary",
+            RenderKind::AnimationTicker { .. } => "AnimationTicker",
             RenderKind::Gesture => "GestureDetector",
             RenderKind::Align { .. } => "Align",
             RenderKind::Flex { flex, .. } => {

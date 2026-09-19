@@ -4,6 +4,7 @@
 //! retained implementation. They are intentionally not re-exported from the
 //! public widget prelude and are not part of Incular's Flutter-facing API.
 
+use std::any::Any;
 use std::{cell::Cell, rc::Rc};
 
 use incular_config::EdgeInsets;
@@ -109,6 +110,15 @@ pub use crate::tree::{
 #[cfg(feature = "devtools")]
 pub use crate::tree::{InvalidationCause, LayoutHistoryRecord};
 pub use incular_scroll::*;
+
+/// Installs a shared inherited value without wrapping it in another `Rc`.
+/// Stable pointer identity therefore survives declarative theme rebuilds and
+/// existing inherited-dependency tracking can suppress unaffected consumers.
+#[doc(hidden)]
+#[must_use]
+pub fn shared_environment_scope<T: Any>(value: Rc<T>, child: Widget) -> Widget {
+    Widget::shared_environment_scope(value, child)
+}
 
 /// Narrow retained bridge used by framework controls that need to preserve an
 /// already-built single-axis scroll viewport without observing `WidgetKind`.

@@ -1,7 +1,7 @@
 //! Material text, selection, autocomplete, and form-field descriptors.
 
 use super::input::{InputDecoration, InputDecorationThemeData, InputDecorator};
-use crate::{TextInputAction, TextInputType};
+use crate::{IconAndInputThemes, TextInputAction, TextInputType};
 use incular_config::TextDirection;
 use incular_controls::{ControlTheme, TextFieldStyle};
 use incular_core::{Color, Size};
@@ -659,6 +659,11 @@ impl TextField {
         let mut content: Widget = if let Some(decoration) = self.material_decoration.clone() {
             let decoration_theme = context
                 .depend_on::<InputDecorationThemeData>()
+                .or_else(|| {
+                    context
+                        .depend_on_shared::<IconAndInputThemes>()
+                        .map(|themes| themes.input_decoration_theme.clone())
+                })
                 .unwrap_or_default();
             let mut decoration = decoration.apply_defaults(&decoration_theme);
             if decoration.error_text.is_none() {

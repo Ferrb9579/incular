@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use crate::ListTileTitleAlignment;
-use crate::material_theme::helpers::finite_non_negative;
+use crate::material_theme::{
+    ComponentThemeData, ContentComponentThemes, SurfaceComponentThemes,
+    helpers::finite_non_negative,
+};
 use incular_config::{Clip, Constraints, CrossAxisAlignment, EdgeInsets, MainAxisSize};
 use incular_controls::{
     Checkbox, CheckedState, ControlTheme, Radio, Switch, current_control_theme,
@@ -26,8 +29,8 @@ pub struct Badge {
     background_color: Option<Color>,
     #[builder(default, setter(strip_option))]
     foreground_color: Option<Color>,
-    #[builder(default = EdgeInsets::symmetric(4.0, 2.0))]
-    padding: EdgeInsets,
+    #[builder(default, setter(transform = |value: EdgeInsets| Some(value)))]
+    padding: Option<EdgeInsets>,
 }
 
 impl Badge {
@@ -38,7 +41,7 @@ impl Badge {
             child: None,
             background_color: None,
             foreground_color: None,
-            padding: EdgeInsets::symmetric(4.0, 2.0),
+            padding: None,
         }
     }
 
@@ -62,17 +65,35 @@ impl Badge {
 
     #[must_use]
     pub fn padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
+        self.padding = Some(padding);
         self
     }
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let badge: Widget = Container::new()
-            .padding(self.padding)
+            .padding(
+                self.padding
+                    .or(inherited.padding)
+                    .unwrap_or_else(|| EdgeInsets::symmetric(4.0, 2.0)),
+            )
             .decoration(
                 BoxDecoration::new()
-                    .color(self.background_color.unwrap_or(theme.colors.error))
+                    .color(
+                        self.background_color
+                            .or(inherited.background_color)
+                            .or(inherited.color)
+                            .unwrap_or(theme.colors.error),
+                    )
                     .border_radius(BorderRadius::circular(999.0)),
             )
             .child(
@@ -80,6 +101,7 @@ impl Badge {
                     .style(theme.typography.caption.clone())
                     .color(
                         self.foreground_color
+                            .or(inherited.foreground_color)
                             .unwrap_or(theme.colors.accent_foreground),
                     ),
             )
@@ -98,7 +120,11 @@ impl From<Badge> for Widget {
     fn from(value: Badge) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let surfaces = context.depend_on_shared::<SurfaceComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                surfaces.as_ref().map(|themes| &themes.badge_theme),
+            )
         }))
     }
 }
@@ -312,8 +338,18 @@ impl ListTile {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_theme(theme, None)
+    }
+
+    fn build_with_theme(
+        &self,
+        theme: &ControlTheme,
+        inherited: Option<&ComponentThemeData>,
+    ) -> Widget {
+        let inherited = inherited.cloned().unwrap_or_default();
         let mut padding = self
             .content_padding
+            .or(inherited.padding)
             .unwrap_or_else(|| EdgeInsets::symmetric(16.0, if self.dense { 8.0 } else { 12.0 }));
         if let Some(min_vertical) = self.min_vertical_padding {
             padding.top = padding.top.max(min_vertical);
@@ -336,10 +372,13 @@ impl ListTile {
         let tile_color = if self.selected {
             self.selected_tile_color.unwrap_or(theme.colors.selection)
         } else {
-            self.tile_color.unwrap_or(Color::TRANSPARENT)
+            self.tile_color
+                .or(inherited.color)
+                .or(inherited.background_color)
+                .unwrap_or(Color::TRANSPARENT)
         };
         let mut tile = Container::with_child(row).color(tile_color);
-        if let Some(shape) = self.shape {
+        if let Some(shape) = self.shape.or(inherited.shape) {
             tile = tile.decoration(BoxDecoration::new().border_radius(shape));
         }
         let default_height = if self.subtitle.is_some() {
@@ -349,7 +388,11 @@ impl ListTile {
         } else {
             56.0
         };
-        let min_height = self.min_tile_height.unwrap_or(default_height);
+        let min_height = self
+            .min_tile_height
+            .or_else(|| inherited.minimum_size.map(|size| size.height))
+            .or_else(|| inherited.min_size.map(|size| size.height))
+            .unwrap_or(default_height);
         tile = tile.constraints(Constraints::new(
             0.0,
             f32::INFINITY,
@@ -401,7 +444,11 @@ impl From<ListTile> for Widget {
     fn from(value: ListTile) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build(&current_control_theme(context))
+            let content = context.depend_on_shared::<ContentComponentThemes>();
+            value.build_with_theme(
+                &current_control_theme(context),
+                content.as_ref().map(|themes| &themes.list_tile_theme),
+            )
         }))
     }
 }

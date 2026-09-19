@@ -1,0 +1,2279 @@
+{
+  "controls": {
+    "crate": "incular_controls",
+    "options": [
+      {
+        "entrypoints": [
+          "constructor:new:builder"
+        ],
+        "option": "builder",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonLayerBuilder"
+      },
+      {
+        "entrypoints": [
+          "field:alignment",
+          "method:alignment"
+        ],
+        "option": "alignment",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:animation_duration",
+          "method:animation_duration"
+        ],
+        "option": "animation_duration",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:background",
+          "method:background"
+        ],
+        "option": "background",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:background_builder",
+          "method:background_builder"
+        ],
+        "option": "background_builder",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "method:background_color"
+        ],
+        "option": "background_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:background_property"
+        ],
+        "option": "background_property",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:background_states",
+          "method:background_states"
+        ],
+        "option": "background_states",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border",
+          "method:border"
+        ],
+        "option": "border",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border_radius",
+          "method:border_radius"
+        ],
+        "option": "border_radius",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "method:copy_with"
+        ],
+        "option": "copy_with",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:elevation",
+          "method:elevation"
+        ],
+        "option": "elevation",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:enable_feedback",
+          "method:enable_feedback"
+        ],
+        "option": "enable_feedback",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:fixed_size",
+          "method:fixed_size"
+        ],
+        "option": "fixed_size",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:foreground",
+          "method:foreground"
+        ],
+        "option": "foreground",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:foreground_builder",
+          "method:foreground_builder"
+        ],
+        "option": "foreground_builder",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "method:foreground_color"
+        ],
+        "option": "foreground_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:foreground_property"
+        ],
+        "option": "foreground_property",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:foreground_states",
+          "method:foreground_states"
+        ],
+        "option": "foreground_states",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:height",
+          "method:height"
+        ],
+        "option": "height",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:icon_alignment",
+          "method:icon_alignment"
+        ],
+        "option": "icon_alignment",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:icon_color",
+          "method:icon_color"
+        ],
+        "option": "icon_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:icon_size",
+          "method:icon_size"
+        ],
+        "option": "icon_size",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:maximum_size",
+          "method:maximum_size"
+        ],
+        "option": "maximum_size",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "method:merge"
+        ],
+        "option": "merge",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:minimum_size",
+          "method:minimum_size"
+        ],
+        "option": "minimum_size",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:mouse_cursor",
+          "method:mouse_cursor"
+        ],
+        "option": "mouse_cursor",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:overlay_color",
+          "method:overlay_color"
+        ],
+        "option": "overlay_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:padding",
+          "method:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:shadow_color",
+          "method:shadow_color"
+        ],
+        "option": "shadow_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:shape",
+          "method:shape"
+        ],
+        "option": "shape",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:side",
+          "method:side"
+        ],
+        "option": "side",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:splash_factory",
+          "method:splash_factory"
+        ],
+        "option": "splash_factory",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:surface_tint_color",
+          "method:surface_tint_color"
+        ],
+        "option": "surface_tint_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:tap_target_size",
+          "method:tap_target_size"
+        ],
+        "option": "tap_target_size",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:text_style",
+          "method:text_style"
+        ],
+        "option": "text_style",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:variant",
+          "method:variant"
+        ],
+        "option": "variant",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:visual_density",
+          "method:visual_density"
+        ],
+        "option": "visual_density",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "entrypoints": [
+          "field:background"
+        ],
+        "option": "background",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::CardStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border"
+        ],
+        "option": "border",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::CardStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border_radius"
+        ],
+        "option": "border_radius",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::CardStyle"
+      },
+      {
+        "entrypoints": [
+          "field:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::CardStyle"
+      },
+      {
+        "entrypoints": [
+          "method:empty"
+        ],
+        "option": "empty",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ControlState"
+      },
+      {
+        "entrypoints": [
+          "method:from_bits_retain"
+        ],
+        "option": "from_bits_retain",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ControlState"
+      },
+      {
+        "entrypoints": [
+          "method:from_enabled"
+        ],
+        "option": "from_enabled",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ControlState"
+      },
+      {
+        "entrypoints": [
+          "method:with"
+        ],
+        "option": "with",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ControlState"
+      },
+      {
+        "entrypoints": [
+          "method:without"
+        ],
+        "option": "without",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::ControlState"
+      },
+      {
+        "entrypoints": [
+          "field:color"
+        ],
+        "option": "color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::DividerStyle"
+      },
+      {
+        "entrypoints": [
+          "field:end_indent"
+        ],
+        "option": "end_indent",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::DividerStyle"
+      },
+      {
+        "entrypoints": [
+          "field:indent"
+        ],
+        "option": "indent",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::DividerStyle"
+      },
+      {
+        "entrypoints": [
+          "field:thickness"
+        ],
+        "option": "thickness",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::DividerStyle"
+      },
+      {
+        "entrypoints": [
+          "field:active_color"
+        ],
+        "option": "active_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::SelectionStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border_radius"
+        ],
+        "option": "border_radius",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::SelectionStyle"
+      },
+      {
+        "entrypoints": [
+          "field:check_color"
+        ],
+        "option": "check_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::SelectionStyle"
+      },
+      {
+        "entrypoints": [
+          "field:inactive_color"
+        ],
+        "option": "inactive_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::SelectionStyle"
+      },
+      {
+        "entrypoints": [
+          "field:checked",
+          "method:checked"
+        ],
+        "option": "checked",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "field:disabled",
+          "method:disabled"
+        ],
+        "option": "disabled",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "field:focused",
+          "method:focused"
+        ],
+        "option": "focused",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "field:hovered",
+          "method:hovered"
+        ],
+        "option": "hovered",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "constructor:new:normal",
+          "field:normal"
+        ],
+        "option": "normal",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "field:pressed",
+          "method:pressed"
+        ],
+        "option": "pressed",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "field:selected",
+          "method:selected"
+        ],
+        "option": "selected",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateColor"
+      },
+      {
+        "entrypoints": [
+          "field:checked",
+          "method:checked"
+        ],
+        "option": "checked",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:disabled",
+          "method:disabled"
+        ],
+        "option": "disabled",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:dragging",
+          "method:dragging"
+        ],
+        "option": "dragging",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:expanded",
+          "method:expanded"
+        ],
+        "option": "expanded",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:focus_visible",
+          "method:focus_visible"
+        ],
+        "option": "focus_visible",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:focused",
+          "method:focused"
+        ],
+        "option": "focused",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:hovered",
+          "method:hovered"
+        ],
+        "option": "hovered",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:invalid",
+          "method:invalid"
+        ],
+        "option": "invalid",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "constructor:new:normal",
+          "field:normal"
+        ],
+        "option": "normal",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:open",
+          "method:open"
+        ],
+        "option": "open",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:pressed",
+          "method:pressed"
+        ],
+        "option": "pressed",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:read_only",
+          "method:read_only"
+        ],
+        "option": "read_only",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "field:selected",
+          "method:selected"
+        ],
+        "option": "selected",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateTable"
+      },
+      {
+        "entrypoints": [
+          "method:resolver"
+        ],
+        "option": "resolver",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateValue"
+      },
+      {
+        "entrypoints": [
+          "method:states"
+        ],
+        "option": "states",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::StateValue"
+      },
+      {
+        "entrypoints": [
+          "field:background"
+        ],
+        "option": "background",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border"
+        ],
+        "option": "border",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border_focused"
+        ],
+        "option": "border_focused",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border_radius"
+        ],
+        "option": "border_radius",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:foreground"
+        ],
+        "option": "foreground",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:placeholder_color"
+        ],
+        "option": "placeholder_color",
+        "status": "implemented",
+        "symbol": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "entrypoints": [
+          "field:border_width"
+        ],
+        "option": "border_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::AvatarTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::AvatarTheme"
+      },
+      {
+        "entrypoints": [
+          "field:size"
+        ],
+        "option": "size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::AvatarTheme"
+      },
+      {
+        "entrypoints": [
+          "field:border_width"
+        ],
+        "option": "border_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ButtonTheme"
+      },
+      {
+        "entrypoints": [
+          "field:focus_ring_width"
+        ],
+        "option": "focus_ring_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ButtonTheme"
+      },
+      {
+        "entrypoints": [
+          "field:height"
+        ],
+        "option": "height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ButtonTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ButtonTheme"
+      },
+      {
+        "entrypoints": [
+          "field:indicator_size"
+        ],
+        "option": "indicator_size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::CheckboxTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::CheckboxTheme"
+      },
+      {
+        "entrypoints": [
+          "field:accent"
+        ],
+        "option": "accent",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:accent_active"
+        ],
+        "option": "accent_active",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:accent_foreground"
+        ],
+        "option": "accent_foreground",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:accent_hover"
+        ],
+        "option": "accent_hover",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:background"
+        ],
+        "option": "background",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:border"
+        ],
+        "option": "border",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:border_strong"
+        ],
+        "option": "border_strong",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:border_subtle"
+        ],
+        "option": "border_subtle",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "method:dark"
+        ],
+        "option": "dark",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:disabled_foreground"
+        ],
+        "option": "disabled_foreground",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:disabled_surface"
+        ],
+        "option": "disabled_surface",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:error"
+        ],
+        "option": "error",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:focus_ring"
+        ],
+        "option": "focus_ring",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:foreground"
+        ],
+        "option": "foreground",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:foreground_disabled"
+        ],
+        "option": "foreground_disabled",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:foreground_muted"
+        ],
+        "option": "foreground_muted",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:hover_overlay"
+        ],
+        "option": "hover_overlay",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:info"
+        ],
+        "option": "info",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "method:light"
+        ],
+        "option": "light",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:pressed_overlay"
+        ],
+        "option": "pressed_overlay",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:selection"
+        ],
+        "option": "selection",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:success"
+        ],
+        "option": "success",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:surface"
+        ],
+        "option": "surface",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:surface_active"
+        ],
+        "option": "surface_active",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:surface_elevated"
+        ],
+        "option": "surface_elevated",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:surface_variant"
+        ],
+        "option": "surface_variant",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:warning"
+        ],
+        "option": "warning",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlColors"
+      },
+      {
+        "entrypoints": [
+          "field:border_radius"
+        ],
+        "option": "border_radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:border_width"
+        ],
+        "option": "border_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:control_height"
+        ],
+        "option": "control_height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:focus_ring_width"
+        ],
+        "option": "focus_ring_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:horizontal_padding"
+        ],
+        "option": "horizontal_padding",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:icon_size"
+        ],
+        "option": "icon_size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:large_spacing"
+        ],
+        "option": "large_spacing",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:medium_spacing"
+        ],
+        "option": "medium_spacing",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:scrollbar_thickness"
+        ],
+        "option": "scrollbar_thickness",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:small_spacing"
+        ],
+        "option": "small_spacing",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:vertical_padding"
+        ],
+        "option": "vertical_padding",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "entrypoints": [
+          "field:focus_duration_ms"
+        ],
+        "option": "focus_duration_ms",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMotion"
+      },
+      {
+        "entrypoints": [
+          "field:hover_duration_ms"
+        ],
+        "option": "hover_duration_ms",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMotion"
+      },
+      {
+        "entrypoints": [
+          "field:pressed_duration_ms"
+        ],
+        "option": "pressed_duration_ms",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMotion"
+      },
+      {
+        "entrypoints": [
+          "field:reduced_motion"
+        ],
+        "option": "reduced_motion",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlMotion"
+      },
+      {
+        "entrypoints": [
+          "field:alert_dialog"
+        ],
+        "option": "alert_dialog",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:autocomplete"
+        ],
+        "option": "autocomplete",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:avatar"
+        ],
+        "option": "avatar",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:button"
+        ],
+        "option": "button",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:checkbox"
+        ],
+        "option": "checkbox",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:checkbox_group"
+        ],
+        "option": "checkbox_group",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:colors"
+        ],
+        "option": "colors",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:context_menu"
+        ],
+        "option": "context_menu",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "method:dark"
+        ],
+        "option": "dark",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:density",
+          "method:density"
+        ],
+        "option": "density",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:drawer"
+        ],
+        "option": "drawer",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:elevation"
+        ],
+        "option": "elevation",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:input"
+        ],
+        "option": "input",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "method:light"
+        ],
+        "option": "light",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:menu"
+        ],
+        "option": "menu",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:menubar"
+        ],
+        "option": "menubar",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:meter"
+        ],
+        "option": "meter",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:metrics"
+        ],
+        "option": "metrics",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:motion"
+        ],
+        "option": "motion",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:navigation_menu"
+        ],
+        "option": "navigation_menu",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:popup"
+        ],
+        "option": "popup",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:progress"
+        ],
+        "option": "progress",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radio"
+        ],
+        "option": "radio",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:scroll_area"
+        ],
+        "option": "scroll_area",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:scrollbar"
+        ],
+        "option": "scrollbar",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:slider"
+        ],
+        "option": "slider",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:spacing"
+        ],
+        "option": "spacing",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:switch"
+        ],
+        "option": "switch",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:tabs"
+        ],
+        "option": "tabs",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:toast"
+        ],
+        "option": "toast",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:toggle_group"
+        ],
+        "option": "toggle_group",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:tooltip"
+        ],
+        "option": "tooltip",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:typography"
+        ],
+        "option": "typography",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "method:with_palette"
+        ],
+        "option": "with_palette",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "entrypoints": [
+          "field:body"
+        ],
+        "option": "body",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:body_emphasis"
+        ],
+        "option": "body_emphasis",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:caption"
+        ],
+        "option": "caption",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "constructor:new:fg"
+        ],
+        "option": "fg",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:heading"
+        ],
+        "option": "heading",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:monospace"
+        ],
+        "option": "monospace",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "constructor:new:muted"
+        ],
+        "option": "muted",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:small"
+        ],
+        "option": "small",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:title"
+        ],
+        "option": "title",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "entrypoints": [
+          "field:dialog"
+        ],
+        "option": "dialog",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ElevationTokens"
+      },
+      {
+        "entrypoints": [
+          "field:none"
+        ],
+        "option": "none",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ElevationTokens"
+      },
+      {
+        "entrypoints": [
+          "field:popup"
+        ],
+        "option": "popup",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ElevationTokens"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::GroupTheme"
+      },
+      {
+        "entrypoints": [
+          "field:spacing"
+        ],
+        "option": "spacing",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::GroupTheme"
+      },
+      {
+        "entrypoints": [
+          "field:border_width"
+        ],
+        "option": "border_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::InputTheme"
+      },
+      {
+        "entrypoints": [
+          "field:focus_ring_width"
+        ],
+        "option": "focus_ring_width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::InputTheme"
+      },
+      {
+        "entrypoints": [
+          "field:height"
+        ],
+        "option": "height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::InputTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::InputTheme"
+      },
+      {
+        "entrypoints": [
+          "field:item_height"
+        ],
+        "option": "item_height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::MenuTheme"
+      },
+      {
+        "entrypoints": [
+          "field:popup_padding"
+        ],
+        "option": "popup_padding",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::MenuTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::MenuTheme"
+      },
+      {
+        "entrypoints": [
+          "field:elevation"
+        ],
+        "option": "elevation",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::PopupTheme"
+      },
+      {
+        "entrypoints": [
+          "field:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::PopupTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::PopupTheme"
+      },
+      {
+        "entrypoints": [
+          "field:height"
+        ],
+        "option": "height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ProgressTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ProgressTheme"
+      },
+      {
+        "entrypoints": [
+          "field:track_alpha"
+        ],
+        "option": "track_alpha",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ProgressTheme"
+      },
+      {
+        "entrypoints": [
+          "field:indicator_size"
+        ],
+        "option": "indicator_size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::RadioTheme"
+      },
+      {
+        "entrypoints": [
+          "field:lg"
+        ],
+        "option": "lg",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::RadiusTokens"
+      },
+      {
+        "entrypoints": [
+          "field:md"
+        ],
+        "option": "md",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::RadiusTokens"
+      },
+      {
+        "entrypoints": [
+          "field:none"
+        ],
+        "option": "none",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::RadiusTokens"
+      },
+      {
+        "entrypoints": [
+          "field:pill"
+        ],
+        "option": "pill",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::RadiusTokens"
+      },
+      {
+        "entrypoints": [
+          "field:sm"
+        ],
+        "option": "sm",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::RadiusTokens"
+      },
+      {
+        "entrypoints": [
+          "field:corner_size"
+        ],
+        "option": "corner_size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ScrollAreaTheme"
+      },
+      {
+        "entrypoints": [
+          "field:scrollbar_gap"
+        ],
+        "option": "scrollbar_gap",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ScrollAreaTheme"
+      },
+      {
+        "entrypoints": [
+          "field:min_thumb_extent"
+        ],
+        "option": "min_thumb_extent",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ScrollbarTheme"
+      },
+      {
+        "entrypoints": [
+          "field:width"
+        ],
+        "option": "width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ScrollbarTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SliderTheme"
+      },
+      {
+        "entrypoints": [
+          "field:thumb_size"
+        ],
+        "option": "thumb_size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SliderTheme"
+      },
+      {
+        "entrypoints": [
+          "field:track_height"
+        ],
+        "option": "track_height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SliderTheme"
+      },
+      {
+        "entrypoints": [
+          "field:lg"
+        ],
+        "option": "lg",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SpacingTokens"
+      },
+      {
+        "entrypoints": [
+          "field:md"
+        ],
+        "option": "md",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SpacingTokens"
+      },
+      {
+        "entrypoints": [
+          "field:sm"
+        ],
+        "option": "sm",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SpacingTokens"
+      },
+      {
+        "entrypoints": [
+          "field:xl"
+        ],
+        "option": "xl",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SpacingTokens"
+      },
+      {
+        "entrypoints": [
+          "field:xs"
+        ],
+        "option": "xs",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SpacingTokens"
+      },
+      {
+        "entrypoints": [
+          "field:height"
+        ],
+        "option": "height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SwitchTheme"
+      },
+      {
+        "entrypoints": [
+          "field:thumb_size"
+        ],
+        "option": "thumb_size",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SwitchTheme"
+      },
+      {
+        "entrypoints": [
+          "field:width"
+        ],
+        "option": "width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::SwitchTheme"
+      },
+      {
+        "entrypoints": [
+          "field:gap"
+        ],
+        "option": "gap",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TabsTheme"
+      },
+      {
+        "entrypoints": [
+          "field:indicator_height"
+        ],
+        "option": "indicator_height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TabsTheme"
+      },
+      {
+        "entrypoints": [
+          "field:tab_height"
+        ],
+        "option": "tab_height",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TabsTheme"
+      },
+      {
+        "entrypoints": [
+          "field:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ToastTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ToastTheme"
+      },
+      {
+        "entrypoints": [
+          "field:width"
+        ],
+        "option": "width",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::ToastTheme"
+      },
+      {
+        "entrypoints": [
+          "field:hide_delay_ms"
+        ],
+        "option": "hide_delay_ms",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TooltipTheme"
+      },
+      {
+        "entrypoints": [
+          "field:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TooltipTheme"
+      },
+      {
+        "entrypoints": [
+          "field:radius"
+        ],
+        "option": "radius",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TooltipTheme"
+      },
+      {
+        "entrypoints": [
+          "field:show_delay_ms"
+        ],
+        "option": "show_delay_ms",
+        "status": "implemented",
+        "symbol": "incular_controls::theme::TooltipTheme"
+      }
+    ],
+    "schema_version": 3,
+    "symbols": [
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::ButtonLayerBuilder"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::ButtonStyle"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_controls::styles::ButtonVariant"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::CardStyle"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::ControlState"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::DividerStyle"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_controls::styles::IconAlignment"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::SelectionStyle"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_controls::styles::SplashFactory"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::StateColor"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::StateTable"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_controls::styles::StateValue"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_controls::styles::TapTargetSize"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::styles::TextFieldStyle"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::AlertDialogTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::AutocompleteTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::AvatarTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ButtonTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::CheckboxGroupTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::CheckboxTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::ContextMenuTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ControlColors"
+      },
+      {
+        "kind": "enum",
+        "qualified": "incular_controls::theme::ControlDensity"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ControlMetrics"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ControlMotion"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ControlTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ControlTypography"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::DrawerTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ElevationTokens"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::GroupTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::InputTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::MenuTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::MenubarTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::MeterTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::MotionTokens"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::NavigationMenuTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::PaletteTokens"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::PopupTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ProgressTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::RadioTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::RadiusTokens"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ScrollAreaTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ScrollbarTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::SliderTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::SpacingTokens"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::SwitchTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::TabsTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::ToastTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::ToggleGroupTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_controls::theme::TooltipTheme"
+      },
+      {
+        "kind": "type",
+        "qualified": "incular_controls::theme::TypographyTokens"
+      }
+    ]
+  },
+  "material": {
+    "crate": "incular_material",
+    "options": [
+      {
+        "entrypoints": [
+          "builder:child",
+          "constructor:new:child",
+          "method:child"
+        ],
+        "option": "child",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorTheme"
+      },
+      {
+        "entrypoints": [
+          "builder:data",
+          "constructor:new:data",
+          "method:data"
+        ],
+        "option": "data",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorTheme"
+      },
+      {
+        "entrypoints": [
+          "builder:border_radius",
+          "field:border_radius",
+          "method:border_radius"
+        ],
+        "option": "border_radius",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:circular_track_color",
+          "field:circular_track_color",
+          "method:circular_track_color"
+        ],
+        "option": "circular_track_color",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:color",
+          "field:color",
+          "method:color"
+        ],
+        "option": "color",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:constraints",
+          "field:constraints",
+          "method:constraints"
+        ],
+        "option": "constraints",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:linear_track_color",
+          "field:linear_track_color",
+          "method:linear_track_color"
+        ],
+        "option": "linear_track_color",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:linear_track_height",
+          "field:linear_track_height",
+          "method:linear_track_height"
+        ],
+        "option": "linear_track_height",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "method:merge"
+        ],
+        "option": "merge",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:padding",
+          "field:padding",
+          "method:padding"
+        ],
+        "option": "padding",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:refresh_background_color",
+          "field:refresh_background_color",
+          "method:refresh_background_color"
+        ],
+        "option": "refresh_background_color",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:stop_indicator_color",
+          "field:stop_indicator_color",
+          "method:stop_indicator_color"
+        ],
+        "option": "stop_indicator_color",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:stop_indicator_radius",
+          "field:stop_indicator_radius",
+          "method:stop_indicator_radius"
+        ],
+        "option": "stop_indicator_radius",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:stroke_align",
+          "field:stroke_align",
+          "method:stroke_align"
+        ],
+        "option": "stroke_align",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:stroke_cap",
+          "field:stroke_cap",
+          "method:stroke_cap"
+        ],
+        "option": "stroke_cap",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:stroke_width",
+          "field:stroke_width",
+          "method:stroke_width"
+        ],
+        "option": "stroke_width",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      },
+      {
+        "entrypoints": [
+          "builder:track_gap",
+          "field:track_gap",
+          "method:track_gap"
+        ],
+        "option": "track_gap",
+        "status": "implemented",
+        "symbol": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      }
+    ],
+    "schema_version": 3,
+    "symbols": [
+      {
+        "kind": "enum",
+        "qualified": "incular_material::feedback::progress::ProgressIndicatorStrokeCap"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::feedback::progress::ProgressIndicatorTheme"
+      },
+      {
+        "kind": "struct",
+        "qualified": "incular_material::feedback::progress::ProgressIndicatorThemeData"
+      }
+    ]
+  },
+  "schema_version": 3
+}

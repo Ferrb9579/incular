@@ -2,7 +2,7 @@
 
 use incular_config::Constraints;
 use incular_core::Size;
-use incular_widgets::internal::WidgetTree;
+use incular_widgets::internal::{WidgetTree, shared_environment_scope};
 use incular_widgets::{SizedBox, Widget};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -181,4 +181,88 @@ fn unmounted_consumers_leave_no_stale_invalidation_edge() {
         .expect("update scope after consumer unmount");
     tree.layout(constraints()).expect("layout");
     assert_eq!(builds.get(), 1);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SharedProjection(u32);
+
+#[test]
+fn equal_shared_projection_does_not_notify_consumers() {
+    let builds = Rc::new(Cell::new(0_u32));
+    let seen = Rc::new(Cell::new(0_u32));
+    let projection = Rc::new(SharedProjection(7));
+    let child: Widget = {
+        let builds = builds.clone();
+        let seen = seen.clone();
+        incular_widgets::LayoutBuilder::new(move |context, _| {
+            builds.set(builds.get() + 1);
+            let value = context
+                .depend_on_shared::<SharedProjection>()
+                .expect("shared projection");
+            seen.set(value.0);
+            SizedBox::shrink().into()
+        })
+        .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(shared_environment_scope(projection.clone(), child.clone()))
+        .expect("mount shared projection");
+    tree.layout(constraints()).expect("layout");
+    assert_eq!((builds.get(), seen.get()), (1, 7));
+
+    tree.update(root, shared_environment_scope(projection, child))
+        .expect("reconcile identical shared projection");
+    tree.layout(constraints())
+        .expect("layout after equal projection");
+
+    assert_eq!(
+        builds.get(),
+        1,
+        "pointer-identical projection must not notify"
+    );
+    assert_eq!(seen.get(), 7);
+}
+
+#[test]
+fn nearest_scope_wins_and_removed_scope_rebinds_dependencies() {
+    let builds = Rc::new(Cell::new(0_u32));
+    let seen = Rc::new(Cell::new(0_u32));
+    let outer = Rc::new(SharedProjection(1));
+    let inner = Rc::new(SharedProjection(2));
+    let child: Widget = {
+        let builds = builds.clone();
+        let seen = seen.clone();
+        incular_widgets::LayoutBuilder::new(move |context, _| {
+            builds.set(builds.get() + 1);
+            let value = context
+                .depend_on_shared::<SharedProjection>()
+                .expect("nearest projection");
+            seen.set(value.0);
+            SizedBox::shrink().into()
+        })
+        .into()
+    };
+
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(shared_environment_scope(
+            outer.clone(),
+            shared_environment_scope(inner, child.clone()),
+        ))
+        .expect("mount nested shared scopes");
+    tree.layout(constraints()).expect("nested layout");
+    assert_eq!((builds.get(), seen.get()), (1, 2));
+
+    tree.update(root, shared_environment_scope(outer, child))
+        .expect("remove inner scope");
+    tree.layout(constraints())
+        .expect("layout after removing inner scope");
+
+    assert_eq!(
+        seen.get(),
+        1,
+        "consumer must rebind to the exposed outer scope"
+    );
+    assert_eq!(builds.get(), 2);
 }
