@@ -10,8 +10,9 @@ The remaining quality campaign is tracked in [Plan 15](../plan-15.md).
 W7's executed result is in the [completion report](W7_COMPLETION_REPORT.md), with public migration notes in
 [W7 API migrations](W7_API_MIGRATIONS.md).
 
-W9's next implementation is specified in the [W9 completion plan](W9_COMPLETION_PLAN.md),
-covering tooling, identity safety, facade/parity ownership, and sustainable closure.
+W9's execution design is retained in the [W9 completion plan](W9_COMPLETION_PLAN.md).
+Its executed result is in the [W9 completion report](W9_COMPLETION_REPORT.md),
+with externally observable changes in [W9 API migrations](W9_API_MIGRATIONS.md).
 
 The phase notes below describe existing implementation, including migration
 seams; they do not override the architecture contract.

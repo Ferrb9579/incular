@@ -124,3 +124,10 @@ Use `Constraints::try_new` for external input that can be invalid; it returns
 `ConstraintError::Invalid`. `new`, `tight` and `loose` keep their panic contract.
 Minimums must be finite and nonnegative; maximums may be positive infinity,
 but cannot be NaN or smaller than their corresponding minimum.
+
+## W9 tooling and closure migrations
+
+W9's externally observable DevTools startup/lifetime, facade-feature, identity
+exhaustion, reconnect, and build-policy changes are recorded in
+[W9 API migrations](W9_API_MIGRATIONS.md). The corresponding executed evidence
+and platform limitations are in the [W9 completion report](W9_COMPLETION_REPORT.md).

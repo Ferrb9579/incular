@@ -1,6 +1,7 @@
 # W9 completion plan: tooling and sustainable closure
 
-Status: planned, not implemented by this document.
+Status: implemented. See [W9 completion report](W9_COMPLETION_REPORT.md) for the
+executed result, evidence, and remaining native-host limitation.
 
 Planning date: 2026-09-19. Source baseline: `08a827e`; final reviewed repository
 HEAD: `3d6eff6`, which commits the user's plan/documentation cleanup, including
@@ -10,9 +11,9 @@ before implementation; the baseline is a reference, not permission to reset it.
 
 This is the execution plan for the whole W9 section of [Plan 15](../plan-15.md),
 not just the DevTools transport fix. It incorporates the still-applicable work
-in [Plan 18](../plan-18.md), [Plan 20](../plan-20.md), and
-[Plan 21](../plan-21.md), together with the specific focus-scope prerequisite
-in [Plan 17](../plan-17.md).
+from the historical Plans 18, 20, and 21, together with the specific focus-scope
+prerequisite from historical Plan 17. Those completed/deleted plan files are not
+restored by W9.
 
 ## 1. Scope and completion contract
 

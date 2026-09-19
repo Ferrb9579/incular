@@ -3446,7 +3446,8 @@ report.
 
 Execution plan: [W9 completion plan](docs/W9_COMPLETION_PLAN.md). It covers the
 whole stream and its still-open ownership prerequisites; W8 remains removed.
-Status: planned; implementation and closure results are not claimed yet.
+Completion evidence: [W9 completion report](docs/W9_COMPLETION_REPORT.md), with
+public migration notes in [W9 API migrations](docs/W9_API_MIGRATIONS.md).
 
 1. Bound DevTools requests and coalesce wake notifications. Define backpressure,
    disconnect/reconnect and stale-response policy; retain session authentication.
@@ -3467,6 +3468,13 @@ Status: planned; implementation and closure results are not claimed yet.
 Exit: every crate has an owner, API class, support statement and evidence; every
 finding is fixed, deliberately omitted with migration, or explicitly deferred
 with reason and acceptance test. No misleading completed parity claims remain.
+
+**W9 complete.** DevTools ownership/work/data bounds, identity exhaustion,
+facade/package ownership, parity evidence, documentation linting, locked MSRV,
+dependency policy and measured build settings are closed. Windows live native
+regressions and a real DevTools target/UI smoke passed. macOS observer ownership
+is fixed in source but still requires a macOS host for AppKit runtime evidence;
+the completion report records that limitation explicitly. W8 remains removed.
 
 ## Validation and completion protocol
 
