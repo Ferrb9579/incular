@@ -1644,6 +1644,28 @@ impl WidgetTree {
                         self.diagnostics.scroll_offset_updates += 1;
                     }
                 }
+                RenderKind::AnimationTicker {
+                    controller,
+                    auto_start,
+                    revision,
+                } => {
+                    if ticking
+                        && auto_start
+                        && matches!(
+                            controller.status(),
+                            incular_animation::AnimationStatus::Idle
+                                | incular_animation::AnimationStatus::Dismissed
+                        )
+                    {
+                        controller.forward(now);
+                    }
+                    if ticking && controller.tick(now) {
+                        changed = true;
+                        revision.set(revision.get().wrapping_add(1));
+                        self.diagnostics.animation_ticks += 1;
+                    }
+                    active |= ticking && controller.is_active();
+                }
                 RenderKind::Translate { controller } => {
                     if ticking && controller.tick(now) {
                         self.diagnostics.animation_ticks += 1;

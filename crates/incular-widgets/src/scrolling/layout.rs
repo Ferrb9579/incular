@@ -2594,6 +2594,7 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
         | WidgetKind::AbsorbPointer { child, .. }
         | WidgetKind::Unconstrained { child, .. }
         | WidgetKind::RepaintBoundary { child }
+        | WidgetKind::AnimationTicker { child, .. }
         | WidgetKind::FittedBox { child, .. }
         | WidgetKind::Opacity { child, .. }
         | WidgetKind::Blur { child, .. }

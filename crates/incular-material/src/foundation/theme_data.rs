@@ -3,7 +3,7 @@
 use incular_config::Brightness;
 use incular_controls::{ButtonStyle, ControlTheme, SplashFactory};
 use incular_core::Color;
-use incular_widgets::{BorderRadius, BuildContext, Widget};
+use incular_widgets::{AnimationController, BorderRadius, BuildContext, Widget};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
@@ -893,7 +893,21 @@ impl AnimatedTheme {
 
 impl From<AnimatedTheme> for Widget {
     fn from(value: AnimatedTheme) -> Self {
-        Theme::new(value.data, value.child).into()
+        if value.duration.is_zero() {
+            return Theme::new(value.data, value.child).into();
+        }
+
+        let controller = AnimationController::new(value.duration);
+        let ticker = controller.clone();
+        let revision = Rc::new(std::cell::Cell::new(0_u64));
+        let target = Rc::new(value.data);
+        let child = value.child;
+        let animated = Widget::stateful_layout_builder(revision.clone(), move |context, _| {
+            let start = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
+            let displayed = start.lerp(&target, controller.value());
+            Theme::new(displayed, child.clone()).into()
+        });
+        Widget::animation_ticker_with_revision(ticker, true, revision, animated)
     }
 }
 

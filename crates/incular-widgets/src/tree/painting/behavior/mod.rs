@@ -45,6 +45,7 @@ impl PaintFamily {
             | RenderKind::Fractional { .. }
             | RenderKind::Baseline { .. }
             | RenderKind::RepaintBoundary
+            | RenderKind::AnimationTicker { .. }
             | RenderKind::Gesture
             | RenderKind::Align { .. }
             | RenderKind::Flex { .. }

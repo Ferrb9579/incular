@@ -227,6 +227,7 @@ impl WidgetTree {
                 }
             }
             RenderKind::RepaintBoundary
+            | RenderKind::AnimationTicker { .. }
             | RenderKind::Gesture
             | RenderKind::SelectionArea
             | RenderKind::SelectionContainer

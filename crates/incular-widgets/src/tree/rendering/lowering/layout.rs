@@ -48,6 +48,16 @@ pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
             baseline: *baseline,
         },
         WidgetKind::RepaintBoundary { .. } => RenderKind::RepaintBoundary,
+        WidgetKind::AnimationTicker {
+            controller,
+            auto_start,
+            revision,
+            ..
+        } => RenderKind::AnimationTicker {
+            controller: controller.clone(),
+            auto_start: *auto_start,
+            revision: revision.clone(),
+        },
         WidgetKind::Gesture { .. } => RenderKind::Gesture,
         WidgetKind::RawInput { .. } => RenderKind::Gesture,
         WidgetKind::Draggable { .. } | WidgetKind::DragTarget { .. } => RenderKind::Gesture,

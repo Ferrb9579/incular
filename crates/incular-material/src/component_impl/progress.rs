@@ -5,7 +5,7 @@ use crate::feedback::current_progress_indicator_theme;
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::{Color, Offset, Size};
 use incular_rendering::{Canvas, LineCap, LineJoin, Path, Stroke};
-use incular_widgets::{Semantics, Widget};
+use incular_widgets::{Container, Semantics, Widget};
 use typed_builder::TypedBuilder;
 
 /// Material linear progress indicator.
@@ -124,6 +124,9 @@ impl LinearProgressIndicator {
         } else if let Some(height) = indicator_theme.linear_track_height {
             progress = progress.height(height);
         }
+        if let Some(radius) = indicator_theme.border_radius {
+            controls_theme.progress.radius = radius.top_left.x.max(radius.top_left.y).max(0.0);
+        }
         if let Some(label) = self.label.as_ref() {
             progress = progress.label(label.clone());
         }
@@ -131,7 +134,16 @@ impl LinearProgressIndicator {
             Some(value) => progress.value(value),
             None => progress.indeterminate(true),
         };
-        progress.build(&controls_theme)
+        let mut widget = progress.build(&controls_theme);
+        if let Some(padding) = indicator_theme.padding {
+            widget = Container::with_child(widget).padding(padding).into();
+        }
+        if let Some(size) = indicator_theme.constraints {
+            widget = Container::with_child(widget)
+                .constraints(incular_config::Constraints::tight(size))
+                .into();
+        }
+        widget
     }
 }
 
@@ -158,8 +170,8 @@ pub struct CircularProgressIndicator {
     max: f32,
     #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
     size: f32,
-    #[builder(default = 2.0, setter(transform = |value: f32| finite_non_negative(value)))]
-    stroke_width: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
+    stroke_width: Option<f32>,
     #[builder(default, setter(strip_option))]
     color: Option<Color>,
     #[builder(default, setter(strip_option))]
@@ -183,7 +195,7 @@ impl CircularProgressIndicator {
             min: 0.0,
             max: 1.0,
             size: 24.0,
-            stroke_width: 2.0,
+            stroke_width: None,
             color: None,
             background_color: None,
             label: None,
@@ -229,7 +241,7 @@ impl CircularProgressIndicator {
 
     #[must_use]
     pub fn stroke_width(mut self, stroke_width: f32) -> Self {
-        self.stroke_width = finite_non_negative(stroke_width);
+        self.stroke_width = Some(finite_non_negative(stroke_width));
         self
     }
 
@@ -261,9 +273,15 @@ impl CircularProgressIndicator {
         let size = self.size.max(1.0);
         let stroke = self
             .stroke_width
-            .max(indicator_theme.stroke_width.unwrap_or(0.0))
+            .or(indicator_theme.stroke_width)
+            .unwrap_or(2.0)
             .min(size * 0.5)
             .max(0.1);
+        let line_cap = match indicator_theme.stroke_cap.unwrap_or_default() {
+            crate::feedback::ProgressIndicatorStrokeCap::Butt => LineCap::Butt,
+            crate::feedback::ProgressIndicatorStrokeCap::Round => LineCap::Round,
+            crate::feedback::ProgressIndicatorStrokeCap::Square => LineCap::Square,
+        };
         let track = self
             .background_color
             .or(indicator_theme.circular_track_color)
@@ -282,7 +300,7 @@ impl CircularProgressIndicator {
             track,
             Stroke {
                 width: stroke,
-                cap: LineCap::Round,
+                cap: line_cap,
                 join: LineJoin::Round,
                 miter_limit: 4.0,
             },
@@ -298,14 +316,22 @@ impl CircularProgressIndicator {
                 progress,
                 Stroke {
                     width: stroke,
-                    cap: LineCap::Round,
+                    cap: line_cap,
                     join: LineJoin::Round,
                     miter_limit: 4.0,
                 },
             );
         }
-        let visual: Widget =
+        let mut visual: Widget =
             incular_widgets::CustomPaint::new(Size::new(size, size), canvas.finish()).into();
+        if let Some(padding) = indicator_theme.padding {
+            visual = Container::with_child(visual).padding(padding).into();
+        }
+        if let Some(constraints) = indicator_theme.constraints {
+            visual = Container::with_child(visual)
+                .constraints(incular_config::Constraints::tight(constraints))
+                .into();
+        }
         let value_text = ratio
             .map(|value| format!("{:.0}%", value * 100.0))
             .unwrap_or_else(|| "In progress".to_owned());

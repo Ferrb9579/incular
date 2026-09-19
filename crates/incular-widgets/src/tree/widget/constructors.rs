@@ -566,6 +566,43 @@ impl Widget {
             semantics: SemanticProperties::default(),
         })
     }
+    /// Retains an animation controller in the frame scheduler while `child`
+    /// consumes its dependency-tracked value during build.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn animation_ticker(controller: AnimationController, child: impl Into<Self>) -> Self {
+        Self::animation_ticker_with_revision(controller, false, Rc::new(Cell::new(0)), child)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn animation_ticker_with_start(
+        controller: AnimationController,
+        auto_start: bool,
+        child: impl Into<Self>,
+    ) -> Self {
+        Self::animation_ticker_with_revision(controller, auto_start, Rc::new(Cell::new(0)), child)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn animation_ticker_with_revision(
+        controller: AnimationController,
+        auto_start: bool,
+        revision: Rc<Cell<u64>>,
+        child: impl Into<Self>,
+    ) -> Self {
+        Self::from_node(WidgetNode {
+            key: None,
+            kind: WidgetKind::AnimationTicker {
+                controller,
+                auto_start,
+                revision,
+                child: child.into(),
+            },
+            semantics: SemanticProperties::default(),
+        })
+    }
     pub(crate) fn draggable(source: Rc<dyn RetainedDragSource>, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,

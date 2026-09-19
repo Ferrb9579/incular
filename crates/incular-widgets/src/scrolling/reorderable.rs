@@ -120,6 +120,7 @@ pub(crate) fn install_listener(
         | WidgetKind::Fractional { child, .. }
         | WidgetKind::Baseline { child, .. }
         | WidgetKind::RepaintBoundary { child, .. }
+        | WidgetKind::AnimationTicker { child, .. }
         | WidgetKind::Gesture { child, .. }
         | WidgetKind::Draggable { child, .. }
         | WidgetKind::DragTarget { child, .. }

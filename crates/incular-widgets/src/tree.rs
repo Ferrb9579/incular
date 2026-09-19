@@ -524,6 +524,11 @@ pub enum RenderKind {
         baseline: f32,
     },
     RepaintBoundary,
+    AnimationTicker {
+        controller: AnimationController,
+        auto_start: bool,
+        revision: Rc<Cell<u64>>,
+    },
     Gesture,
     Align {
         alignment: Alignment,

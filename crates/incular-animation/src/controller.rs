@@ -91,6 +91,12 @@ impl fmt::Debug for AnimationController {
     }
 }
 
+impl PartialEq for AnimationController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
 impl AnimationController {
     #[must_use]
     pub fn new(duration: Duration) -> Self {

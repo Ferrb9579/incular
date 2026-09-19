@@ -33,6 +33,7 @@ impl LayoutFamily {
             | RenderKind::Fractional { .. }
             | RenderKind::Baseline { .. }
             | RenderKind::RepaintBoundary
+            | RenderKind::AnimationTicker { .. }
             | RenderKind::Gesture
             | RenderKind::SelectionArea
             | RenderKind::SelectionContainer

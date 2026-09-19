@@ -172,6 +172,18 @@ impl std::fmt::Debug for WidgetKind {
                 .debug_struct("RepaintBoundary")
                 .field("child", child)
                 .finish(),
+            Self::AnimationTicker {
+                controller,
+                auto_start,
+                revision,
+                child,
+            } => f
+                .debug_struct("AnimationTicker")
+                .field("controller", controller)
+                .field("auto_start", auto_start)
+                .field("revision", &revision.get())
+                .field("child", child)
+                .finish(),
             Self::Gesture { child, .. } => f
                 .debug_struct("GestureDetector")
                 .field("child", child)
@@ -752,6 +764,20 @@ impl PartialEq for WidgetKind {
                 },
             ) => a == f && b == g && c == h && d == i && e == j,
             (Self::RepaintBoundary { child: a }, Self::RepaintBoundary { child: b }) => a == b,
+            (
+                Self::AnimationTicker {
+                    controller: a,
+                    auto_start: a_start,
+                    revision: a_revision,
+                    child: b,
+                },
+                Self::AnimationTicker {
+                    controller: c,
+                    auto_start: c_start,
+                    revision: c_revision,
+                    child: d,
+                },
+            ) => a == c && a_start == c_start && Rc::ptr_eq(a_revision, c_revision) && b == d,
             (
                 Self::Gesture {
                     behavior: a_behavior,
@@ -1584,6 +1610,7 @@ pub(crate) enum WidgetType {
     Fractional,
     Baseline,
     RepaintBoundary,
+    AnimationTicker,
     Gesture,
     Listener,
     RawGestureDetector,
@@ -1666,6 +1693,7 @@ impl WidgetType {
             Self::Fractional => "FractionallySizedBox",
             Self::Baseline => "Baseline",
             Self::RepaintBoundary => "RepaintBoundary",
+            Self::AnimationTicker => "AnimationTicker",
             Self::Gesture => "GestureDetector",
             Self::Listener => "Listener",
             Self::RawGestureDetector => "RawGestureDetector",
@@ -1944,6 +1972,12 @@ impl WidgetKind {
             ),
             WidgetKind::RepaintBoundary { child } => (
                 WidgetType::RepaintBoundary,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::AnimationTicker { child, .. } => (
+                WidgetType::AnimationTicker,
                 Layout,
                 Single,
                 WidgetChildren::Single(child),

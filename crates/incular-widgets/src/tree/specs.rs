@@ -314,6 +314,12 @@ pub(crate) enum WidgetKind {
     RepaintBoundary {
         child: Widget,
     },
+    AnimationTicker {
+        controller: AnimationController,
+        auto_start: bool,
+        revision: Rc<Cell<u64>>,
+        child: Widget,
+    },
     Gesture {
         behavior: crate::gestures::HitTestBehavior,
         callbacks: Box<GestureCallbacks>,
