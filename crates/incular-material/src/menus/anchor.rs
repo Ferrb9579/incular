@@ -5,14 +5,15 @@ use super::{
     popup::menu_panel,
     style::MenuStyle,
 };
-use incular_config::Clip;
+use incular_config::{Axis, Clip};
 use incular_controls::{Button as ControlButton, ButtonStyle, current_control_theme};
 use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
 use incular_widgets::{
-    Container, ExcludeSemantics, GestureDetector, HitTestBehavior, IgnorePointer, OverlayPortal,
-    Positioned, SizedBox, Text, TransientPlacement, TransientRole, Widget,
+    ClipRect, Container, ExcludeSemantics, GestureDetector, HitTestBehavior, IgnorePointer,
+    OverlayPortal, Positioned, SizedBox, Text, TransientPlacement, TransientRole, UnconstrainedBox,
+    Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -219,6 +220,10 @@ impl MenuAnchor {
     }
 
     fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
+        assert!(
+            !self.animated,
+            "MenuAnchor::animated(true) is not supported until retained open/close transitions are available; W7 rejects this option rather than silently ignoring it"
+        );
         let open = self.controller.is_open();
         let anchor_child = self.builder.as_ref().map_or_else(
             || {
@@ -294,7 +299,17 @@ impl MenuAnchor {
             self.menu_children.clone()
         };
         let (panel, panel_height) = menu_panel(items, &style, &theme);
-        let panel: Widget = SizedBox::new().height(panel_height).child(panel).into();
+        let mut panel: Widget = SizedBox::new().height(panel_height).child(panel).into();
+        if self.cross_axis_unconstrained {
+            panel = UnconstrainedBox::new(panel)
+                .constrained_axis(Axis::Vertical)
+                .into();
+        }
+        if self.clip_behavior != Clip::None {
+            panel = ClipRect::new(panel)
+                .clip_behavior(self.clip_behavior)
+                .into();
+        }
         // Leaf menu items close the complete retained menu chain, not merely
         // the nearest popup. A nested MenuAnchor inherits its parent's close
         // scope and composes its own controller into the same callback, so a
@@ -338,6 +353,7 @@ impl MenuAnchor {
         let overlay: Widget = OverlayPortal::new(anchor)
             .barrier_child(barrier)
             .overlay_child(panel)
+            .root_overlay(self.use_root_overlay)
             .role(TransientRole::Menu)
             .placement(
                 TransientPlacement::default()
@@ -352,12 +368,6 @@ impl MenuAnchor {
             })
             .show(true)
             .into();
-        let _ = (
-            self.clip_behavior,
-            self.cross_axis_unconstrained,
-            self.use_root_overlay,
-            self.animated,
-        );
         overlay
     }
 }

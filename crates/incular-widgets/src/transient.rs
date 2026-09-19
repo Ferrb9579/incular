@@ -608,6 +608,7 @@ pub(crate) struct TransientPortalMarker {
     pub anchor_override: Option<Rect>,
     pub dismiss_policy: TransientDismissPolicy,
     pub on_dismiss: Option<Rc<dyn Fn(TransientDismissReason) + 'static>>,
+    pub root_overlay: bool,
     pub show: bool,
     pub anchor_child_index: usize,
     pub popup_child_index: usize,

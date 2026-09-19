@@ -532,7 +532,8 @@ impl WidgetTree {
                     ) {
                         return None;
                     }
-                    if transient_parent.is_none()
+                    if !marker.root_overlay
+                        && transient_parent.is_none()
                         && ancestor_element
                             .environment_override
                             .as_ref()

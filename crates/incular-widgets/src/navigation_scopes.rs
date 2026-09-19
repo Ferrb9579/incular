@@ -33,6 +33,7 @@ pub struct OverlayPortal {
     anchor_override: Option<incular_core::Rect>,
     dismiss_policy: Option<TransientDismissPolicy>,
     on_dismiss: Option<Rc<dyn Fn(TransientDismissReason) + 'static>>,
+    root_overlay: bool,
     child: Widget,
 }
 
@@ -49,6 +50,7 @@ impl OverlayPortal {
             anchor_override: None,
             dismiss_policy: None,
             on_dismiss: None,
+            root_overlay: false,
             child: child.into(),
         }
     }
@@ -116,6 +118,15 @@ impl OverlayPortal {
         self
     }
 
+    /// Forces this transient to ignore any enclosing transient portal when
+    /// determining its retained overlay parent. This is the neutral owner for
+    /// Material's `use_root_overlay` policy.
+    #[must_use]
+    pub fn root_overlay(mut self, root: bool) -> Self {
+        self.root_overlay = root;
+        self
+    }
+
     #[must_use]
     pub fn show(mut self, show: bool) -> Self {
         self.show_overlay = show;
@@ -168,6 +179,7 @@ impl From<OverlayPortal> for Widget {
                 anchor_override,
                 dismiss_policy,
                 on_dismiss: on_dismiss.clone(),
+                root_overlay: value.root_overlay,
                 show: true,
                 anchor_child_index,
                 popup_child_index,
@@ -186,6 +198,7 @@ impl From<OverlayPortal> for Widget {
                 anchor_override,
                 dismiss_policy,
                 on_dismiss,
+                root_overlay: value.root_overlay,
                 show: false,
                 anchor_child_index: 0,
                 popup_child_index: 0,
