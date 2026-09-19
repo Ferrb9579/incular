@@ -25,8 +25,9 @@ animation/gestures -> core; scroll -> config/core
 DevTools transport -> runtime + protocol; desktop -> DevTools transport
 ```
 
-`specs/architecture.json` records every crate's current allowed direct normal
-and build dependencies, across all target conditions and optional features.
+`specs/architecture.json` records every workspace package's owner, API class,
+support evidence, and current allowed direct normal/build dependencies across
+all target conditions and optional features.
 Tests compare Cargo metadata against that allow-list, reject cycles, and
 restrict WGPU, Winit and AccessKit dependencies to their boundary crates.
 Dev dependencies are excluded so integration tests can compose layers.
@@ -42,9 +43,10 @@ is justified solely by file length.
 
 ## Ownership and support
 
-The complete crate matrix is in `specs/architecture.json`; each crate README
-contains its row. Support describes implemented responsibility, not feature
-completeness or validation on every OS.
+The complete package matrix is in `specs/architecture.json`; framework crates,
+the DevTools tool, and the root harness each point to their checked README
+evidence. Support describes implemented responsibility, not feature completeness
+or validation on every OS.
 
 - **Core/config/layout:** core owns geometry, identity and lower-level reactive
   values. Config owns constraints, alignment, insets and shared policies. Layout

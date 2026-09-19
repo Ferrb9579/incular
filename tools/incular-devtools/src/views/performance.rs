@@ -61,7 +61,7 @@ pub(crate) fn build_performance(
     ] {
         let mode_bridge = bridge.clone();
         performance_controls.push(compact_button(label, profiler_mode == mode, move || {
-            mode_bridge.send(RequestMethod::SetProfilerMode { mode })
+            mode_bridge.send_or_report(RequestMethod::SetProfilerMode { mode })
         }));
     }
     let recording_bridge = bridge.clone();
@@ -80,7 +80,7 @@ pub(crate) fn build_performance(
         })
         .color(if recording { DANGER } else { PRIMARY })
         .on_press(move || {
-            recording_bridge.send(if recording {
+            recording_bridge.send_or_report(if recording {
                 RequestMethod::StopRecording
             } else {
                 RequestMethod::StartRecording
@@ -100,7 +100,11 @@ pub(crate) fn build_performance(
             state.selected_range = None;
             state.range_anchor = None;
         }
-        clear_tick.update(|value| *value = value.wrapping_add(1));
+        clear_tick.update(|value| {
+            *value = value
+                .checked_add(1)
+                .expect("DevTools UI revision exhausted")
+        });
     }));
 
     for (label, visible_delta, offset_delta) in [
@@ -123,7 +127,11 @@ pub(crate) fn build_performance(
                     .saturating_add_signed(offset_delta)
                     .min(state.frames.len().saturating_sub(1));
             }
-            timeline_tick.update(|value| *value = value.wrapping_add(1));
+            timeline_tick.update(|value| {
+                *value = value
+                    .checked_add(1)
+                    .expect("DevTools UI revision exhausted")
+            });
         }));
     }
 
@@ -187,7 +195,11 @@ pub(crate) fn build_performance(
                         state.selected_range = Some((anchor, frame.frame));
                     }
                 }
-                frame_tick.update(|value| *value = value.wrapping_add(1));
+                frame_tick.update(|value| {
+                    *value = value
+                        .checked_add(1)
+                        .expect("DevTools UI revision exhausted")
+                });
             })
             .into()
     }));
@@ -208,7 +220,11 @@ pub(crate) fn build_performance(
                 state.range_anchor = state.selected_frame.map(|(_, frame)| frame);
                 state.selected_range = None;
             }
-            range_tick.update(|value| *value = value.wrapping_add(1));
+            range_tick.update(|value| {
+                *value = value
+                    .checked_add(1)
+                    .expect("DevTools UI revision exhausted")
+            });
         },
     ));
     if let Some(status) = trace_status {
@@ -258,7 +274,11 @@ pub(crate) fn build_performance(
             if let Ok(mut state) = rank_shared.lock() {
                 state.trace_range = range;
             }
-            rank_tick.update(|value| *value = value.wrapping_add(1));
+            rank_tick.update(|value| {
+                *value = value
+                    .checked_add(1)
+                    .expect("DevTools UI revision exhausted")
+            });
         }));
     }
     performance_body.extend(ranked.into_iter().take(24).map(|entry| {
@@ -285,14 +305,18 @@ pub(crate) fn build_performance(
                 } else {
                     None
                 };
-                entry_bridge.send(RequestMethod::GetNodeDetails { id: entry.node });
+                entry_bridge.send_or_report(RequestMethod::GetNodeDetails { id: entry.node });
                 if let Some(window) = window {
-                    entry_bridge.send(RequestMethod::HighlightNode {
+                    entry_bridge.send_or_report(RequestMethod::HighlightNode {
                         window,
                         id: Some(entry.node),
                     });
                 }
-                entry_tick.update(|value| *value = value.wrapping_add(1));
+                entry_tick.update(|value| {
+                    *value = value
+                        .checked_add(1)
+                        .expect("DevTools UI revision exhausted")
+                });
             })
             .into()
     }));

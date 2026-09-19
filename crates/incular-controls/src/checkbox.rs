@@ -240,7 +240,13 @@ impl Root {
                     values.retain(|current| current != &value);
                 }
                 drop(values);
-                group.revision.set(group.revision.get().wrapping_add(1));
+                group.revision.set(
+                    group
+                        .revision
+                        .get()
+                        .checked_add(1)
+                        .expect("revision exhausted"),
+                );
                 if let Some(callback) = callback.as_ref() {
                     callback(next);
                 }

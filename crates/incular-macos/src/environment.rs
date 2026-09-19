@@ -17,34 +17,67 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     ptr::NonNull,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct MacosEnvironmentState {
-    inner: Rc<Inner>,
+    state: Rc<CallbackState>,
+    observers: Rc<ObserverLease>,
 }
 
 #[derive(Default)]
-struct Inner {
+struct CallbackState {
     settings_dirty: Cell<bool>,
     lifecycle: RefCell<VecDeque<PlatformLifecycle>>,
+    active: Cell<bool>,
+}
+
+#[derive(Default)]
+struct ObserverLease {
+    state: Rc<CallbackState>,
     observer_tokens: RefCell<Vec<(Retained<NSNotificationCenter>, Retained<NSObject>)>>,
     watching: Cell<bool>,
 }
 
-impl Drop for Inner {
-    fn drop(&mut self) {
-        if self.observer_tokens.get_mut().is_empty() {
+impl ObserverLease {
+    fn stop(&self) {
+        self.state.active.set(false);
+        self.watching.set(false);
+        let mut observers = self.observer_tokens.borrow_mut();
+        if observers.is_empty() {
             return;
         }
         // SAFETY: the desktop runner creates and drops platform services on
         // AppKit's main thread. Each observer retains the exact notification
         // center that created it, and removal is synchronous.
-        for (center, observer) in self.observer_tokens.get_mut().drain(..) {
+        for (center, observer) in observers.drain(..) {
             unsafe { center.removeObserver(&observer) };
         }
+    }
+}
+
+impl Drop for ObserverLease {
+    fn drop(&mut self) {
+        self.state.active.set(false);
+        self.watching.set(false);
+        for (center, observer) in self.observer_tokens.get_mut().drain(..) {
+            // SAFETY: see `stop`; the lease is dropped with the platform
+            // service on the AppKit event-loop thread.
+            unsafe { center.removeObserver(&observer) };
+        }
+    }
+}
+
+impl Default for MacosEnvironmentState {
+    fn default() -> Self {
+        let state = Rc::new(CallbackState::default());
+        let observers = Rc::new(ObserverLease {
+            state: state.clone(),
+            ..ObserverLease::default()
+        });
+        Self { state, observers }
     }
 }
 
@@ -71,9 +104,10 @@ impl MacosEnvironmentState {
     }
 
     pub(crate) fn start_watch(&self, wake: Arc<dyn Fn() + Send + Sync>) {
-        if self.inner.watching.replace(true) {
+        if self.observers.watching.replace(true) {
             return;
         }
+        self.state.active.set(true);
         // SAFETY: watcher installation happens on the AppKit event-loop thread.
         // NSNotificationCenter copies each block and the returned observer token
         // is retained in `Inner` until explicit removal during Drop.
@@ -85,11 +119,13 @@ impl MacosEnvironmentState {
         // notification center.
         let locale_notification = unsafe { NSCurrentLocaleDidChangeNotification };
         {
-            let dirty = self.inner.clone();
+            let dirty = Rc::downgrade(&self.state);
             let wake = wake.clone();
             let block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
-                dirty.settings_dirty.set(true);
-                wake();
+                if let Some(state) = active_state(&dirty) {
+                    state.settings_dirty.set(true);
+                    wake();
+                }
             });
             let observer = unsafe {
                 center.addObserverForName_object_queue_usingBlock(
@@ -99,7 +135,7 @@ impl MacosEnvironmentState {
                     &block,
                 )
             };
-            self.inner
+            self.observers
                 .observer_tokens
                 .borrow_mut()
                 .push((center.clone(), observer));
@@ -111,11 +147,13 @@ impl MacosEnvironmentState {
         let accessibility_notification =
             unsafe { NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification };
         {
-            let dirty = self.inner.clone();
+            let dirty = Rc::downgrade(&self.state);
             let wake = wake.clone();
             let block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
-                dirty.settings_dirty.set(true);
-                wake();
+                if let Some(state) = active_state(&dirty) {
+                    state.settings_dirty.set(true);
+                    wake();
+                }
             });
             let observer = unsafe {
                 workspace_center.addObserverForName_object_queue_usingBlock(
@@ -125,7 +163,7 @@ impl MacosEnvironmentState {
                     &block,
                 )
             };
-            self.inner
+            self.observers
                 .observer_tokens
                 .borrow_mut()
                 .push((workspace_center.clone(), observer));
@@ -145,16 +183,18 @@ impl MacosEnvironmentState {
             ]
         };
         for (name, lifecycle) in lifecycle_notifications {
-            let state = self.inner.clone();
+            let state = Rc::downgrade(&self.state);
             let wake = wake.clone();
             let block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
-                state.lifecycle.borrow_mut().push_back(lifecycle);
-                wake();
+                if let Some(state) = active_state(&state) {
+                    state.lifecycle.borrow_mut().push_back(lifecycle);
+                    wake();
+                }
             });
             let observer = unsafe {
                 center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
             };
-            self.inner
+            self.observers
                 .observer_tokens
                 .borrow_mut()
                 .push((center.clone(), observer));
@@ -173,11 +213,13 @@ impl MacosEnvironmentState {
             ]
         };
         for (name, lifecycle) in sleep_notifications {
-            let state = self.inner.clone();
+            let state = Rc::downgrade(&self.state);
             let wake = wake.clone();
             let block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
-                state.lifecycle.borrow_mut().push_back(lifecycle);
-                wake();
+                if let Some(state) = active_state(&state) {
+                    state.lifecycle.borrow_mut().push_back(lifecycle);
+                    wake();
+                }
             });
             let observer = unsafe {
                 workspace_center.addObserverForName_object_queue_usingBlock(
@@ -187,7 +229,7 @@ impl MacosEnvironmentState {
                     &block,
                 )
             };
-            self.inner
+            self.observers
                 .observer_tokens
                 .borrow_mut()
                 .push((workspace_center.clone(), observer));
@@ -195,10 +237,14 @@ impl MacosEnvironmentState {
     }
 
     pub(crate) fn take_settings_change(&self) -> bool {
-        self.inner.settings_dirty.replace(false)
+        self.state.settings_dirty.replace(false)
     }
 
     pub(crate) fn take_lifecycle_events(&self) -> Vec<PlatformLifecycle> {
-        self.inner.lifecycle.borrow_mut().drain(..).collect()
+        self.state.lifecycle.borrow_mut().drain(..).collect()
     }
+}
+
+fn active_state(state: &Weak<CallbackState>) -> Option<Rc<CallbackState>> {
+    state.upgrade().filter(|state| state.active.get())
 }

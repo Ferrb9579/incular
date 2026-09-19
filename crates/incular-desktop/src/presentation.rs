@@ -235,7 +235,7 @@ pub(crate) fn present_window(
                     .saturating_add(stats.encode_us)
                     .saturating_add(stats.submit_us);
                 let frame_id = devtools.next_frame();
-                devtools.push_frame(incular_devtools_protocol::TargetEvent::FrameRecord(
+                let _ = devtools.push_frame(incular_devtools_protocol::TargetEvent::FrameRecord(
                     incular_devtools_protocol::FrameRecordEvent {
                         window: incular_devtools_protocol::DevWindowId::new(
                             u64::from(id.index()) + 1,
@@ -271,7 +271,8 @@ pub(crate) fn present_window(
                     && devtools.deep_recording()
                     && let Some(trace) = application.devtools_take_deep_trace(id, frame_id)
                 {
-                    devtools.push_frame(incular_devtools_protocol::TargetEvent::DeepTrace(trace));
+                    let _ = devtools
+                        .push_frame(incular_devtools_protocol::TargetEvent::DeepTrace(trace));
                 }
             }
             // Presented frames never re-request: the next frame comes from
@@ -282,7 +283,7 @@ pub(crate) fn present_window(
             eprintln!("Incular renderer stopped: out of GPU memory");
             application.fail_simulation_frame(id, "renderer stopped: out of GPU memory");
             #[cfg(feature = "devtools")]
-            devtools.push_frame(incular_devtools_protocol::TargetEvent::Log {
+            let _ = devtools.push_frame(incular_devtools_protocol::TargetEvent::Log {
                 level: "error".into(),
                 target: "incular::renderer".into(),
                 message: "renderer stopped: out of GPU memory".into(),
@@ -296,7 +297,7 @@ pub(crate) fn present_window(
             // Later demand re-renders from idle (see `note_failed`).
             state.retry.note_failed();
             #[cfg(feature = "devtools")]
-            devtools.push_frame(incular_devtools_protocol::TargetEvent::Log {
+            let _ = devtools.push_frame(incular_devtools_protocol::TargetEvent::Log {
                 level: "error".into(),
                 target: "incular::renderer".into(),
                 message: error.to_string(),

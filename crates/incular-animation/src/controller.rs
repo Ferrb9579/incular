@@ -447,7 +447,10 @@ impl AnimationController {
     pub fn add_listener(&self, listener: impl Fn(f32) + 'static) -> usize {
         let mut controller = self.inner.borrow_mut();
         let id = controller.next_listener;
-        controller.next_listener = controller.next_listener.wrapping_add(1);
+        controller.next_listener = controller
+            .next_listener
+            .checked_add(1)
+            .expect("animation listener identity space exhausted");
         controller.listeners.push((id, Rc::new(listener)));
         id
     }

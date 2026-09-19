@@ -463,7 +463,12 @@ impl<T: Clone + PartialEq + 'static> RadioGroup<T> {
     pub fn set_selected(&self, value: Option<T>) {
         if *self.selected.borrow() != value {
             *self.selected.borrow_mut() = value;
-            self.revision.set(self.revision.get().wrapping_add(1));
+            self.revision.set(
+                self.revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
     }
 
@@ -486,7 +491,7 @@ impl<T: Clone + PartialEq + 'static> RadioGroup<T> {
                 let next = Some(value.clone());
                 if *state.borrow() != next {
                     *state.borrow_mut() = next;
-                    revision.set(revision.get().wrapping_add(1));
+                    revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                     callback(value);
                 }
             });
@@ -495,7 +500,7 @@ impl<T: Clone + PartialEq + 'static> RadioGroup<T> {
                 let next = Some(value);
                 if *state.borrow() != next {
                     *state.borrow_mut() = next;
-                    revision.set(revision.get().wrapping_add(1));
+                    revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                 }
             });
         }

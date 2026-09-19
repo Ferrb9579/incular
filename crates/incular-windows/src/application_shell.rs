@@ -110,7 +110,9 @@ impl WindowsApplicationShell {
             }));
         });
 
-        let generation = NEXT_SINK_GENERATION.fetch_add(1, Ordering::Relaxed);
+        let generation = NEXT_SINK_GENERATION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("Windows application shell sink generation exhausted");
         *EVENT_SINK
             .get_or_init(|| Mutex::new(None))
             .lock()

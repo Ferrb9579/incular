@@ -26,7 +26,11 @@ impl<T> TreeSliverNode<T> {
     pub fn new(content: T) -> Self {
         static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
         Self {
-            id: TreeSliverNodeId(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed).max(1)),
+            id: TreeSliverNodeId(
+                NEXT_NODE_ID
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                    .expect("tree sliver node identity space exhausted"),
+            ),
             content,
             children: Vec::new(),
             expanded: false,
@@ -231,7 +235,7 @@ impl<T> TreeState<T> {
             }
         }
         self.rebuild_active();
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = self.revision.checked_add(1).expect("revision exhausted");
         (true, self.on_toggle.clone())
     }
 
@@ -257,7 +261,7 @@ impl<T> TreeState<T> {
         }
         if changed {
             self.rebuild_active();
-            self.revision = self.revision.wrapping_add(1);
+            self.revision = self.revision.checked_add(1).expect("revision exhausted");
         }
         changed
     }
@@ -281,7 +285,7 @@ impl<T> TreeState<T> {
         set_expanded_recursive(&mut self.roots, expanded);
         self.animations.clear();
         self.rebuild_active();
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = self.revision.checked_add(1).expect("revision exhausted");
     }
 }
 
@@ -709,7 +713,10 @@ impl<T> TreeRenderSliver<T> {
                 }
             }
             self.active = next_active;
-            self.structure_revision = self.structure_revision.wrapping_add(1);
+            self.structure_revision = self
+                .structure_revision
+                .checked_add(1)
+                .expect("structure revision exhausted");
         }
     }
 
@@ -910,8 +917,9 @@ impl<T: 'static> RenderSliver for TreeRenderSliver<T> {
         self.state
             .borrow()
             .revision
-            .wrapping_add(self.structure_revision)
-            .wrapping_add(self.index.revision())
+            .checked_add(self.structure_revision)
+            .and_then(|revision| revision.checked_add(self.index.revision()))
+            .expect("tree sliver composite revision exhausted")
     }
 
     fn tick(&mut self, now: Instant) -> bool {

@@ -51,12 +51,12 @@ fn widget_parity_manifest_is_complete_and_has_only_deliberate_gaps() {
             );
             values.push(value);
         }
-        let capability = values[0];
+        let capability = values[0].clone();
         assert!(
-            capabilities.insert(capability),
+            capabilities.insert(capability.clone()),
             "duplicate Flutter capability {capability:?} in manifest"
         );
-        let status = values[2];
+        let status = values[2].as_str();
         let index = STATES
             .iter()
             .position(|known| *known == status)
@@ -149,12 +149,12 @@ fn flutter_api_parity_manifest_is_complete_and_has_only_deliberate_gaps() {
             );
             values.push(value);
         }
-        let capability = values[0];
+        let capability = values[0].clone();
         assert!(
-            capabilities.insert(capability),
+            capabilities.insert(capability.clone()),
             "duplicate Flutter API {capability:?} in manifest"
         );
-        let status = values[3];
+        let status = values[3].as_str();
         let index = STATES
             .iter()
             .position(|known| *known == status)
@@ -466,14 +466,14 @@ fn canonical_flutter_core_widgets_inventory_has_no_silently_omitted_names() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/flutter_api_parity.jsonl");
     let source = fs::read_to_string(&path).expect("flutter API parity manifest must be checked in");
 
-    let manifest_names: HashSet<&str> = source
+    let manifest_names: HashSet<String> = source
         .lines()
         .filter_map(|line| json_string_field(line.trim(), "flutter"))
         .collect();
 
     for widget in canonical_flutter_widgets {
         assert!(
-            manifest_names.contains(widget),
+            manifest_names.contains(*widget),
             "canonical Flutter widget {widget:?} is missing from flutter_api_parity.jsonl"
         );
     }
@@ -496,14 +496,14 @@ fn canonical_flutter_material_widgets_live_in_the_material_layer() {
     ];
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/flutter_api_parity.jsonl");
     let source = fs::read_to_string(&path).expect("flutter API parity manifest must be checked in");
-    let manifest_names: HashSet<&str> = source
+    let manifest_names: HashSet<String> = source
         .lines()
         .filter_map(|line| json_string_field(line.trim(), "flutter"))
         .collect();
 
     for widget in canonical_material_widgets {
         assert!(
-            manifest_names.contains(widget),
+            manifest_names.contains(*widget),
             "canonical Flutter Material widget {widget:?} is missing from flutter_api_parity.jsonl"
         );
     }
@@ -513,7 +513,7 @@ fn canonical_flutter_material_widgets_live_in_the_material_layer() {
 fn parity_manifest_does_not_invent_non_flutter_core_widget_names() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/flutter_api_parity.jsonl");
     let source = fs::read_to_string(&path).expect("flutter API parity manifest must be checked in");
-    let manifest_names: HashSet<&str> = source
+    let manifest_names: HashSet<String> = source
         .lines()
         .filter_map(|line| json_string_field(line.trim(), "flutter"))
         .collect();
@@ -526,16 +526,10 @@ fn parity_manifest_does_not_invent_non_flutter_core_widget_names() {
     assert!(manifest_names.contains("EditableText"));
 }
 
-fn json_string_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    let key = format!("\"{field}\"");
-    let key_pos = line.find(&key)?;
-    let after_key = &line[key_pos + key.len()..];
-    let colon_pos = after_key.find(':')?;
-    let after_colon = after_key[colon_pos + 1..].trim_start();
-    if !after_colon.starts_with('"') {
-        return None;
-    }
-    let rest = &after_colon[1..];
-    let end = rest.find('"')?;
-    Some(&rest[..end])
+fn json_string_field(line: &str, field: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()?
+        .get(field)?
+        .as_str()
+        .map(str::to_owned)
 }

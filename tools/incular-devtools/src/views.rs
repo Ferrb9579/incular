@@ -15,7 +15,7 @@ pub use self::shell::ToolView;
 pub(crate) use self::shell::initial_tool_view;
 
 use crate::{
-    inspector::{InspectorSection, Shared},
+    inspector::{ConnectionState, InspectorSection, Shared},
     performance::{TraceRange, flamegraph_boxes, rank_traces},
     transport::ClientBridge,
 };
@@ -30,11 +30,11 @@ use std::{
     collections::HashSet,
     rc::Rc,
     sync::Arc,
-    time::Duration,
 };
 
 struct ViewSnapshot {
     header: String,
+    connection: ConnectionState,
     target_info: Option<TargetInfo>,
     connected: bool,
     windows: Vec<WindowSummary>,
@@ -69,7 +69,7 @@ struct ViewSnapshot {
 
 pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
     let tick = Signal::new(0_u64);
-    let pending = Rc::new(Cell::new(false));
+    let update_subscription_started = Rc::new(Cell::new(false));
     let search = TextEditingController::new();
     let console_filter = TextEditingController::new();
     let signal_value = TextEditingController::new();
@@ -82,7 +82,7 @@ pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
     let app_shared = Arc::clone(&shared);
     let app_bridge = bridge.clone();
     let app_tick = tick.clone();
-    let app_pending = pending.clone();
+    let app_update_subscription_started = update_subscription_started.clone();
     let app_search = search.clone();
     let app_console_filter = console_filter.clone();
     let app_signal_value = signal_value.clone();
@@ -105,21 +105,25 @@ pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
             let _ = app_tick.get();
             let active_view = app_tool_view.get();
             let active_inspector_section = app_inspector_section.get();
-            if !app_pending.replace(true) {
-                let updates = app_bridge.updates.clone();
+            if !app_update_subscription_started.replace(true) {
+                let wait_updates = Arc::clone(&app_bridge.updates);
+                let next_updates = Arc::clone(&app_bridge.updates);
                 let tick = app_tick.clone();
-                let pending = app_pending.clone();
-                cx.spawn_blocking(
-                    move || {
-                        updates
-                            .lock()
-                            .ok()
-                            .is_some_and(|rx| rx.recv_timeout(Duration::from_millis(125)).is_ok())
+                let next_tick = app_tick.clone();
+                let scope = cx.task_scope();
+                let next_scope = scope.clone();
+                cx.spawn_into(
+                    async move {
+                        wait_updates.notified().await;
                     },
-                    move |updated, _| {
-                        pending.set(false);
-                        if matches!(updated, Ok(true)) {
-                            tick.update(|value| *value = value.wrapping_add(1));
+                    move |updated, runtime| {
+                        if updated.is_ok() {
+                            tick.update(|value| {
+                                *value = value
+                                    .checked_add(1)
+                                    .expect("DevTools UI revision exhausted");
+                            });
+                            arm_model_update_wait(runtime, next_scope, next_updates, next_tick);
                         }
                     },
                 );
@@ -129,7 +133,7 @@ pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
                 let header = if state.connected {
                     format!("Connected to {}", state.target)
                 } else {
-                    "Connecting to target".into()
+                    format!("DevTools {}", state.connection.label())
                 };
                 let target_info = state.target_info.clone();
                 let visible_frames = state.timeline_visible.max(6);
@@ -241,6 +245,7 @@ pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
                     });
                 ViewSnapshot {
                     header,
+                    connection: state.connection,
                     target_info,
                     connected: state.connected,
                     windows: state.windows.clone(),
@@ -318,7 +323,7 @@ pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
             );
             let application_content = application::build_application(
                 snapshot.target_info.clone(),
-                snapshot.connected,
+                snapshot.connection,
                 snapshot.windows.clone(),
                 snapshot.frames.clone(),
                 app_bridge.clone(),
@@ -368,4 +373,35 @@ pub(crate) fn run(shared: Shared, bridge: ClientBridge) {
         Ok(app) => incular::run(app).expect("devtools application"),
         Err(error) => eprintln!("unable to start DevTools: {error:?}"),
     }
+}
+
+fn arm_model_update_wait(
+    runtime: &mut Runtime,
+    scope: TaskScope,
+    updates: Arc<tokio::sync::Notify>,
+    tick: Signal<u64>,
+) {
+    if scope.is_cancelled() {
+        return;
+    }
+    let wait_updates = Arc::clone(&updates);
+    let next_updates = updates;
+    let next_scope = scope.clone();
+    let next_tick = tick.clone();
+    runtime.spawner().spawn_into_in(
+        &scope,
+        async move {
+            wait_updates.notified().await;
+        },
+        move |updated, runtime| {
+            if updated.is_ok() {
+                tick.update(|value| {
+                    *value = value
+                        .checked_add(1)
+                        .expect("DevTools UI revision exhausted");
+                });
+                arm_model_update_wait(runtime, next_scope, next_updates, next_tick);
+            }
+        },
+    );
 }

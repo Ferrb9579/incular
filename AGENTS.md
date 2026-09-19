@@ -24,7 +24,7 @@ support matrix are in `specs/architecture.json`.
 - `incular-layout`: Layout algorithms over measured sizes; config values are exact re-exports.
 - `incular-linux`: Linux desktop entry and native services over the shared desktop host.
 - `incular-macos`: macOS desktop entry and native services over the shared desktop host.
-- `incular-macros`: Procedural macros for framework composition and builders.
+- `incular-macros`: Reserved procedural-macro boundary for future framework composition helpers.
 - `incular-material`: Material presentation composed from controls and neutral widgets.
 - `incular-navigation`: Application route stacks, routing, restoration and route composition.
 - `incular-painting`: Pure compatibility re-export of incular-rendering.
@@ -37,10 +37,13 @@ support matrix are in `specs/architecture.json`.
 - `incular-wgpu`: Owned native surfaces, GPU resources and execution of rendering commands.
 - `incular-widgets`: Neutral widget composition and retained build/layout/paint/input/semantics.
 - `incular-windows`: Windows desktop entry and native services over the shared desktop host.
+- `incular-devtools-ui`: Standalone desktop DevTools application over the public facade and diagnostics protocol.
+- `incular-workspace-tests`: Repository integration-test harness and architecture/parity policy owner.
 
 ## Structure rules
 
-- The workspace is organized under `crates/*`.
+- Framework crates live under `crates/*`; tools live under `tools/*`; the root
+  package is the integration-test harness.
 - Each crate should contain `Cargo.toml`, `README.md`, and `src/lib.rs`.
 - Keep built-in widgets in `incular-widgets`; do not create a separate crate for them.
 - Keep platform-specific APIs in their matching native crate.

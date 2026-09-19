@@ -1,5 +1,5 @@
 use incular_devtools_protocol::{DeepFrameTrace, DevWidgetId, TracePhase};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlameBox {
@@ -52,7 +52,11 @@ pub fn flamegraph_boxes(
         .map(|(index, event)| {
             let mut depth = 0_u16;
             let mut parent = event.parent;
+            let mut visited = HashSet::new();
             while let Some(parent_index) = parent {
+                if !visited.insert(parent_index) {
+                    break;
+                }
                 let Some(parent_event) = trace.events.get(parent_index as usize) else {
                     break;
                 };

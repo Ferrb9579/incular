@@ -408,7 +408,12 @@ impl TooltipController {
 
     fn set_visible(&self, visible: bool) {
         if self.visible.replace(visible) != visible {
-            self.revision.set(self.revision.get().wrapping_add(1));
+            self.revision.set(
+                self.revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
     }
 }

@@ -442,7 +442,12 @@ impl ScaffoldMessengerController {
     }
 
     fn bump_revision(&self) {
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
     }
 }
 

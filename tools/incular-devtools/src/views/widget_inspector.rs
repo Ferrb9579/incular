@@ -112,8 +112,12 @@ pub(crate) fn build_inspector(
                     state.timeline_offset = 0;
                     state.tree_retry_sent = false;
                 }
-                window_bridge.send(RequestMethod::GetWidgetTree { window: window.id });
-                window_tick.update(|value| *value = value.wrapping_add(1));
+                window_bridge.send_or_report(RequestMethod::GetWidgetTree { window: window.id });
+                window_tick.update(|value| {
+                    *value = value
+                        .checked_add(1)
+                        .expect("DevTools UI revision exhausted")
+                });
             },
         ));
     }
@@ -142,13 +146,17 @@ pub(crate) fn build_inspector(
                     .map(|window| (window, state.select_mode))
             });
             if let Some((window, enabled)) = selection {
-                selection_bridge.send(if enabled {
+                selection_bridge.send_or_report(if enabled {
                     RequestMethod::StartInspectMode { window }
                 } else {
                     RequestMethod::StopInspectMode { window }
                 });
             }
-            selection_tick.update(|value| *value = value.wrapping_add(1));
+            selection_tick.update(|value| {
+                *value = value
+                    .checked_add(1)
+                    .expect("DevTools UI revision exhausted")
+            });
         })
         .into(),
     );
@@ -163,9 +171,13 @@ pub(crate) fn build_inspector(
             state.active_window
         });
         if let Some(window) = window {
-            clear_bridge.send(RequestMethod::HighlightNode { window, id: None });
+            clear_bridge.send_or_report(RequestMethod::HighlightNode { window, id: None });
         }
-        clear_tick.update(|value| *value = value.wrapping_add(1));
+        clear_tick.update(|value| {
+            *value = value
+                .checked_add(1)
+                .expect("DevTools UI revision exhausted")
+        });
     }));
     let collapse_shared = Arc::clone(&shared);
     let collapse_tick = tick.clone();
@@ -173,7 +185,11 @@ pub(crate) fn build_inspector(
         if let Ok(mut state) = collapse_shared.lock() {
             state.collapse_all();
         }
-        collapse_tick.update(|value| *value = value.wrapping_add(1));
+        collapse_tick.update(|value| {
+            *value = value
+                .checked_add(1)
+                .expect("DevTools UI revision exhausted")
+        });
     }));
     let expand_shared = Arc::clone(&shared);
     let expand_tick = tick.clone();
@@ -181,7 +197,11 @@ pub(crate) fn build_inspector(
         if let Ok(mut state) = expand_shared.lock() {
             state.expand_all();
         }
-        expand_tick.update(|value| *value = value.wrapping_add(1));
+        expand_tick.update(|value| {
+            *value = value
+                .checked_add(1)
+                .expect("DevTools UI revision exhausted")
+        });
     }));
 
     for (option, label) in [
@@ -217,11 +237,15 @@ pub(crate) fn build_inspector(
             } else {
                 false
             };
-            option_bridge.send(RequestMethod::SetDebugOption {
+            option_bridge.send_or_report(RequestMethod::SetDebugOption {
                 name: option,
                 enabled,
             });
-            option_tick.update(|value| *value = value.wrapping_add(1));
+            option_tick.update(|value| {
+                *value = value
+                    .checked_add(1)
+                    .expect("DevTools UI revision exhausted")
+            });
         }));
     }
     for (scale, label) in [
@@ -233,13 +257,13 @@ pub(crate) fn build_inspector(
     ] {
         let animation_bridge = bridge.clone();
         animation_controls.push(compact_button(label, scale == animation_scale, move || {
-            animation_bridge.send(RequestMethod::SetAnimationSpeed { scale })
+            animation_bridge.send_or_report(RequestMethod::SetAnimationSpeed { scale })
         }));
     }
 
     let signals_bridge = bridge.clone();
     signal_body.push(compact_button("Refresh signal list", false, move || {
-        signals_bridge.send(RequestMethod::ListSignals)
+        signals_bridge.send_or_report(RequestMethod::ListSignals)
     }));
     for signal in signals {
         let label = format!(
@@ -268,8 +292,12 @@ pub(crate) fn build_inspector(
                     state.selected_signal = Some(signal.id);
                     state.signal_subscribers.clear();
                 }
-                signal_bridge.send(RequestMethod::GetSignalSubscribers { id: signal.id });
-                signal_tick.update(|value| *value = value.wrapping_add(1));
+                signal_bridge.send_or_report(RequestMethod::GetSignalSubscribers { id: signal.id });
+                signal_tick.update(|value| {
+                    *value = value
+                        .checked_add(1)
+                        .expect("DevTools UI revision exhausted")
+                });
             },
         ));
     }
@@ -299,11 +327,15 @@ pub(crate) fn build_inspector(
                     .placeholder("New signal value; press Enter")
                     .on_submit(move |input| {
                         if let Some(value) = editable_value(&signal, &input) {
-                            signal_bridge.send(RequestMethod::EditSignal {
+                            signal_bridge.send_or_report(RequestMethod::EditSignal {
                                 id: signal.id,
                                 value,
                             });
-                            signal_tick.update(|value| *value = value.wrapping_add(1));
+                            signal_tick.update(|value| {
+                                *value = value
+                                    .checked_add(1)
+                                    .expect("DevTools UI revision exhausted")
+                            });
                         }
                     })
                     .into(),
@@ -328,7 +360,11 @@ pub(crate) fn build_inspector(
                     state.search = query;
                     state.rebuild_rows();
                 }
-                search_tick.update(|value| *value = value.wrapping_add(1));
+                search_tick.update(|value| {
+                    *value = value
+                        .checked_add(1)
+                        .expect("DevTools UI revision exhausted")
+                });
             }
         })
         .into();
@@ -397,7 +433,11 @@ pub(crate) fn build_inspector(
                         if let Ok(mut state) = toggle_shared.lock() {
                             state.toggle_expanded(row.id);
                         }
-                        toggle_tick.update(|value| *value = value.wrapping_add(1));
+                        toggle_tick.update(|value| {
+                            *value = value
+                                .checked_add(1)
+                                .expect("DevTools UI revision exhausted")
+                        });
                     })
                     .into()
             } else {
@@ -428,12 +468,16 @@ pub(crate) fn build_inspector(
                         state.active_window
                     });
                     if let Some(window) = window {
-                        hover_bridge.send(RequestMethod::HighlightNode {
+                        hover_bridge.send_or_report(RequestMethod::HighlightNode {
                             window,
                             id: Some(hover_id),
                         });
                     }
-                    hover_tick.update(|value| *value = value.wrapping_add(1));
+                    hover_tick.update(|value| {
+                        *value = value
+                            .checked_add(1)
+                            .expect("DevTools UI revision exhausted")
+                    });
                 })
                 .on_exit(move || {
                     let (window, selected) = exit_shared
@@ -447,12 +491,16 @@ pub(crate) fn build_inspector(
                         })
                         .unwrap_or((None, None));
                     if let Some(window) = window {
-                        exit_bridge.send(RequestMethod::HighlightNode {
+                        exit_bridge.send_or_report(RequestMethod::HighlightNode {
                             window,
                             id: selected,
                         });
                     }
-                    exit_tick.update(|value| *value = value.wrapping_add(1));
+                    exit_tick.update(|value| {
+                        *value = value
+                            .checked_add(1)
+                            .expect("DevTools UI revision exhausted")
+                    });
                 })
                 .on_press(move || {
                     let window = if let Ok(mut state) = press_shared.lock() {
@@ -463,13 +511,17 @@ pub(crate) fn build_inspector(
                         None
                     };
                     if let Some(window) = window {
-                        press_bridge.send(RequestMethod::GetNodeDetails { id: row.id });
-                        press_bridge.send(RequestMethod::HighlightNode {
+                        press_bridge.send_or_report(RequestMethod::GetNodeDetails { id: row.id });
+                        press_bridge.send_or_report(RequestMethod::HighlightNode {
                             window,
                             id: Some(row.id),
                         });
                     }
-                    press_tick.update(|value| *value = value.wrapping_add(1));
+                    press_tick.update(|value| {
+                        *value = value
+                            .checked_add(1)
+                            .expect("DevTools UI revision exhausted")
+                    });
                 })
                 .into();
             Row::new([
@@ -521,12 +573,16 @@ pub(crate) fn build_inspector(
                 .placeholder("Enter a value and press Enter")
                 .on_submit(move |input| {
                     if let Some(value) = parse_debug_value(&template, &input) {
-                        property_bridge.send(RequestMethod::EditProperty {
+                        property_bridge.send_or_report(RequestMethod::EditProperty {
                             id,
                             name: name.clone(),
                             value,
                         });
-                        property_tick.update(|value| *value = value.wrapping_add(1));
+                        property_tick.update(|value| {
+                            *value = value
+                                .checked_add(1)
+                                .expect("DevTools UI revision exhausted")
+                        });
                     }
                 })
                 .into(),
@@ -536,7 +592,7 @@ pub(crate) fn build_inspector(
             property_editor.push(compact_button(
                 "Reset property overrides",
                 false,
-                move || reset_bridge.send(RequestMethod::ResetOverrides),
+                move || reset_bridge.send_or_report(RequestMethod::ResetOverrides),
             ));
         }
         property_editor.push(gap(1., 10.));

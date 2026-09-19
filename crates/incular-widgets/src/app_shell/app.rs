@@ -398,7 +398,13 @@ impl WidgetsAppController {
                 let mut state = inner.borrow_mut();
                 state.stack = restored;
                 state.initialized = true;
-                state.revision.set(state.revision.get().wrapping_add(1));
+                state.revision.set(
+                    state
+                        .revision
+                        .get()
+                        .checked_add(1)
+                        .expect("revision exhausted"),
+                );
                 return;
             }
         }
@@ -410,7 +416,13 @@ impl WidgetsAppController {
             let mut state = inner.borrow_mut();
             state.stack = stack;
             state.initialized = true;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         Self::persist(inner);
     }
@@ -465,7 +477,13 @@ impl WidgetsAppController {
         {
             let mut state = inner.borrow_mut();
             state.stack.push(information.clone());
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         if platform {
             let _ = inner
@@ -504,7 +522,13 @@ impl WidgetsAppController {
                 let last = state.stack.len() - 1;
                 state.stack[last] = information.clone();
             }
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         if platform {
             let _ = inner
@@ -533,7 +557,13 @@ impl WidgetsAppController {
         {
             let mut state = inner.borrow_mut();
             state.stack = stack;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         if platform {
             let _ = inner
@@ -560,7 +590,13 @@ impl WidgetsAppController {
                 return false;
             }
             state.stack.pop();
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             state.stack.last().cloned().unwrap_or_default()
         };
         let _ = inner
@@ -621,7 +657,7 @@ impl WidgetsAppController {
 
     fn invalidate(&self) {
         let revision = self.inner.borrow().revision.clone();
-        revision.set(revision.get().wrapping_add(1));
+        revision.set(revision.get().checked_add(1).expect("revision exhausted"));
     }
 
     fn reset_initialization(&self) {

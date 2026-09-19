@@ -20,6 +20,14 @@ use incular_core::Size;
 
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
 
+fn next_image_id() -> ImageId {
+    ImageId(
+        NEXT_IMAGE_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("image identity space exhausted"),
+    )
+}
+
 /// Configuration used when resolving an image provider.
 ///
 /// This is an immutable description of the target widget environment. The
@@ -454,7 +462,7 @@ impl ImageHandle {
             return Err(ImageError::InvalidDimensions);
         }
         Ok(Self(Arc::new(ImageResource {
-            id: ImageId(NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed)),
+            id: next_image_id(),
             source,
             image,
         })))

@@ -53,7 +53,7 @@ unused_must_use = "deny"
 broken_intra_doc_links = "deny"
 
 [workspace.dependencies]
-incular = { path = "crates/incular", version = "0.1.0" }
+incular = { path = "crates/incular", version = "0.1.0", default-features = false }
 incular-android = { path = "crates/incular-android", version = "0.1.0" }
 incular-accessibility = { path = "crates/incular-accessibility", version = "0.1.0" }
 incular-semantics = { path = "crates/incular-semantics", version = "0.1.0" }

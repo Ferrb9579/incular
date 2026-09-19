@@ -66,7 +66,9 @@ impl ScrollController {
     ) -> ScrollNotificationSubscription {
         let mut state = self.state.borrow_mut();
         let id = state.next_notification_listener;
-        state.next_notification_listener = id.wrapping_add(1);
+        state.next_notification_listener = id
+            .checked_add(1)
+            .expect("scroll notification listener identity space exhausted");
         state
             .notification_listeners
             .borrow_mut()

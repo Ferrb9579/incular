@@ -112,7 +112,10 @@ impl Form {
     pub fn register(&self, controller: TextEditingController) -> FormField {
         let id = {
             let mut state = self.state.borrow_mut();
-            state.next_id = state.next_id.saturating_add(1);
+            state.next_id = state
+                .next_id
+                .checked_add(1)
+                .expect("form field identity space exhausted");
             FormFieldId(state.next_id)
         };
         let field = Rc::new(FieldState {
@@ -245,7 +248,10 @@ impl Form {
     /// field edit, validation, save, or reset.
     pub fn add_listener(&self, listener: impl Fn() + 'static) -> usize {
         let mut state = self.state.borrow_mut();
-        state.next_listener = state.next_listener.wrapping_add(1).max(1);
+        state.next_listener = state
+            .next_listener
+            .checked_add(1)
+            .expect("form listener identity space exhausted");
         let token = state.next_listener;
         state.listeners.insert(token, Rc::new(listener));
         token
@@ -425,7 +431,7 @@ fn validate_field(field: &FieldState) -> bool {
 fn notify_form_listeners(form: &Rc<RefCell<FormRegistry>>) {
     let listeners = {
         let mut state = form.borrow_mut();
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         state.listeners.values().cloned().collect::<Vec<_>>()
     };
     for listener in listeners {

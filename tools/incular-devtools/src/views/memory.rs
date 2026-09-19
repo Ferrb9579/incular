@@ -12,17 +12,17 @@ pub(crate) fn build_memory(
     let mut body = Vec::new();
     let capture_bridge = bridge.clone();
     controls.push(compact_button("Capture snapshot", false, move || {
-        capture_bridge.send(RequestMethod::TakeMemorySnapshot {
+        capture_bridge.send_or_report(RequestMethod::TakeMemorySnapshot {
             label: "manual".into(),
         })
     }));
     let baseline_bridge = bridge.clone();
     controls.push(compact_button("Set baseline A", false, move || {
-        baseline_bridge.send(RequestMethod::TakeMemorySnapshot { label: "A".into() })
+        baseline_bridge.send_or_report(RequestMethod::TakeMemorySnapshot { label: "A".into() })
     }));
     let compare_bridge = bridge;
     controls.push(compact_button("Compare snapshot B", false, move || {
-        compare_bridge.send(RequestMethod::TakeMemorySnapshot { label: "B".into() })
+        compare_bridge.send_or_report(RequestMethod::TakeMemorySnapshot { label: "B".into() })
     }));
 
     if let Some(memory) = memory {

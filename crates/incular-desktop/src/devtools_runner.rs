@@ -3,7 +3,7 @@
 //! Select Widget input interception.
 
 use incular_devtools::AgentHandle;
-use incular_devtools::commands::{UiCommand, UiReply};
+use incular_devtools::commands::UiCommand;
 use incular_devtools_protocol::{
     DebugOption, DebugValue, DevWidgetId, DevWindowId, DevtoolsProfilerMode, ErrorCode,
     MemorySnapshot, RequestMethod, ResponsePayload, TargetEvent, TreeDelta, WidgetNode,
@@ -118,24 +118,42 @@ impl DevToolsState {
 
     /// Monotonic per-session frame counter for streamed records.
     pub fn next_frame(&mut self) -> u64 {
-        self.frame_counter += 1;
+        self.frame_counter = self
+            .frame_counter
+            .checked_add(1)
+            .expect("DevTools frame/tree revision exhausted");
         self.frame_counter
     }
 
-    /// Drains queued DevTools commands; called once per frame on UI thread.
-    pub fn drain(&mut self, application: &mut incular_runtime::Application) {
+    /// Drains a bounded amount of queued DevTools work on the UI thread.
+    ///
+    /// Returns true when another coalesced event-loop wake was scheduled.
+    #[must_use]
+    pub fn drain(&mut self, application: &mut incular_runtime::Application) -> bool {
         let Some(agent) = self.agent.as_ref().map(|agent| agent.commands.clone()) else {
-            return;
+            return false;
         };
-        while let Some(command) = agent.try_next() {
-            let UiCommand { request_id, body } = command;
+        if agent.take_session_cleanup() {
+            self.reset_session(application);
+        }
+        const COMMAND_BUDGET: usize = 32;
+        for _ in 0..COMMAND_BUDGET {
+            let Some(command) = agent.try_next() else {
+                break;
+            };
+            let UiCommand {
+                body, completion, ..
+            } = command;
+            if completion.is_abandoned() {
+                continue;
+            }
             let reply = match body {
                 RequestMethod::StartInspectMode { window } => {
                     if let Some(platform_window) = self.resolve_window(application, window) {
                         self.select_window = Some(platform_window);
-                        UiReply::ok(request_id)
+                        Ok(ResponsePayload::Ok)
                     } else {
-                        UiReply::error(request_id, ErrorCode::UnknownId)
+                        Err(ErrorCode::UnknownId)
                     }
                 }
                 RequestMethod::StopInspectMode { window } => {
@@ -144,29 +162,25 @@ impl DevToolsState {
                     {
                         self.select_window = None;
                     }
-                    UiReply::ok(request_id)
+                    Ok(ResponsePayload::Ok)
                 }
-                RequestMethod::GetTargetInfo => UiReply::with(
-                    request_id,
-                    ResponsePayload::TargetInfo(Box::new(incular_devtools::target_info(
+                RequestMethod::GetTargetInfo => Ok(ResponsePayload::TargetInfo(Box::new(
+                    incular_devtools::target_info(
                         env!("CARGO_PKG_VERSION"),
                         application.devtools_windows(),
-                    ))),
-                ),
+                    ),
+                ))),
                 RequestMethod::GetWidgetTree { window } => {
                     match application.devtools_widget_tree(window) {
                         Ok(deltas) => {
                             self.tree_subscriptions.insert(window);
                             self.remember_tree(window, &deltas);
-                            UiReply::with(
-                                request_id,
-                                ResponsePayload::WidgetTree {
-                                    deltas,
-                                    tree_revision: self.frame_counter,
-                                },
-                            )
+                            Ok(ResponsePayload::WidgetTree {
+                                deltas,
+                                tree_revision: self.frame_counter,
+                            })
                         }
-                        Err(code) => UiReply::error(request_id, code),
+                        Err(code) => Err(code),
                     }
                 }
                 RequestMethod::GetNodeDetails { id } => match application.devtools_node_details(id)
@@ -177,9 +191,9 @@ impl DevToolsState {
                                 .property_overrides
                                 .contains_key(&(id, property.name.clone()));
                         }
-                        UiReply::with(request_id, ResponsePayload::NodeDetails(Box::new(details)))
+                        Ok(ResponsePayload::NodeDetails(Box::new(details)))
                     }
-                    Err(code) => UiReply::error(request_id, code),
+                    Err(code) => Err(code),
                 },
                 RequestMethod::EditProperty { id, name, value } => {
                     let original = self
@@ -205,9 +219,9 @@ impl DevToolsState {
                                 current: value,
                             },
                         );
-                        UiReply::with(request_id, ResponsePayload::Edited)
+                        Ok(ResponsePayload::Edited)
                     } else {
-                        UiReply::error(request_id, ErrorCode::Unsupported)
+                        Err(ErrorCode::Unsupported)
                     }
                 }
                 RequestMethod::HighlightNode { id, .. } => {
@@ -222,7 +236,7 @@ impl DevToolsState {
                     self.highlight_baseline =
                         geometry.and_then(|(_, geometry)| geometry.baseline_y);
                     self.highlight_clip = geometry.and_then(|(_, geometry)| geometry.clip_bounds);
-                    UiReply::ok(request_id)
+                    Ok(ResponsePayload::Ok)
                 }
                 RequestMethod::SetDebugOption { name, enabled } => {
                     if enabled {
@@ -230,7 +244,7 @@ impl DevToolsState {
                     } else {
                         self.options.remove(&name);
                     }
-                    UiReply::ok(request_id)
+                    Ok(ResponsePayload::Ok)
                 }
                 RequestMethod::SetAnimationSpeed { scale } => {
                     self.animation_speed = if scale.is_finite() {
@@ -239,10 +253,7 @@ impl DevToolsState {
                         1.
                     };
                     application.set_animation_time_scale(self.animation_speed);
-                    UiReply::with(
-                        request_id,
-                        ResponsePayload::AnimationSpeedSet(self.animation_speed()),
-                    )
+                    Ok(ResponsePayload::AnimationSpeedSet(self.animation_speed()))
                 }
                 RequestMethod::SetProfilerMode { mode } => {
                     self.profiler_mode = mode;
@@ -253,46 +264,38 @@ impl DevToolsState {
                         }
                         DevtoolsProfilerMode::Deep => incular_runtime::ProfilerMode::Profiling,
                     });
-                    UiReply::with(request_id, ResponsePayload::ProfilerModeSet(mode))
+                    Ok(ResponsePayload::ProfilerModeSet(mode))
                 }
                 RequestMethod::StartRecording => {
                     self.recording = true;
                     self.recorded_frames = 0;
-                    UiReply::with(request_id, ResponsePayload::RecordingStarted)
+                    Ok(ResponsePayload::RecordingStarted)
                 }
                 RequestMethod::StopRecording => {
                     self.recording = false;
-                    UiReply::with(
-                        request_id,
-                        ResponsePayload::RecordingStopped {
-                            frames: self.recorded_frames,
-                        },
-                    )
+                    Ok(ResponsePayload::RecordingStopped {
+                        frames: self.recorded_frames,
+                    })
                 }
                 RequestMethod::TakeMemorySnapshot { label } => {
                     let mut counts = application.devtools_resource_counts();
                     counts.rss_mb = incular_devtools::process_rss_mb();
-                    UiReply::with(
-                        request_id,
-                        ResponsePayload::MemorySnapshot(MemorySnapshot { label, counts }),
-                    )
+                    Ok(ResponsePayload::MemorySnapshot(MemorySnapshot {
+                        label,
+                        counts,
+                    }))
                 }
-                RequestMethod::ListSignals => UiReply::with(
-                    request_id,
-                    ResponsePayload::Signals(application.devtools_signals()),
-                ),
-                RequestMethod::GetSignalSubscribers { id } => UiReply::with(
-                    request_id,
+                RequestMethod::ListSignals => {
+                    Ok(ResponsePayload::Signals(application.devtools_signals()))
+                }
+                RequestMethod::GetSignalSubscribers { id } => Ok(
                     ResponsePayload::SignalSubscribers(application.devtools_signal_subscribers(id)),
                 ),
                 RequestMethod::EditSignal { id, value } => {
                     if application.devtools_edit_signal(id, &value) {
-                        UiReply::with(request_id, ResponsePayload::Edited)
+                        Ok(ResponsePayload::Edited)
                     } else {
-                        UiReply::error(
-                            request_id,
-                            incular_devtools_protocol::ErrorCode::Unsupported,
-                        )
+                        Err(incular_devtools_protocol::ErrorCode::Unsupported)
                     }
                 }
                 RequestMethod::ResetOverrides => {
@@ -300,16 +303,11 @@ impl DevToolsState {
                     for ((id, name), property) in overrides {
                         let _ = application.devtools_edit_property(id, &name, &property.original);
                     }
-                    UiReply::with(request_id, ResponsePayload::OverridesReset)
+                    Ok(ResponsePayload::OverridesReset)
                 }
-                _ => UiReply::error(
-                    request_id,
-                    incular_devtools_protocol::ErrorCode::Unsupported,
-                ),
+                _ => Err(incular_devtools_protocol::ErrorCode::Unsupported),
             };
-            if let Some(agent) = &self.agent {
-                let _ = agent.reply_sender.send(reply);
-            }
+            completion.complete(reply);
         }
         self.property_overrides.retain(|(id, name), property| {
             application.devtools_edit_property(*id, name, &property.current)
@@ -317,6 +315,40 @@ impl DevToolsState {
         self.refresh_layout_bounds(application);
         self.refresh_auxiliary_overlays(application);
         self.refresh_phase_flashes(application);
+        agent.acknowledge_wake()
+    }
+
+    fn reset_session(&mut self, application: &mut incular_runtime::Application) {
+        self.select_window = None;
+        self.hover = None;
+        self.highlight = None;
+        self.highlight_content = None;
+        self.highlight_baseline = None;
+        self.highlight_clip = None;
+        self.options.clear();
+        self.animation_speed = 1.0;
+        application.set_animation_time_scale(1.0);
+        self.profiler_mode = DevtoolsProfilerMode::Basic;
+        application.set_profiler_mode(incular_runtime::ProfilerMode::Normal);
+        self.recording = false;
+        self.recorded_frames = 0;
+        self.tree_subscriptions.clear();
+        self.tree_cache.clear();
+        self.last_tree_sample = None;
+        self.window_map.clear();
+        self.layout_bounds.clear();
+        self.hit_regions.clear();
+        self.semantics_bounds.clear();
+        self.scroll_viewports.clear();
+        self.layer_bounds.clear();
+        self.phase_counters.clear();
+        self.phase_flashes.clear();
+        self.repaint_generations.clear();
+        self.repaint_rainbow.clear();
+        let overrides = std::mem::take(&mut self.property_overrides);
+        for ((id, name), property) in overrides {
+            let _ = application.devtools_edit_property(id, &name, &property.original);
+        }
     }
 
     fn refresh_auxiliary_overlays(&mut self, application: &incular_runtime::Application) {
@@ -444,9 +476,12 @@ impl DevToolsState {
     }
 
     /// Streams one frame record to connected DevTools clients.
-    pub fn push_frame(&self, event: TargetEvent) {
+    #[must_use]
+    pub fn push_frame(&self, event: TargetEvent) -> bool {
         if let Some(agent) = &self.agent {
-            agent.telemetry.try_push(event);
+            agent.telemetry.try_push(event)
+        } else {
+            false
         }
     }
 
@@ -471,7 +506,7 @@ impl DevToolsState {
         self.recorded_frames = self.recorded_frames.saturating_add(1);
         if self.recorded_frames >= 300 {
             self.recording = false;
-            self.push_frame(TargetEvent::Log {
+            let _ = self.push_frame(TargetEvent::Log {
                 level: "info".into(),
                 target: "incular::devtools".into(),
                 message: "recording stopped: 300-frame limit reached".into(),
@@ -677,29 +712,35 @@ impl DevToolsState {
                 continue;
             };
             let next = tree_nodes(&snapshot);
-            let previous = self.tree_cache.entry(window).or_default();
-            let mut deltas = Vec::new();
-            for id in previous.keys().filter(|id| !next.contains_key(id)) {
-                deltas.push(TreeDelta::Remove { id: *id });
-            }
-            for (id, node) in &next {
-                match previous.get(id) {
-                    None => deltas.push(TreeDelta::Insert {
-                        node: Box::new(node.clone()),
-                    }),
-                    Some(old) if old != node => deltas.push(TreeDelta::Update {
-                        node: Box::new(node.clone()),
-                    }),
-                    Some(_) => {}
+            let deltas = {
+                let previous = self.tree_cache.entry(window).or_default();
+                let mut deltas = Vec::new();
+                for id in previous.keys().filter(|id| !next.contains_key(id)) {
+                    deltas.push(TreeDelta::Remove { id: *id });
                 }
-            }
-            *previous = next;
+                for (id, node) in &next {
+                    match previous.get(id) {
+                        None => deltas.push(TreeDelta::Insert {
+                            node: Box::new(node.clone()),
+                        }),
+                        Some(old) if old != node => deltas.push(TreeDelta::Update {
+                            node: Box::new(node.clone()),
+                        }),
+                        Some(_) => {}
+                    }
+                }
+                deltas
+            };
             if !deltas.is_empty() {
-                self.push_frame(TargetEvent::WidgetTreeDeltas {
+                if self.push_frame(TargetEvent::WidgetTreeDeltas {
                     window,
                     deltas,
                     tree_revision: self.frame_counter,
-                });
+                }) {
+                    self.tree_cache.insert(window, next);
+                }
+            } else {
+                self.tree_cache.insert(window, next);
             }
         }
     }
@@ -716,7 +757,7 @@ impl DevToolsState {
             .find(|(_, platform)| **platform == window)
             .map(|(id, _)| *id);
         if let Some(dev_window) = dev_window {
-            self.push_frame(TargetEvent::WidgetSelectedByUser {
+            let _ = self.push_frame(TargetEvent::WidgetSelectedByUser {
                 window: dev_window,
                 id,
             });

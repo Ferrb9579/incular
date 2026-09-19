@@ -161,7 +161,9 @@ impl Drop for ReactiveQueue {
 impl ReactiveQueue {
     pub(crate) fn new() -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
-            root: NEXT_REACTIVE_ROOT.fetch_add(1, Ordering::Relaxed),
+            root: NEXT_REACTIVE_ROOT
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("reactive root identity space exhausted"),
             queued: HashSet::new(),
             order: VecDeque::new(),
             queued_nodes: HashSet::new(),
@@ -490,11 +492,11 @@ impl<T: 'static> Signal<T> {
     {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let id = self
-            .inner
-            .dev_signal_id
-            .get()
-            .unwrap_or_else(|| NEXT_ID.fetch_add(1, Ordering::Relaxed));
+        let id = self.inner.dev_signal_id.get().unwrap_or_else(|| {
+            NEXT_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("DevTools signal identity space exhausted")
+        });
         self.inner.dev_signal_id.set(Some(id));
         *self.inner.dev_name.borrow_mut() = Some(name.to_owned());
         *self.inner.dev_summarize.borrow_mut() = Some(Box::new(|value: &T| truncate_debug(value)));

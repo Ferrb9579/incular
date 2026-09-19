@@ -177,12 +177,18 @@ impl Toggle {
                     },
                 );
                 pressed_state.set(next);
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                 if let Some(group) = group_for_click.as_ref()
                     && !group.multiple
                 {
                     group.active.set(next.then_some(id));
-                    group.revision.set(group.revision.get().wrapping_add(1));
+                    group.revision.set(
+                        group
+                            .revision
+                            .get()
+                            .checked_add(1)
+                            .expect("revision exhausted"),
+                    );
                 }
                 let selected_target = if next { 1. } else { 0. };
                 if transition.is_zero() {

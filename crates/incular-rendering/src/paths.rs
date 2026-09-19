@@ -9,6 +9,14 @@ use std::sync::{
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(1);
 
+fn next_path_id() -> PathId {
+    PathId(
+        NEXT_PATH_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("path identity space exhausted"),
+    )
+}
+
 /// Stable identity for immutable path geometry. It deliberately does not
 /// encode paint, placement, or transforms.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -65,7 +73,7 @@ impl Path {
             )
         });
         Self {
-            id: PathId(NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed)),
+            id: next_path_id(),
             path: Arc::new(path),
             bounds,
         }
@@ -91,7 +99,7 @@ impl Path {
             )
         });
         Self {
-            id: PathId(NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed)),
+            id: next_path_id(),
             path: Arc::new(path),
             bounds,
         }

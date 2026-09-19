@@ -1,11 +1,12 @@
 use super::{DANGER, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, compact_button, gap, section, ui_text};
+use crate::inspector::ConnectionState;
 use crate::transport::ClientBridge;
 use incular::prelude::*;
 use incular_devtools_protocol::{FrameRecordEvent, RequestMethod, TargetInfo, WindowSummary};
 
 pub(crate) fn build_application(
     target_info: Option<TargetInfo>,
-    connected: bool,
+    connection: ConnectionState,
     windows: Vec<WindowSummary>,
     frames: Vec<FrameRecordEvent>,
     bridge: ClientBridge,
@@ -13,9 +14,15 @@ pub(crate) fn build_application(
     let mut controls = Vec::new();
     let mut body = Vec::new();
     let windows_empty = windows.is_empty();
-    controls.push(compact_button("Refresh target info", false, move || {
-        bridge.send(RequestMethod::GetTargetInfo)
-    }));
+    if connection == ConnectionState::Connected {
+        controls.push(compact_button("Refresh target info", false, move || {
+            bridge.send_or_report(RequestMethod::GetTargetInfo)
+        }));
+    } else if connection == ConnectionState::Disconnected {
+        controls.push(compact_button("Retry connection", false, move || {
+            bridge.retry()
+        }));
+    }
     if let Some(info) = target_info.as_ref() {
         body.extend([
             ui_text(
@@ -37,16 +44,15 @@ pub(crate) fn build_application(
                 TEXT_MUTED,
             ),
             ui_text(
-                format!(
-                    "DevTools session: {}",
-                    if connected {
-                        "connected"
-                    } else {
-                        "disconnected"
-                    }
-                ),
+                format!("DevTools session: {}", connection.label()),
                 13.,
-                if connected { SUCCESS } else { DANGER },
+                if connection == ConnectionState::Connected {
+                    SUCCESS
+                } else if connection == ConnectionState::Disconnected {
+                    DANGER
+                } else {
+                    TEXT_MUTED
+                },
             ),
         ]);
     } else {

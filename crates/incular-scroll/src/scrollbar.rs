@@ -105,7 +105,7 @@ impl ScrollController {
             return false;
         }
         state.scrollbar_style = style;
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         true
     }
 
@@ -125,7 +125,7 @@ impl ScrollController {
             return false;
         }
         state.scrollbar_thumb_visibility = visible;
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         true
     }
 }

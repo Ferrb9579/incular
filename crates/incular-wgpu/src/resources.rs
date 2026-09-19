@@ -26,7 +26,10 @@ pub struct SharedGpuResourceRegistry {
 }
 impl SharedGpuResourceRegistry {
     fn allocate(&mut self) -> SharedGpuResourceId {
-        self.next_identity = self.next_identity.saturating_add(1).max(1);
+        self.next_identity = self
+            .next_identity
+            .checked_add(1)
+            .expect("shared GPU resource identity space exhausted");
         SharedGpuResourceId(self.next_identity)
     }
     /// Returns the one context-local identity allocated for `image`.
@@ -381,7 +384,10 @@ impl<K: Copy + Eq + Hash> SharedTextureCache<K> {
             };
             if let Some(entry) = self.entries.remove(&oldest) {
                 self.retained_bytes = self.retained_bytes.saturating_sub(entry.bytes);
-                self.eviction_revision = self.eviction_revision.saturating_add(1);
+                self.eviction_revision = self
+                    .eviction_revision
+                    .checked_add(1)
+                    .expect("eviction revision exhausted");
                 self.counters.evictions += 1;
                 self.counters.evicted_bytes =
                     self.counters.evicted_bytes.saturating_add(entry.bytes);
@@ -740,7 +746,10 @@ impl WindowGpuPresentation {
         self.physical_size = physical_size;
         self.configured = !physical_size.is_zero();
         if self.configured {
-            self.surface_generation = self.surface_generation.saturating_add(1);
+            self.surface_generation = self
+                .surface_generation
+                .checked_add(1)
+                .expect("GPU surface generation exhausted");
         }
         self.configured
     }
@@ -748,7 +757,10 @@ impl WindowGpuPresentation {
     /// context; this method cannot affect another window's surface state.
     pub fn surface_lost(&mut self) {
         if self.configured {
-            self.surface_generation = self.surface_generation.saturating_add(1);
+            self.surface_generation = self
+                .surface_generation
+                .checked_add(1)
+                .expect("GPU surface generation exhausted");
         }
     }
     pub fn record_present(&mut self) {
@@ -1128,8 +1140,9 @@ impl SharedGpuContext {
         resources
             .image_textures
             .eviction_revision()
-            .saturating_add(resources.gradient_textures.eviction_revision())
-            .saturating_add(resources.glyph_atlas.eviction_revision())
+            .checked_add(resources.gradient_textures.eviction_revision())
+            .and_then(|revision| revision.checked_add(resources.glyph_atlas.eviction_revision()))
+            .expect("combined GPU eviction revision exhausted")
     }
 
     /// Whether the shared gradient map currently retains `key`. Used by
@@ -1441,7 +1454,9 @@ impl SharedGpuContext {
             ),
         });
         let generation = if admitted {
-            *gradient_generation = gradient_generation.saturating_add(1);
+            *gradient_generation = gradient_generation
+                .checked_add(1)
+                .expect("shared gradient generation exhausted");
             Some(*gradient_generation)
         } else {
             None

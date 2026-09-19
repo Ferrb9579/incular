@@ -94,7 +94,9 @@ impl LinuxApplicationShell {
     }
 
     pub(crate) fn start_watch(&self, sink: EventSink) {
-        let generation = NEXT_SINK_GENERATION.fetch_add(1, Ordering::Relaxed);
+        let generation = NEXT_SINK_GENERATION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("Linux application shell sink generation exhausted");
         *EVENT_SINK
             .get_or_init(|| Mutex::new(None))
             .lock()
@@ -244,9 +246,11 @@ impl LinuxApplicationShell {
 
     fn install_notification_watch(&self, id: incular_platform::NotificationId) -> u64 {
         let generation = self.inner.next_notification_watch.get();
-        self.inner
-            .next_notification_watch
-            .set(generation.wrapping_add(1));
+        self.inner.next_notification_watch.set(
+            generation
+                .checked_add(1)
+                .expect("Linux notification watch generation exhausted"),
+        );
         self.inner
             .notification_watches
             .lock()

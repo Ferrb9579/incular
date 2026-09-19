@@ -46,7 +46,12 @@ impl ToastController {
         title: impl Into<String>,
         description: Option<impl Into<String>>,
     ) -> ToastId {
-        let id = ToastId(self.next_id.get().wrapping_add(1));
+        let id = ToastId(
+            self.next_id
+                .get()
+                .checked_add(1)
+                .expect("toast identity space exhausted"),
+        );
         self.next_id.set(id.0);
         self.entries.borrow_mut().push(ToastEntry {
             id,

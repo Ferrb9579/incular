@@ -17,6 +17,18 @@ static NEXT_CONSUMER: AtomicU64 = AtomicU64::new(1);
 static NEXT_ENVIRONMENT: AtomicU64 = AtomicU64::new(1);
 use crate::reactivity::{DependencySource, Subscription, TrackingGuard};
 
+fn next_identity(counter: &AtomicU64, label: &'static str) -> u64 {
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .unwrap_or_else(|_| panic!("{label} identity space exhausted"))
+}
+
+fn next_revision(revision: u64) -> u64 {
+    revision
+        .checked_add(1)
+        .expect("context dependency revision exhausted")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DependencyKey {
     Environment { environment: u64, type_id: TypeId },
@@ -120,7 +132,7 @@ struct Environment {
 impl Environment {
     fn root() -> Rc<Self> {
         Rc::new(Self {
-            id: NEXT_ENVIRONMENT.fetch_add(1, Ordering::Relaxed),
+            id: next_identity(&NEXT_ENVIRONMENT, "environment"),
             parent: None,
             values: RefCell::new(HashMap::new()),
             revision: Cell::new(0),
@@ -129,7 +141,7 @@ impl Environment {
 
     fn child(parent: &Rc<Self>) -> Rc<Self> {
         Rc::new(Self {
-            id: NEXT_ENVIRONMENT.fetch_add(1, Ordering::Relaxed),
+            id: next_identity(&NEXT_ENVIRONMENT, "environment"),
             parent: Some(parent.clone()),
             values: RefCell::new(HashMap::new()),
             revision: Cell::new(0),
@@ -150,7 +162,7 @@ pub struct ConsumerId(u64);
 impl ConsumerId {
     #[must_use]
     pub fn new() -> Self {
-        Self(NEXT_CONSUMER.fetch_add(1, Ordering::Relaxed))
+        Self(next_identity(&NEXT_CONSUMER, "context consumer"))
     }
 
     #[must_use]
@@ -317,7 +329,7 @@ impl BuildContext {
         self.environment.values.borrow_mut().insert(type_id, value);
         self.environment
             .revision
-            .set(self.environment.revision.get().wrapping_add(1));
+            .set(next_revision(self.environment.revision.get()));
         self.tracker.invalidate(DependencyKey::Environment {
             environment: self.environment.id,
             type_id,
@@ -336,7 +348,7 @@ impl BuildContext {
         if removed {
             self.environment
                 .revision
-                .set(self.environment.revision.get().wrapping_add(1));
+                .set(next_revision(self.environment.revision.get()));
             self.tracker.invalidate(DependencyKey::Environment {
                 environment: self.environment.id,
                 type_id,
@@ -355,7 +367,7 @@ impl BuildContext {
             .insert(type_id, Rc::new(value));
         self.environment
             .revision
-            .set(self.environment.revision.get().wrapping_add(1));
+            .set(next_revision(self.environment.revision.get()));
         self.tracker.invalidate(DependencyKey::Environment {
             environment: self.environment.id,
             type_id,
@@ -391,7 +403,7 @@ impl BuildContext {
         if removed {
             self.environment
                 .revision
-                .set(self.environment.revision.get().wrapping_add(1));
+                .set(next_revision(self.environment.revision.get()));
             self.tracker.invalidate(DependencyKey::Environment {
                 environment: self.environment.id,
                 type_id,

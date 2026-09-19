@@ -204,7 +204,12 @@ impl RangeSliderModel {
             return None;
         }
         self.values.set(next);
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         Some(next)
     }
 }
@@ -646,7 +651,12 @@ impl Root {
                 callback(next);
             }
             drag_value.set(next);
-            drag_revision.set(drag_revision.get().wrapping_add(1));
+            drag_revision.set(
+                drag_revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             if let Some(callback) = &drag_callback {
                 callback(next);
             }
@@ -755,7 +765,12 @@ impl Root {
                     };
                     if (next - current).abs() > f32::EPSILON {
                         keyboard_value.set(next);
-                        keyboard_revision.set(keyboard_revision.get().wrapping_add(1));
+                        keyboard_revision.set(
+                            keyboard_revision
+                                .get()
+                                .checked_add(1)
+                                .expect("revision exhausted"),
+                        );
                         if let Some(callback) = &keyboard_callback {
                             callback(next);
                         }
@@ -821,7 +836,7 @@ fn update_value(
         return;
     }
     value.set(next);
-    revision.set(revision.get().wrapping_add(1));
+    revision.set(revision.get().checked_add(1).expect("revision exhausted"));
     if let Some(callback) = callback {
         callback(next);
     }

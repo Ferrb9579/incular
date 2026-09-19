@@ -154,7 +154,13 @@ impl TitleController {
             }
             state.data.title = title;
             state.last_sent_title = None;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         self.synchronize();
         true
@@ -172,7 +178,13 @@ impl TitleController {
             }
             state.data.color = color;
             state.last_sent_color = None;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         self.synchronize();
         Ok(true)
@@ -191,7 +203,13 @@ impl TitleController {
                 state.data = TitleData { title, color };
                 state.last_sent_title = None;
                 state.last_sent_color = None;
-                state.revision.set(state.revision.get().wrapping_add(1));
+                state.revision.set(
+                    state
+                        .revision
+                        .get()
+                        .checked_add(1)
+                        .expect("revision exhausted"),
+                );
             }
             changed
         };

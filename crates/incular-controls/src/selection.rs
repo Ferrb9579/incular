@@ -301,7 +301,7 @@ impl Checkbox {
                     !value.get()
                 };
                 value.set(next);
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                 let target_opacity = if next { 1. } else { 0. };
                 let target_scale = if next { 1. } else { 0.8 };
                 if transition.is_zero() {
@@ -762,7 +762,7 @@ impl Switch {
             button = button.on_click(move || {
                 let next = !value.get();
                 value.set(next);
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                 let target = Offset::new(if next { thumb_travel } else { 0. }, 0.);
                 if transition.is_zero() {
                     thumb_translation.set_offset(target);

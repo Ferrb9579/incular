@@ -7,6 +7,14 @@ use std::sync::{
 
 static NEXT_GRADIENT_ID: AtomicU64 = AtomicU64::new(1);
 
+fn next_gradient_id() -> GradientId {
+    GradientId(
+        NEXT_GRADIENT_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("gradient identity space exhausted"),
+    )
+}
+
 /// Stable identity for immutable normalized gradient stop data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct GradientId(u64);
@@ -112,7 +120,7 @@ impl GradientStops {
             });
         }
         Self {
-            id: GradientId(NEXT_GRADIENT_ID.fetch_add(1, Ordering::Relaxed)),
+            id: next_gradient_id(),
             stops: stops.into(),
         }
     }

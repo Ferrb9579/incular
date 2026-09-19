@@ -53,12 +53,21 @@ pub struct FocusNodeSubscription {
 
 impl FocusState {
     fn notify(&self) {
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         self.changes.notify();
     }
 
+    fn set_focused_silent(&self, focused: bool) -> bool {
+        self.focused.replace(focused) != focused
+    }
+
     fn set_focused(&self, focused: bool) {
-        if self.focused.replace(focused) != focused {
+        if self.set_focused_silent(focused) {
             self.notify();
         }
     }
@@ -743,6 +752,27 @@ pub struct FocusManager {
     nodes: Vec<Weak<FocusState>>,
     policy: FocusTraversalPolicyKind,
 }
+
+#[derive(Default)]
+struct FocusTransition {
+    changed: Vec<Rc<FocusState>>,
+}
+
+impl FocusTransition {
+    fn set(&mut self, state: Rc<FocusState>, focused: bool) {
+        if state.set_focused_silent(focused)
+            && !self.changed.iter().any(|known| Rc::ptr_eq(known, &state))
+        {
+            self.changed.push(state);
+        }
+    }
+
+    fn notify(self) {
+        for state in self.changed {
+            state.notify();
+        }
+    }
+}
 impl FocusManager {
     #[must_use]
     pub fn new() -> Self {
@@ -776,31 +806,50 @@ impl FocusManager {
         }
     }
     pub fn unregister(&mut self, node: &FocusNode) {
+        self.unregister_silent(node).notify();
+    }
+
+    fn unregister_silent(&mut self, node: &FocusNode) -> FocusTransition {
         self.nodes.retain(|known| {
             known
                 .upgrade()
                 .is_some_and(|known| !Rc::ptr_eq(&known, &node.state))
         });
-        node.unfocus();
+        let mut transition = FocusTransition::default();
+        transition.set(node.state.clone(), false);
+        transition
     }
     /// Gives this node exclusive focus within the scope.
     #[must_use]
     pub fn request_focus(&mut self, node: &FocusNode) -> bool {
+        let (requested, transition) = self.request_focus_silent(node);
+        transition.notify();
+        requested
+    }
+
+    fn request_focus_silent(&mut self, node: &FocusNode) -> (bool, FocusTransition) {
         self.register(node);
         if !node.can_request_focus() {
-            return false;
+            return (false, FocusTransition::default());
         }
+        let mut transition = FocusTransition::default();
         for known in self.nodes.iter().filter_map(Weak::upgrade) {
-            known.set_focused(false);
+            transition.set(known, false);
         }
-        node.state.set_focused(true);
-        true
+        transition.set(node.state.clone(), true);
+        (true, transition)
     }
     pub fn clear_focus(&mut self) {
+        self.clear_focus_silent().notify();
+    }
+
+    fn clear_focus_silent(&mut self) -> FocusTransition {
+        let mut transition = FocusTransition::default();
         for node in self.nodes.iter().filter_map(Weak::upgrade) {
-            node.set_focused(false);
+            transition.set(node, false);
         }
         self.prune();
+        transition
     }
     #[must_use]
     pub fn focused(&mut self) -> Option<FocusNode> {
@@ -814,6 +863,12 @@ impl FocusManager {
     /// behavior and traversal wraps inside this scope.
     #[must_use]
     pub fn focus_next(&mut self, reverse: bool) -> Option<FocusNode> {
+        let (next, transition) = self.focus_next_silent(reverse);
+        transition.notify();
+        next
+    }
+
+    fn focus_next_silent(&mut self, reverse: bool) -> (Option<FocusNode>, FocusTransition) {
         self.prune();
         let nodes: Vec<_> = self
             .nodes
@@ -822,19 +877,22 @@ impl FocusManager {
             .map(|state| FocusNode { state })
             .collect();
         let nodes = policy_nodes(self.policy, &nodes);
-        let first = nodes.first()?.clone();
-        let current = nodes.iter().position(FocusNode::has_focus);
+        let Some(first) = nodes.first().cloned() else {
+            return (None, FocusTransition::default());
+        };
+        let current = nodes.iter().position(|node| node.state.focused.get());
         let next = match current {
             Some(index) if reverse => nodes[(index + nodes.len() - 1) % nodes.len()].clone(),
             Some(index) => nodes[(index + 1) % nodes.len()].clone(),
-            None if reverse => nodes.last()?.clone(),
+            None if reverse => nodes.last().cloned().unwrap_or(first),
             None => first,
         };
+        let mut transition = FocusTransition::default();
         for node in self.nodes.iter().filter_map(Weak::upgrade) {
-            node.set_focused(false);
+            transition.set(node, false);
         }
-        next.request_focus();
-        Some(next)
+        transition.set(next.state.clone(), true);
+        (Some(next), transition)
     }
     #[must_use]
     pub fn registered_count(&mut self) -> usize {
@@ -864,36 +922,26 @@ pub struct FocusScopeNode {
 /// retained UI model. Dropping it removes the callback from future delivery;
 /// the scope prunes the corresponding weak entry on its next notification.
 pub struct FocusScopeSubscription {
-    _entry: Rc<FocusScopeObserverEntry>,
-}
-
-struct FocusScopeObserverEntry {
-    callback: Rc<dyn Fn()>,
+    _subscription: incular_core::reactivity::Subscription,
 }
 
 struct FocusScopeState {
     manager: RefCell<FocusManager>,
     last_focused: RefCell<Option<FocusNode>>,
     parent: RefCell<Option<Weak<FocusScopeState>>>,
-    observers: RefCell<Vec<Weak<FocusScopeObserverEntry>>>,
+    changes: incular_core::reactivity::DependencySource,
     revision: Cell<u64>,
 }
 
 impl FocusScopeState {
     fn bump_revision(&self) {
-        self.revision.set(self.revision.get().wrapping_add(1));
-        let callbacks = {
-            let mut observers = self.observers.borrow_mut();
-            observers.retain(|observer| observer.strong_count() != 0);
-            observers
-                .iter()
-                .filter_map(Weak::upgrade)
-                .map(|observer| observer.callback.clone())
-                .collect::<Vec<_>>()
-        };
-        for callback in callbacks {
-            callback();
-        }
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
+        self.changes.notify();
     }
 }
 
@@ -923,7 +971,7 @@ impl FocusScopeNode {
                 manager: RefCell::new(FocusManager::new()),
                 last_focused: RefCell::new(None),
                 parent: RefCell::new(None),
-                observers: RefCell::new(Vec::new()),
+                changes: incular_core::reactivity::DependencySource::default(),
                 revision: Cell::new(0),
             }),
         }
@@ -951,14 +999,9 @@ impl FocusScopeNode {
     /// stream for status indicators or accessibility adapters.
     #[must_use]
     pub fn observe(&self, callback: impl Fn() + 'static) -> FocusScopeSubscription {
-        let entry = Rc::new(FocusScopeObserverEntry {
-            callback: Rc::new(callback),
-        });
-        self.state
-            .observers
-            .borrow_mut()
-            .push(Rc::downgrade(&entry));
-        FocusScopeSubscription { _entry: entry }
+        FocusScopeSubscription {
+            _subscription: self.state.changes.subscribe((), callback),
+        }
     }
 
     /// Monotonic state revision, useful for diagnostics and non-runtime
@@ -987,17 +1030,18 @@ impl FocusScopeNode {
 
     /// Removes a focus node from this scope and clears its focus.
     pub fn unregister(&self, node: &FocusNode) {
-        self.state.manager.borrow_mut().unregister(node);
-        if self
+        let transition = self.state.manager.borrow_mut().unregister_silent(node);
+        let clear_last = self
             .state
             .last_focused
             .borrow()
             .as_ref()
-            .is_some_and(|focused| focused == node)
-        {
+            .is_some_and(|focused| focused == node);
+        if clear_last {
             self.state.last_focused.borrow_mut().take();
         }
         self.state.bump_revision();
+        transition.notify();
     }
 
     /// Gives a node exclusive focus in this scope.
@@ -1016,21 +1060,39 @@ impl FocusScopeNode {
         if let Some(parent) = &parent {
             let mut parent_manager = parent.state.manager.borrow_mut();
             let parent_focused = parent_manager.focused();
-            if parent_focused.is_some() {
-                *parent.state.last_focused.borrow_mut() = parent_focused;
-                parent_manager.clear_focus();
+            let parent_transition = parent_focused
+                .as_ref()
+                .map(|_| parent_manager.clear_focus_silent());
+            drop(parent_manager);
+            if let Some(parent_focused) = parent_focused {
+                *parent.state.last_focused.borrow_mut() = Some(parent_focused);
             }
-        }
-        let mut manager = self.state.manager.borrow_mut();
-        let previous = manager.focused();
-        let requested = manager.request_focus(node);
-        if requested {
-            *self.state.last_focused.borrow_mut() = previous;
+            let mut manager = self.state.manager.borrow_mut();
+            let previous = manager.focused();
+            let (requested, transition) = manager.request_focus_silent(node);
             drop(manager);
-            if let Some(parent) = &parent {
+            if !requested {
+                return false;
+            }
+            *self.state.last_focused.borrow_mut() = previous;
+            if parent_transition.is_some() {
                 parent.state.bump_revision();
             }
             self.state.bump_revision();
+            if let Some(parent_transition) = parent_transition {
+                parent_transition.notify();
+            }
+            transition.notify();
+            return true;
+        }
+        let mut manager = self.state.manager.borrow_mut();
+        let previous = manager.focused();
+        let (requested, transition) = manager.request_focus_silent(node);
+        if requested {
+            *self.state.last_focused.borrow_mut() = previous;
+            drop(manager);
+            self.state.bump_revision();
+            transition.notify();
         }
         requested
     }
@@ -1038,10 +1100,12 @@ impl FocusScopeNode {
     /// Clears the current focus while retaining it for [`Self::restore_focus`].
     pub fn clear_focus(&self) {
         let mut manager = self.state.manager.borrow_mut();
-        *self.state.last_focused.borrow_mut() = manager.focused();
-        manager.clear_focus();
+        let previous = manager.focused();
+        let transition = manager.clear_focus_silent();
         drop(manager);
+        *self.state.last_focused.borrow_mut() = previous;
         self.state.bump_revision();
+        transition.notify();
     }
 
     /// Clears this scope's focus. This is an alias matching common focus
@@ -1061,11 +1125,12 @@ impl FocusScopeNode {
     pub fn focus_next(&self, reverse: bool) -> Option<FocusNode> {
         let mut manager = self.state.manager.borrow_mut();
         let previous = manager.focused();
-        let next = manager.focus_next(reverse);
+        let (next, transition) = manager.focus_next_silent(reverse);
         if next.is_some() {
             *self.state.last_focused.borrow_mut() = previous;
             drop(manager);
             self.state.bump_revision();
+            transition.notify();
         }
         next
     }
@@ -1079,11 +1144,12 @@ impl FocusScopeNode {
             return false;
         };
         let mut manager = self.state.manager.borrow_mut();
-        let restored = manager.request_focus(&node);
+        let (restored, transition) = manager.request_focus_silent(&node);
         if restored {
             *self.state.last_focused.borrow_mut() = Some(node);
             drop(manager);
             self.state.bump_revision();
+            transition.notify();
         }
         restored
     }

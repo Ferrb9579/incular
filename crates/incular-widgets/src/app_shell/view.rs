@@ -284,7 +284,13 @@ impl ViewController {
             state.data.environment.physical_width = metrics.physical_width();
             state.data.environment.physical_height = metrics.physical_height();
             state.data.environment.scale_factor = metrics.scale_factor();
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             ViewEvent::MetricsChanged(state.data.clone())
         };
         self.notify(event);
@@ -305,7 +311,13 @@ impl ViewController {
                 return false;
             }
             state.data.environment = environment;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             ViewEvent::EnvironmentChanged(state.data.clone())
         };
         self.notify(event);
@@ -322,7 +334,13 @@ impl ViewController {
             }
             state.data.lifecycle = lifecycle;
             state.data.focused = matches!(lifecycle, ViewLifecycle::Focused);
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             ViewEvent::LifecycleChanged {
                 previous,
                 current: lifecycle,
@@ -345,7 +363,13 @@ impl ViewController {
             } else {
                 ViewLifecycle::Unfocused
             };
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             ViewEvent::FocusChanged(focused)
         };
         self.notify(event);
@@ -364,14 +388,26 @@ impl ViewController {
             }
             let previous = state.data.lifecycle;
             state.data.lifecycle = ViewLifecycle::Closing;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             let closing = ViewEvent::LifecycleChanged {
                 previous,
                 current: ViewLifecycle::Closing,
             };
             state.data.lifecycle = ViewLifecycle::Closed;
             state.data.focused = false;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             (closing, ViewEvent::Disposed(state.data.id))
         };
         self.notify(closing);
@@ -718,7 +754,13 @@ impl ViewAnchorController {
                 attached: handle.is_some(),
                 last_error: None,
             };
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         self.notify();
         Ok(outcome)
@@ -748,7 +790,13 @@ impl ViewAnchorController {
             state.data.last_error = None;
             state.last_request = None;
             state.last_error = None;
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
             handle
         };
         if let Some(handle) = handle {
@@ -764,7 +812,13 @@ impl ViewAnchorController {
             state.last_error = Some(error.clone());
             state.data.last_error = Some(error.to_string());
             state.data.attached = state.active.is_some();
-            state.revision.set(state.revision.get().wrapping_add(1));
+            state.revision.set(
+                state
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         self.notify();
         Err(error)

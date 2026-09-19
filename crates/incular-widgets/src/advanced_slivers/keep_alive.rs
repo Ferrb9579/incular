@@ -24,7 +24,9 @@ impl KeepAliveHandle {
         static NEXT_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
         Self {
             inner: Rc::new(RefCell::new(KeepAliveHandleState {
-                id: NEXT_HANDLE_ID.fetch_add(1, Ordering::Relaxed).max(1),
+                id: NEXT_HANDLE_ID
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                    .expect("keep-alive handle identity space exhausted"),
                 released: false,
                 next_listener: 1,
                 listeners: Vec::new(),
@@ -68,7 +70,10 @@ impl KeepAliveHandle {
             return None;
         }
         let id = state.next_listener;
-        state.next_listener = state.next_listener.saturating_add(1).max(1);
+        state.next_listener = state
+            .next_listener
+            .checked_add(1)
+            .expect("keep-alive listener identity space exhausted");
         state.listeners.push((id, listener));
         Some(id)
     }
@@ -155,7 +160,7 @@ impl KeepAliveRegistry {
                 let mut state = state.borrow_mut();
                 let removed = state.clients.remove(&id).is_some();
                 if removed {
-                    state.revision = state.revision.wrapping_add(1);
+                    state.revision = state.revision.checked_add(1).expect("revision exhausted");
                 }
                 removed
             };
@@ -178,7 +183,7 @@ impl KeepAliveRegistry {
             .clients
             .insert(id, (handle, listener_id));
         let mut state = self.state.borrow_mut();
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         false
     }
 
@@ -211,7 +216,7 @@ impl KeepAliveRegistry {
                 .drain()
                 .map(|(_, value)| value)
                 .collect::<Vec<_>>();
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             clients
         };
         for (handle, listener_id) in clients {

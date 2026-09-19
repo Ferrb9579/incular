@@ -495,7 +495,9 @@ impl RouteOutlet {
                     .then_some(*route)
             })
         });
-        let namespace = OUTLET_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let namespace = OUTLET_SEQUENCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("route outlet identity space exhausted");
         Self {
             navigator: navigator.clone(),
             focus,
@@ -1310,7 +1312,12 @@ impl RouteOutlet {
     /// single-parent) make every participant reachable exactly once.
     fn begin_frame(&mut self, runtime: &Runtime) {
         self.epoch.set(self.epoch.get().wrapping_add(1));
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         self.capture_transition(runtime);
         for nested in self.live_nested() {
             nested.borrow_mut().begin_frame(runtime);

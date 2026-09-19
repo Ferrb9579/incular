@@ -528,7 +528,7 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
     /// Seeds the current configuration before the router is built.
     pub fn set_configuration(&self, configuration: T) {
         let mut state = self.state.borrow_mut();
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         let previous = state.configuration.replace(configuration);
         drop(state);
         // The replaced configuration drops outside the borrow: `T` is
@@ -592,7 +592,7 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
             if state.revision != revision {
                 return Ok(());
             }
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             let previous = state.configuration.replace(configuration);
             drop(state);
             // Retired outside the borrow for the same reason as in
@@ -663,7 +663,10 @@ impl BackButtonDispatcher {
         let callback: Rc<dyn Fn() -> bool> = Rc::new(callback);
         let id = {
             let mut state = self.state.borrow_mut();
-            state.next_id = state.next_id.wrapping_add(1).max(1);
+            state.next_id = state
+                .next_id
+                .checked_add(1)
+                .expect("back callback identity space exhausted");
             let id = state.next_id;
             state.callbacks.insert(id, Rc::downgrade(&callback));
             id
@@ -1212,7 +1215,7 @@ impl<T: 'static> RouterRuntime<T> {
         }
 
         let revision = runtime.borrow().revision.clone();
-        revision.set(revision.get().wrapping_add(1));
+        revision.set(revision.get().checked_add(1).expect("revision exhausted"));
     }
 
     fn receive_route_information(
@@ -1266,7 +1269,10 @@ impl<T: 'static> RouterRuntime<T> {
         let (parser, delegate, transaction, operation, _open) = {
             let mut state = runtime.borrow_mut();
             let operation = state.next_operation;
-            state.next_operation = state.next_operation.wrapping_add(1);
+            state.next_operation = state
+                .next_operation
+                .checked_add(1)
+                .expect("router operation identity space exhausted");
             let previous = state.open_operation.replace(operation);
             (
                 state.parser.clone(),
@@ -1410,7 +1416,7 @@ impl<T: 'static> RouterRuntime<T> {
                 .scope
                 .set_json(&restoration.key, information.to_json());
         }
-        revision.set(revision.get().wrapping_add(1));
+        revision.set(revision.get().checked_add(1).expect("revision exhausted"));
     }
 
     /// Reports whether a newer transaction committed since `transaction` was
@@ -1450,7 +1456,7 @@ impl<T: 'static> RouterRuntime<T> {
                 .scope
                 .set_json(&restoration.key, information.to_json());
         }
-        revision.set(revision.get().wrapping_add(1));
+        revision.set(revision.get().checked_add(1).expect("revision exhausted"));
         Self::notify(
             runtime,
             NavigationNotification {
@@ -1488,11 +1494,11 @@ impl<T: 'static> RouterRuntime<T> {
             )
         };
         let Some(configuration) = configuration else {
-            revision.set(revision.get().wrapping_add(1));
+            revision.set(revision.get().checked_add(1).expect("revision exhausted"));
             return;
         };
         let Some(parser) = parser else {
-            revision.set(revision.get().wrapping_add(1));
+            revision.set(revision.get().checked_add(1).expect("revision exhausted"));
             Self::notify(
                 runtime,
                 NavigationNotification {
@@ -1558,7 +1564,7 @@ impl<T: 'static> RouterRuntime<T> {
                     let mut state = runtime.borrow_mut();
                     state.current = Some(information.clone());
                 }
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                 Self::notify(
                     runtime,
                     NavigationNotification {
@@ -1570,7 +1576,7 @@ impl<T: 'static> RouterRuntime<T> {
                 );
             }
             Err(error) => {
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                 Self::notify(
                     runtime,
                     NavigationNotification {
@@ -1590,7 +1596,7 @@ impl<T: 'static> RouterRuntime<T> {
         let can_handle_pop = delegate.current_configuration().is_some();
         let information = runtime.borrow().current.clone();
         let revision = runtime.borrow().revision.clone();
-        revision.set(revision.get().wrapping_add(1));
+        revision.set(revision.get().checked_add(1).expect("revision exhausted"));
         Self::notify(
             runtime,
             NavigationNotification {

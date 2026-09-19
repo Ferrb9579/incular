@@ -122,7 +122,10 @@ impl WidgetTree {
     /// layout so IDs can never collide with eagerly prepared buttons.
     pub fn allocate_action(&mut self) -> ActionId {
         let action = ActionId(self.next_action);
-        self.next_action += 1;
+        self.next_action = self
+            .next_action
+            .checked_add(1)
+            .expect("widget action identity space exhausted");
         action
     }
     pub fn take_pending_handlers(&mut self) -> Vec<(ActionId, Rc<dyn Fn()>)> {
@@ -1668,7 +1671,7 @@ impl WidgetTree {
                     }
                     if ticking && controller.tick(now) {
                         changed = true;
-                        revision.set(revision.get().wrapping_add(1));
+                        revision.set(revision.get().checked_add(1).expect("revision exhausted"));
                         self.diagnostics.animation_ticks += 1;
                     }
                     active |= ticking && controller.is_active();

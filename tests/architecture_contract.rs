@@ -7,20 +7,12 @@ fn contract() -> Value {
 }
 
 fn check_edges(policy: &Value, metadata: &Value) -> Result<(), String> {
-    let rows = policy["crates"].as_array().unwrap();
+    let rows = policy["packages"].as_array().unwrap();
     let mut graph = BTreeMap::<String, Vec<String>>::new();
     for package in metadata["packages"].as_array().unwrap() {
         let name = package["name"].as_str().unwrap();
         let Some(row) = rows.iter().find(|row| row["name"] == name) else {
-            if package["manifest_path"]
-                .as_str()
-                .unwrap()
-                .replace('\\', "/")
-                .contains("/crates/")
-            {
-                return Err(format!("unclassified crate {name}"));
-            }
-            continue;
+            return Err(format!("unclassified workspace package {name}"));
         };
         let mut edges = Vec::new();
         for dependency in package["dependencies"].as_array().unwrap() {
@@ -99,23 +91,63 @@ fn cargo_dependencies_respect_reviewed_boundaries() {
 }
 
 #[test]
-fn every_crate_has_one_documented_owner_and_api_class() {
+fn every_workspace_package_has_one_documented_owner_api_class_and_evidence() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let policy = contract();
-    assert_eq!(policy["schema_version"], 1);
-    let rows = policy["crates"].as_array().unwrap();
+    assert_eq!(policy["schema_version"], 2);
+    let rows = policy["packages"].as_array().unwrap();
+    let metadata = Command::new(env!("CARGO"))
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        metadata.status.success(),
+        "{}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+    let metadata: Value = serde_json::from_slice(&metadata.stdout).unwrap();
+    let workspace_names = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|package| package["name"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
     let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
     let classes = ["application", "backend", "bridge"];
     let mut names = std::collections::BTreeSet::new();
     for row in rows {
         let name = row["name"].as_str().unwrap();
-        assert!(names.insert(name), "duplicate crate {name}");
+        assert!(names.insert(name), "duplicate package {name}");
+        assert!(
+            workspace_names.contains(name),
+            "architecture row is not a workspace package: {name}"
+        );
         let class = row["default_api_class"].as_str().unwrap();
         assert!(classes.contains(&class), "unknown API class for {name}");
         let owner = row["owner"].as_str().unwrap();
         let support = row["support"].as_str().unwrap();
-        assert!(!owner.is_empty() && !support.is_empty());
-        let readme = fs::read_to_string(root.join("crates").join(name).join("README.md")).unwrap();
+        let path = row["path"].as_str().unwrap();
+        let evidence = row["evidence"].as_str().unwrap();
+        assert!(
+            !owner.is_empty() && !support.is_empty() && !path.is_empty() && !evidence.is_empty()
+        );
+        assert!(
+            root.join(path).join("Cargo.toml").exists(),
+            "manifest path drift in {name}: {path}"
+        );
+        let evidence_path = root.join(evidence);
+        assert!(
+            evidence_path.is_file(),
+            "missing support evidence for {name}: {evidence}"
+        );
+        let readme = fs::read_to_string(evidence_path).unwrap();
         assert!(
             readme.contains(&format!("| Ownership | {owner} |")),
             "owner drift in {name}"
@@ -133,6 +165,10 @@ fn every_crate_has_one_documented_owner_and_api_class() {
             "AGENTS owner drift in {name}"
         );
     }
+    assert_eq!(
+        names, workspace_names,
+        "architecture inventory must cover the complete workspace package set"
+    );
     let mut overrides = std::collections::BTreeSet::new();
     for entry in policy["api_overrides"].as_array().unwrap() {
         let path = entry["path"].as_str().unwrap();
@@ -170,7 +206,7 @@ fn boundary_guard_rejects_reverse_optional_native_and_cyclic_edges() {
         );
     }
     let mut cyclic = policy.clone();
-    let core = cyclic["crates"]
+    let core = cyclic["packages"]
         .as_array_mut()
         .unwrap()
         .iter_mut()

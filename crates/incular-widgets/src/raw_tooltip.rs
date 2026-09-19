@@ -678,7 +678,13 @@ fn set_visible(state: &mut ControllerState, visible: bool) -> bool {
         return false;
     }
     state.visible = visible;
-    state.revision.set(state.revision.get().wrapping_add(1));
+    state.revision.set(
+        state
+            .revision
+            .get()
+            .checked_add(1)
+            .expect("revision exhausted"),
+    );
     true
 }
 

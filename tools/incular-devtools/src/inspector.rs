@@ -12,6 +12,30 @@ use std::{
 
 pub(crate) type Shared = Arc<Mutex<InspectorModel>>;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ConnectionState {
+    #[default]
+    Discovering,
+    Connecting,
+    Authenticating,
+    Connected,
+    Disconnected,
+    Stopping,
+}
+
+impl ConnectionState {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Discovering => "discovering",
+            Self::Connecting => "connecting",
+            Self::Authenticating => "authenticating",
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+            Self::Stopping => "stopping",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeRow {
     pub(crate) id: DevWidgetId,
@@ -39,6 +63,7 @@ pub(crate) enum InspectorSection {
 /// generation handling, deltas, and virtualization can be tested cheaply.
 #[derive(Default)]
 pub struct InspectorModel {
+    pub(crate) connection: ConnectionState,
     pub(crate) connected: bool,
     pub(crate) error: Option<String>,
     pub(crate) target: String,
@@ -46,6 +71,7 @@ pub struct InspectorModel {
     pub(crate) windows: Vec<WindowSummary>,
     pub(crate) active_window: Option<DevWindowId>,
     pub(crate) nodes: HashMap<DevWidgetId, WidgetNode>,
+    pub(crate) tree_payload_bytes: usize,
     pub(crate) roots: HashMap<DevWindowId, DevWidgetId>,
     pub(crate) expanded: HashSet<DevWidgetId>,
     pub(crate) rows: Vec<TreeRow>,
@@ -68,6 +94,7 @@ pub struct InspectorModel {
     pub(crate) memory_a: Option<MemorySnapshot>,
     pub(crate) memory_b: Option<MemorySnapshot>,
     pub(crate) console: VecDeque<ConsoleEntry>,
+    pub(crate) console_payload_bytes: usize,
     pub(crate) console_filter: String,
     pub(crate) frame_arrivals: HashMap<DevWindowId, VecDeque<Instant>>,
     pub(crate) signals: Vec<SignalSummary>,
@@ -76,7 +103,9 @@ pub struct InspectorModel {
     pub(crate) debug_options: HashSet<DebugOption>,
     pub(crate) animation_scale: Option<f32>,
     pub(crate) tree_retry_sent: bool,
+    pub(crate) tree_resync_pending: bool,
     pub(crate) tree_revision: u64,
+    pub(crate) tree_truncated: bool,
     pub(crate) search: String,
 }
 
@@ -94,6 +123,15 @@ pub fn editable_value(signal: &SignalSummary, input: &str) -> Option<EditableVal
 impl InspectorModel {
     pub const FRAME_HISTORY: usize = 300;
     pub const MAX_TRACE_EVENTS: usize = 200_000;
+    pub const MAX_TREE_NODES: usize = 131_072;
+    pub const MAX_FRAME_ARRIVALS: usize = 512;
+    pub const MAX_TREE_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
+    pub const MAX_DETAILS_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+    pub const MAX_SIGNALS_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+    pub const MAX_SUBSCRIBERS_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
+    pub const MAX_TARGET_INFO_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
+    pub const MAX_CONSOLE_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+    pub const MAX_CONSOLE_ENTRY_BYTES: usize = 8 * 1024;
     pub(crate) const CONSOLE_HISTORY: usize = 500;
 
     /// Returns the number of currently visible virtual tree rows.
@@ -141,14 +179,32 @@ impl InspectorModel {
         target: impl Into<String>,
         message: impl Into<String>,
     ) {
-        while self.console.len() >= Self::CONSOLE_HISTORY {
-            self.console.pop_front();
-        }
-        self.console.push_back(ConsoleEntry {
+        let mut entry = ConsoleEntry {
             level: level.into(),
             target: target.into(),
             message: message.into(),
-        });
+        };
+        truncate_utf8(&mut entry.level, 64);
+        truncate_utf8(&mut entry.target, 512);
+        truncate_utf8(
+            &mut entry.message,
+            Self::MAX_CONSOLE_ENTRY_BYTES
+                .saturating_sub(entry.level.len())
+                .saturating_sub(entry.target.len()),
+        );
+        let bytes = console_entry_bytes(&entry);
+        while self.console.len() >= Self::CONSOLE_HISTORY
+            || self.console_payload_bytes.saturating_add(bytes) > Self::MAX_CONSOLE_PAYLOAD_BYTES
+        {
+            let Some(removed) = self.console.pop_front() else {
+                break;
+            };
+            self.console_payload_bytes = self
+                .console_payload_bytes
+                .saturating_sub(console_entry_bytes(&removed));
+        }
+        self.console_payload_bytes = self.console_payload_bytes.saturating_add(bytes);
+        self.console.push_back(entry);
     }
 
     pub(crate) fn note_frame_arrival(&mut self, window: DevWindowId) {
@@ -159,6 +215,9 @@ impl InspectorModel {
             .front()
             .is_some_and(|arrival| now.duration_since(*arrival) > Duration::from_secs(2))
         {
+            arrivals.pop_front();
+        }
+        while arrivals.len() > Self::MAX_FRAME_ARRIVALS {
             arrivals.pop_front();
         }
     }
@@ -255,28 +314,72 @@ impl InspectorModel {
     }
 
     pub fn apply_tree(&mut self, revision: u64, deltas: impl IntoIterator<Item = TreeDelta>) {
+        if revision < self.tree_revision {
+            return;
+        }
         self.tree_revision = revision;
         for delta in deltas {
             match delta {
                 TreeDelta::Snapshot {
                     window,
                     root,
-                    nodes,
-                    ..
+                    mut nodes,
+                    truncated,
                 } => {
                     self.active_window.get_or_insert(window);
                     if self.active_window == Some(window) {
+                        let oversized = nodes.len().saturating_add(1) > Self::MAX_TREE_NODES;
+                        if oversized {
+                            nodes.truncate(Self::MAX_TREE_NODES.saturating_sub(1));
+                        }
                         self.nodes.clear();
+                        self.tree_payload_bytes = 0;
                         self.roots.insert(window, root.id);
                         self.expanded.insert(root.id);
                         self.selected.get_or_insert(root.id);
-                        self.nodes.insert(root.id, *root);
-                        self.nodes
-                            .extend(nodes.into_iter().map(|node| (node.id, node)));
+                        let (root, root_trimmed) = normalize_widget_node(*root);
+                        self.tree_payload_bytes = widget_node_bytes(&root);
+                        self.nodes.insert(root.id, root);
+                        let mut payload_truncated = root_trimmed;
+                        for node in nodes {
+                            let (node, trimmed) = normalize_widget_node(node);
+                            let bytes = widget_node_bytes(&node);
+                            if self.nodes.contains_key(&node.id) {
+                                self.error =
+                                    Some("malformed widget tree: duplicate node identity".into());
+                                payload_truncated = true;
+                                continue;
+                            }
+                            if self.tree_payload_bytes.saturating_add(bytes)
+                                > Self::MAX_TREE_PAYLOAD_BYTES
+                            {
+                                payload_truncated = true;
+                                continue;
+                            }
+                            self.tree_payload_bytes = self.tree_payload_bytes.saturating_add(bytes);
+                            self.nodes.insert(node.id, node);
+                            payload_truncated |= trimmed;
+                        }
+                        self.tree_truncated = truncated || oversized || payload_truncated;
                     }
                 }
                 TreeDelta::Insert { node } | TreeDelta::Update { node } => {
-                    self.nodes.insert(node.id, *node);
+                    let (node, trimmed) = normalize_widget_node(*node);
+                    let old_bytes = self.nodes.get(&node.id).map(widget_node_bytes).unwrap_or(0);
+                    let next_bytes = self
+                        .tree_payload_bytes
+                        .saturating_sub(old_bytes)
+                        .saturating_add(widget_node_bytes(&node));
+                    if (self.nodes.contains_key(&node.id)
+                        || self.nodes.len() < Self::MAX_TREE_NODES)
+                        && next_bytes <= Self::MAX_TREE_PAYLOAD_BYTES
+                    {
+                        self.tree_payload_bytes = next_bytes;
+                        self.nodes.insert(node.id, node);
+                        self.tree_truncated |= trimmed;
+                    } else {
+                        self.tree_truncated = true;
+                    }
                 }
                 TreeDelta::Remove { id } => self.remove_subtree(id),
                 TreeDelta::Move {
@@ -291,8 +394,15 @@ impl InspectorModel {
 
     pub(crate) fn remove_subtree(&mut self, id: DevWidgetId) {
         let mut work = vec![id];
+        let mut visited = HashSet::new();
         while let Some(current) = work.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
             if let Some(node) = self.nodes.remove(&current) {
+                self.tree_payload_bytes = self
+                    .tree_payload_bytes
+                    .saturating_sub(widget_node_bytes(&node));
                 work.extend(node.child_ids);
             }
             self.expanded.remove(&current);
@@ -318,6 +428,7 @@ impl InspectorModel {
                 .child_ids
                 .insert(position.min(parent_node.child_ids.len()), id);
         }
+        self.tree_payload_bytes = self.nodes.values().map(widget_node_bytes).sum();
     }
 
     pub(crate) fn rebuild_rows(&mut self) {
@@ -330,7 +441,11 @@ impl InspectorModel {
         };
         let query = self.search.to_ascii_lowercase();
         let mut work = vec![(root, 0_u16)];
+        let mut visited = HashSet::new();
         while let Some((id, depth)) = work.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
             let Some(node) = self.nodes.get(&id) else {
                 continue;
             };
@@ -353,7 +468,12 @@ impl InspectorModel {
 
     pub fn reveal(&mut self, id: DevWidgetId) {
         let mut current = self.nodes.get(&id).and_then(|node| node.parent);
+        let mut visited = HashSet::new();
         while let Some(parent) = current {
+            if !visited.insert(parent) {
+                self.error = Some("malformed widget tree: parent cycle".into());
+                break;
+            }
             self.expanded.insert(parent);
             current = self.nodes.get(&parent).and_then(|node| node.parent);
         }
@@ -567,6 +687,50 @@ impl InspectorModel {
         }
         lines
     }
+}
+
+fn normalize_widget_node(mut node: WidgetNode) -> (WidgetNode, bool) {
+    let mut truncated = false;
+    truncated |= truncate_utf8(&mut node.type_name, 1024);
+    if let Some(key) = &mut node.key {
+        truncated |= truncate_utf8(key, 1024);
+    }
+    if let Some(label) = &mut node.label {
+        truncated |= truncate_utf8(label, 4096);
+    }
+    (node, truncated)
+}
+
+fn truncate_utf8(value: &mut String, max_bytes: usize) -> bool {
+    if value.len() <= max_bytes {
+        return false;
+    }
+    let mut end = max_bytes.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    true
+}
+
+fn widget_node_bytes(node: &WidgetNode) -> usize {
+    std::mem::size_of::<WidgetNode>()
+        .saturating_add(node.type_name.len())
+        .saturating_add(node.key.as_ref().map_or(0, String::len))
+        .saturating_add(node.label.as_ref().map_or(0, String::len))
+        .saturating_add(
+            node.child_ids
+                .len()
+                .saturating_mul(std::mem::size_of::<DevWidgetId>()),
+        )
+}
+
+fn console_entry_bytes(entry: &ConsoleEntry) -> usize {
+    entry
+        .level
+        .len()
+        .saturating_add(entry.target.len())
+        .saturating_add(entry.message.len())
 }
 
 pub(crate) fn layout_detail_lines(details: &LayoutDetails) -> Vec<String> {

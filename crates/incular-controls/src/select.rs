@@ -22,7 +22,12 @@ impl SelectScope {
             return;
         }
         self.value.replace(Some(value.clone()));
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         if let Some(callback) = self.on_change.as_ref() {
             callback(value);
         }

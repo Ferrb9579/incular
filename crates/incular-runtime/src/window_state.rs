@@ -224,6 +224,7 @@ fn equivalent_logical_size(left: Size, right: Size, scale_factor: f64) -> bool {
 pub(crate) struct WindowSlot {
     pub(crate) generation: u32,
     pub(crate) reserved: bool,
+    pub(crate) retired: bool,
     pub(crate) record: Option<WindowRecord>,
 }
 
@@ -241,15 +242,19 @@ impl WindowRegistry {
             .slots
             .iter_mut()
             .enumerate()
-            .find(|(_, slot)| !slot.reserved && slot.record.is_none())
+            .find(|(_, slot)| !slot.retired && !slot.reserved && slot.record.is_none())
         {
             slot.reserved = true;
-            return WindowId::from_parts(index as u32, slot.generation);
+            return WindowId::from_parts(
+                u32::try_from(index).expect("window index was validated on insertion"),
+                slot.generation,
+            );
         }
-        let index = self.slots.len() as u32;
+        let index = u32::try_from(self.slots.len()).expect("window identity space exhausted");
         self.slots.push(WindowSlot {
             generation: 0,
             reserved: true,
+            retired: false,
             record: None,
         });
         WindowId::from_parts(index, 0)
@@ -284,7 +289,11 @@ impl WindowRegistry {
             .filter(|slot| slot.reserved && slot.generation == id.generation())?;
         let record = slot.record.take()?;
         slot.reserved = false;
-        slot.generation = slot.generation.wrapping_add(1);
+        if let Some(next_generation) = slot.generation.checked_add(1) {
+            slot.generation = next_generation;
+        } else {
+            slot.retired = true;
+        }
         self.windows_closed += 1;
         Some(record)
     }
@@ -294,9 +303,12 @@ impl WindowRegistry {
             .iter()
             .enumerate()
             .filter_map(|(index, slot)| {
-                slot.record
-                    .as_ref()
-                    .map(|_| WindowId::from_parts(index as u32, slot.generation))
+                slot.record.as_ref().map(|_| {
+                    WindowId::from_parts(
+                        u32::try_from(index).expect("window index was validated on insertion"),
+                        slot.generation,
+                    )
+                })
             })
             .collect()
     }

@@ -191,7 +191,12 @@ impl TabController {
         } else {
             self.page_controller.deferred_jump_to(offset);
         }
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
     }
 
     pub fn animate_to(&self, value: usize) {
@@ -203,7 +208,12 @@ impl TabController {
             return;
         }
         self.index.set(index);
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         if self.page_controller.max_offset() <= 0.0 {
             self.page_animation.stop();
             self.page_controller.deferred_jump_to(target);

@@ -24,7 +24,9 @@ impl WidgetTree {
         let environment = RuntimeEnvironment::default();
         super::context::install_runtime_environment(&dependency_root, &environment);
         Self {
-            tree_id: super::TREE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            tree_id: super::TREE_SEQUENCE
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("widget tree identity space exhausted"),
             elements: Arena::new(),
             renders: Arena::new(),
             root: None,
@@ -980,7 +982,11 @@ impl WidgetTree {
                 }
                 _ => return false,
             }
-            element.dev.revision = element.dev.revision.wrapping_add(1);
+            element.dev.revision = element
+                .dev
+                .revision
+                .checked_add(1)
+                .expect("revision exhausted");
             element.dev.composite_reason = Some("DevTools opacity override".into());
             element.render
         };

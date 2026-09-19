@@ -169,6 +169,8 @@ pub fn run_window_with_services(
 /// Winit.
 enum RuntimeWakeEvent {
     Runtime,
+    #[cfg(feature = "devtools")]
+    DevTools,
     Accessibility(AccessKitEvent),
     FileDialog(NativeFileDialogCompletion),
     ApplicationActivation(ApplicationActivation),
@@ -397,7 +399,20 @@ pub fn run_application_with_services(
                 .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
                 .unwrap_or_else(|| "incular-app".into()),
         };
-        incular_devtools::spawn(config, application.tokio_handle())
+        let devtools_proxy = proxy.clone();
+        match incular_devtools::spawn(
+            config,
+            application.tokio_handle(),
+            Arc::new(move || {
+                let _ = devtools_proxy.send_event(RuntimeWakeEvent::DevTools);
+            }),
+        ) {
+            Ok(agent) => Some(agent),
+            Err(error) => {
+                eprintln!("Incular DevTools: agent unavailable: {error}");
+                None
+            }
+        }
     } else {
         None
     };
@@ -1223,8 +1238,6 @@ impl DesktopHost {
     }
 
     fn redraw_window(&mut self, target: &ActiveEventLoop, id: IncularWindowId) {
-        #[cfg(feature = "devtools")]
-        self.devtools_state.drain(&mut self.application);
         let Some(native_id) = self.native_ids.get(&id).copied() else {
             return;
         };
@@ -1348,12 +1361,13 @@ impl DesktopHost {
                 self.application
                     .fail_simulation_frame(id, format!("{error:?}"));
                 #[cfg(feature = "devtools")]
-                self.devtools_state
-                    .push_frame(incular_devtools_protocol::TargetEvent::Log {
-                        level: "error".into(),
-                        target: "incular::runtime".into(),
-                        message: format!("{error:?}"),
-                    });
+                let _ =
+                    self.devtools_state
+                        .push_frame(incular_devtools_protocol::TargetEvent::Log {
+                            level: "error".into(),
+                            target: "incular::runtime".into(),
+                            message: format!("{error:?}"),
+                        });
             }
         }
         let Some(state) = self.windows.get_mut(&native_id) else {
@@ -2203,6 +2217,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
     fn user_event(&mut self, target: &ActiveEventLoop, event: RuntimeWakeEvent) {
         match event {
             RuntimeWakeEvent::Runtime => self.application.process_runtime_work(),
+            #[cfg(feature = "devtools")]
+            RuntimeWakeEvent::DevTools => {
+                let _ = self.devtools_state.drain(&mut self.application);
+            }
             RuntimeWakeEvent::Accessibility(event) => self.route_accesskit_event(event),
             RuntimeWakeEvent::FileDialog(completion) => {
                 let _ = self.application.complete_file_dialog(completion);

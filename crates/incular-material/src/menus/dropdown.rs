@@ -622,7 +622,7 @@ impl<T> DropdownMenu<T> {
         self.controller = value;
         let revision = self.revision.clone();
         *self.controller_listener.borrow_mut() = Some(self.controller.observe(move |_| {
-            revision.set(revision.get().wrapping_add(1));
+            revision.set(revision.get().checked_add(1).expect("revision exhausted"));
         }));
         self
     }
@@ -827,7 +827,8 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
                         }
                         if !matches!(close_behavior, DropdownMenuCloseBehavior::None) {
                             open.set(false);
-                            revision.set(revision.get().wrapping_add(1));
+                            revision
+                                .set(revision.get().checked_add(1).expect("revision exhausted"));
                         }
                     }
                 });
@@ -926,7 +927,7 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
             .enabled(self.enabled)
             .on_click(move || {
                 controller.set(!controller.get());
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
             });
         if open.get() {
             let dismiss_open = self.open.clone();
@@ -937,7 +938,12 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
                 .placement(TransientPlacement::default())
                 .on_dismiss(move |_| {
                     if dismiss_open.replace(false) {
-                        dismiss_revision.set(dismiss_revision.get().wrapping_add(1));
+                        dismiss_revision.set(
+                            dismiss_revision
+                                .get()
+                                .checked_add(1)
+                                .expect("revision exhausted"),
+                        );
                     }
                 })
                 .show(true)

@@ -70,7 +70,7 @@ impl SliverReorderController {
         }
         let item = state.order.remove(from);
         state.order.insert(to, item);
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         true
     }
 
@@ -102,11 +102,14 @@ impl SliverReorderController {
         } else {
             while state.order.len() < item_count {
                 let item = state.next_item;
-                state.next_item = state.next_item.wrapping_add(1);
+                state.next_item = state
+                    .next_item
+                    .checked_add(1)
+                    .expect("sliver item identity space exhausted");
                 state.order.push(item);
             }
         }
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
     }
 }
 
@@ -441,7 +444,8 @@ impl RenderSliver for ReorderableRenderSliver {
     fn revision(&self) -> u64 {
         self.controller
             .revision()
-            .wrapping_add(self.index.revision())
+            .checked_add(self.index.revision())
+            .expect("sliver list composite revision exhausted")
     }
 }
 
@@ -680,7 +684,10 @@ impl SliverAnimatedListController {
         let mut state = self.state.borrow_mut();
         let duration = state.duration;
         let id = state.next_id;
-        state.next_id = state.next_id.wrapping_add(1);
+        state.next_id = state
+            .next_id
+            .checked_add(1)
+            .expect("animated list identity space exhausted");
         let animation = AnimationController::new(duration);
         animation.forward(now);
         let index = index.min(state.entries.len());
@@ -692,8 +699,11 @@ impl SliverAnimatedListController {
                 removing: false,
             },
         );
-        state.revision = state.revision.wrapping_add(1);
-        state.structure_revision = state.structure_revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
+        state.structure_revision = state
+            .structure_revision
+            .checked_add(1)
+            .expect("structure revision exhausted");
         true
     }
 
@@ -718,8 +728,11 @@ impl SliverAnimatedListController {
         let mut state = self.state.borrow_mut();
         if let Some(entry) = state.entries.get_mut(index) {
             entry.removing = true;
-            state.revision = state.revision.wrapping_add(1);
-            state.structure_revision = state.structure_revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
+            state.structure_revision = state
+                .structure_revision
+                .checked_add(1)
+                .expect("structure revision exhausted");
             true
         } else {
             false
@@ -740,10 +753,13 @@ impl SliverAnimatedListController {
         });
         if state.entries.len() != before {
             changed = true;
-            state.structure_revision = state.structure_revision.wrapping_add(1);
+            state.structure_revision = state
+                .structure_revision
+                .checked_add(1)
+                .expect("structure revision exhausted");
         }
         if changed {
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
         }
         changed
     }
@@ -922,7 +938,8 @@ impl RenderSliver for AnimatedExtentRenderSliver {
     fn revision(&self) -> u64 {
         self.controller
             .revision()
-            .wrapping_add(self.index.revision())
+            .checked_add(self.index.revision())
+            .expect("animated list composite revision exhausted")
     }
 
     fn tick(&mut self, now: Instant) -> bool {

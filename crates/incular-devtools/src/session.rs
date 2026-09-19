@@ -1,14 +1,17 @@
 //! WebSocket session: handshake, request routing, telemetry streaming.
 
 use crate::commands;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt, stream::FuturesUnordered};
 use incular_devtools_protocol::{
     ErrorCode, Hello, Message, PROTOCOL_VERSION, PeerKind, ResponsePayload, TargetEvent,
     TargetInfo, check_hello,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+const INCOMING_REQUEST_LIMIT: usize = 64 * 1024;
+const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Configuration used when starting a target-side DevTools session.
 pub struct SessionConfig {
@@ -17,34 +20,55 @@ pub struct SessionConfig {
 }
 
 /// Transport state passed from the platform runner to the DevTools accept loop.
-pub struct ServeArgs {
-    /// Ephemeral localhost port selected for this session.
-    pub port: u16,
+pub(crate) struct ServeArgs {
     /// OS-generated session token required during the WebSocket handshake.
     pub token: String,
-    /// Human-readable application name associated with the session.
-    pub app_name: String,
     /// Bound localhost listener transferred to the async accept loop.
     pub listener: std::net::TcpListener,
     /// Bounded UI command queue populated by connected DevTools clients.
     pub command_sender: std::sync::mpsc::SyncSender<commands::UiCommand>,
-    /// Replies produced by the UI thread for connected DevTools clients.
-    pub reply_receiver: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<commands::UiReply>>>,
+    pub command_payload_bytes: Arc<AtomicUsize>,
+    pub response_payload_bytes: Arc<AtomicUsize>,
+    /// Wakes the native event loop when new DevTools work becomes pending.
+    pub command_wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    /// Coalesces native event-loop wakes across queued commands.
+    pub wake_pending: std::sync::Arc<AtomicBool>,
     /// Bounded telemetry queue produced by the application runtime.
-    pub telemetry_receiver: tokio::sync::mpsc::Receiver<TargetEvent>,
+    pub telemetry_receiver: tokio::sync::mpsc::Receiver<crate::BudgetedTelemetry>,
     /// Number of telemetry messages dropped because the queue was full.
     pub dropped: Arc<AtomicU64>,
     /// Set by the platform runner to stop the accept loop.
     pub shutdown: Arc<AtomicBool>,
+    pub shutdown_notify: Arc<tokio::sync::Notify>,
+    pub session_cleanup_pending: Arc<AtomicBool>,
+    pub stopped: Arc<AtomicBool>,
+    pub stopped_notify: Arc<tokio::sync::Notify>,
 }
 
 struct SessionState {
     token: String,
     command_sender: std::sync::mpsc::SyncSender<commands::UiCommand>,
-    reply_receiver: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<commands::UiReply>>>,
-    telemetry_receiver: tokio::sync::mpsc::Receiver<TargetEvent>,
+    command_payload_bytes: Arc<AtomicUsize>,
+    response_payload_bytes: Arc<AtomicUsize>,
+    command_wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    wake_pending: std::sync::Arc<AtomicBool>,
+    telemetry_receiver: tokio::sync::mpsc::Receiver<crate::BudgetedTelemetry>,
     dropped: Arc<AtomicU64>,
     shutdown: Arc<AtomicBool>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
+    session_cleanup_pending: Arc<AtomicBool>,
+}
+
+struct StopCompletion {
+    stopped: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl Drop for StopCompletion {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
 }
 
 /// Generates a 128-bit hexadecimal session token from the platform OS random
@@ -77,17 +101,27 @@ pub fn validate(
 }
 
 /// Single-client accept loop; the target serves one DevTools at a time.
-pub async fn serve(args: ServeArgs) {
+pub(crate) async fn serve(args: ServeArgs) {
     let ServeArgs {
         listener,
         token,
         command_sender,
-        reply_receiver,
+        command_payload_bytes,
+        response_payload_bytes,
+        command_wake,
+        wake_pending,
         telemetry_receiver,
         dropped,
         shutdown,
-        ..
+        shutdown_notify,
+        session_cleanup_pending,
+        stopped,
+        stopped_notify,
     } = args;
+    let _completion = StopCompletion {
+        stopped,
+        notify: stopped_notify,
+    };
     // Convert the blocking socket now that a Tokio reactor exists.
     if listener.set_nonblocking(true).is_err() {
         return;
@@ -98,32 +132,51 @@ pub async fn serve(args: ServeArgs) {
     let mut state = SessionState {
         token,
         command_sender,
-        reply_receiver,
+        command_payload_bytes,
+        response_payload_bytes,
+        command_wake,
+        wake_pending,
         telemetry_receiver,
         dropped,
         shutdown: shutdown.clone(),
+        shutdown_notify: shutdown_notify.clone(),
+        session_cleanup_pending,
     };
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
-        let accepted =
-            tokio::time::timeout(std::time::Duration::from_millis(250), listener.accept()).await;
-        let stream = match accepted {
-            Ok(Ok((stream, _))) => stream,
-            Ok(Err(_)) | Err(_) => {
-                if shutdown.load(Ordering::Relaxed) {
-                    break;
+        let stream = tokio::select! {
+            _ = shutdown_notify.notified() => break,
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => stream,
+                Err(_) => {
+                    if shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    tokio::select! {
+                        _ = shutdown_notify.notified() => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => continue,
+                    }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                continue;
             }
         };
-        let Ok(websocket) = tokio_tungstenite::accept_async(stream).await else {
+        let websocket_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+            max_message_size: Some(INCOMING_REQUEST_LIMIT),
+            max_frame_size: Some(INCOMING_REQUEST_LIMIT),
+            ..Default::default()
+        };
+        let Ok(websocket) =
+            tokio_tungstenite::accept_async_with_config(stream, Some(websocket_config)).await
+        else {
             continue;
         };
         let _ = run_session(websocket, &mut state).await;
+        state.session_cleanup_pending.store(true, Ordering::Release);
+        if !state.wake_pending.swap(true, Ordering::AcqRel) {
+            (state.command_wake)();
+        }
     }
 }
 
@@ -140,13 +193,21 @@ where
         S: SinkExt<WsMessage> + std::marker::Unpin,
     {
         let text = serde_json::to_string(message).map_err(|_| ())?;
-        sink.send(WsMessage::Text(text)).await.map_err(|_| ())
+        tokio::time::timeout(SEND_TIMEOUT, sink.send(WsMessage::Text(text)))
+            .await
+            .map_err(|_| ())?
+            .map_err(|_| ())
     }
 
     // ---- Handshake (5 s budget) ----
-    let first = match tokio::time::timeout(std::time::Duration::from_secs(5), source.next()).await {
-        Ok(Some(Ok(WsMessage::Text(text)))) => text,
-        _ => return Err(()),
+    let first = tokio::select! {
+        _ = state.shutdown_notify.notified() => return Err(()),
+        first = tokio::time::timeout(std::time::Duration::from_secs(5), source.next()) => {
+            match first {
+                Ok(Some(Ok(WsMessage::Text(text)))) => text,
+                _ => return Err(()),
+            }
+        }
     };
     let Ok(hello) = serde_json::from_str::<Hello>(&first) else {
         send_message(
@@ -173,6 +234,11 @@ where
         return Err(());
     }
 
+    // Telemetry is session-scoped. Do not replay frames or deltas from a
+    // previous client into a newly authenticated model; the client's first
+    // tree request establishes a fresh delta baseline on the UI thread.
+    while state.telemetry_receiver.try_recv().is_ok() {}
+
     // Handshake ack doubles as TargetInfo delivery.
     let info = TargetInfo {
         protocol_version: PROTOCOL_VERSION,
@@ -198,22 +264,67 @@ where
     .await?;
 
     // ---- Main loop ----
-    let mut last_dropped = 0_u64;
+    let mut last_dropped = state.dropped.load(Ordering::Relaxed);
+    let mut outstanding = std::collections::HashSet::new();
+    let mut completions = FuturesUnordered::new();
     loop {
         if state.shutdown.load(Ordering::Relaxed) {
             break;
         }
         tokio::select! {
+            _ = state.shutdown_notify.notified() => break,
             incoming = source.next() => {
                 match incoming {
                     Some(Ok(WsMessage::Text(text))) => {
                         match serde_json::from_str::<Message>(&text) {
                             Ok(Message::Request { request_id, body }) => {
-                                if state.command_sender.try_send(commands::UiCommand { request_id, body }).is_err() {
+                                if request_id == 0 || outstanding.contains(&request_id) {
+                                    send_message(&mut sink, &Message::Response {
+                                        request_id,
+                                        payload: Err(ErrorCode::InvalidRequest),
+                                    }).await.ok();
+                                    continue;
+                                }
+                                if outstanding.len() >= 64 {
                                     send_message(&mut sink, &Message::Response {
                                         request_id,
                                         payload: Err(ErrorCode::InternalError),
                                     }).await.ok();
+                                    continue;
+                                }
+                                let Some(request_permit) = crate::BytePermit::try_acquire(
+                                    &state.command_payload_bytes,
+                                    text.len(),
+                                    crate::COMMAND_PAYLOAD_BUDGET,
+                                ) else {
+                                    send_message(&mut sink, &Message::Response {
+                                        request_id,
+                                        payload: Err(ErrorCode::InternalError),
+                                    }).await.ok();
+                                    continue;
+                                };
+                                let (sender, receiver) = tokio::sync::oneshot::channel();
+                                let command = commands::UiCommand {
+                                    body,
+                                    completion: commands::CommandCompletion::new(
+                                        sender,
+                                        Arc::clone(&state.response_payload_bytes),
+                                    ),
+                                    _request_permit: request_permit,
+                                };
+                                if state.command_sender.try_send(command).is_err() {
+                                    send_message(&mut sink, &Message::Response {
+                                        request_id,
+                                        payload: Err(ErrorCode::InternalError),
+                                    }).await.ok();
+                                    continue;
+                                }
+                                outstanding.insert(request_id);
+                                completions.push(async move {
+                                    (request_id, receiver.await)
+                                }.boxed());
+                                if !state.wake_pending.swap(true, Ordering::AcqRel) {
+                                    (state.command_wake)();
                                 }
                             }
                             Ok(_) => {}
@@ -229,22 +340,18 @@ where
                     _ => break,
                 }
             }
-            reply = async {
-                let receiver = state.reply_receiver.clone();
-                tokio::task::spawn_blocking(move || {
-                    receiver.lock().ok().and_then(|guarded| {
-                        guarded.recv_timeout(std::time::Duration::from_millis(50)).ok()
-                    })
-                })
-                .await
-                .unwrap_or(None)
-            } => {
-                if let Some(reply) = reply {
-                    let message = Message::Response {
-                        request_id: reply.request_id,
-                        payload: Ok(reply.payload),
+            completion = completions.next(), if !completions.is_empty() => {
+                if let Some((request_id, completion)) = completion {
+                    outstanding.remove(&request_id);
+                    let payload = match completion {
+                        Ok(payload) => payload.result,
+                        Err(_) => Err(ErrorCode::InternalError),
                     };
-                    send_message(&mut sink, &message).await.ok();
+                    let message = Message::Response {
+                        request_id,
+                        payload,
+                    };
+                    send_message(&mut sink, &message).await?;
                 }
             }
             event = state.telemetry_receiver.recv() => {
@@ -256,7 +363,7 @@ where
                     })).await.ok();
                     last_dropped = dropped_total;
                 }
-                send_message(&mut sink, &Message::Event(event)).await?;
+                send_message(&mut sink, &Message::Event(event.event)).await?;
             }
         }
     }

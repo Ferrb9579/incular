@@ -346,7 +346,10 @@ impl TextEngine {
         self.font_context
             .collection
             .register_fonts(parley::fontique::Blob::from(bytes.into()), None);
-        self.generation += 1;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("font database generation exhausted");
         self.cache.clear();
         self.order.clear();
     }

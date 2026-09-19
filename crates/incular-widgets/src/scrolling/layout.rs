@@ -1646,7 +1646,7 @@ impl RenderSliver for LayoutBuilderRenderSliver {
         if self.last_constraints != Some(constraints) {
             self.child = (self.builder)(constraints);
             self.last_constraints = Some(constraints);
-            self.revision = self.revision.wrapping_add(1);
+            self.revision = self.revision.checked_add(1).expect("revision exhausted");
         }
         let extent = self.extent.get().max(0.);
         SliverLayout {

@@ -334,11 +334,20 @@ impl TextEditingController {
         state.restoration = Some(TextRestoration { scope, key });
         // Restoration is a baseline, not an edit: bump the generation so
         // history observers rebaseline instead of recording an undo step.
-        state.restoration_generation = state.restoration_generation.wrapping_add(1);
+        state.restoration_generation = state
+            .restoration_generation
+            .checked_add(1)
+            .expect("text restoration generation exhausted");
         if let Some(value) = restored {
             state.value = value;
-            state.content_revision = state.content_revision.saturating_add(1);
-            state.visual_revision = state.visual_revision.saturating_add(1);
+            state.content_revision = state
+                .content_revision
+                .checked_add(1)
+                .expect("content revision exhausted");
+            state.visual_revision = state
+                .visual_revision
+                .checked_add(1)
+                .expect("visual revision exhausted");
             state.preedit = None;
             state.preedit_selection = None;
             state.caret_reset = None;
@@ -459,7 +468,10 @@ impl TextEditingController {
     pub fn add_listener(&self, listener: impl Fn(&TextEditingValue) + 'static) -> usize {
         let mut state = self.inner.borrow_mut();
         let token = state.next_listener;
-        state.next_listener = state.next_listener.wrapping_add(1);
+        state.next_listener = state
+            .next_listener
+            .checked_add(1)
+            .expect("text editing listener identity space exhausted");
         state.listeners.push((token, Rc::new(listener)));
         token
     }
@@ -582,7 +594,10 @@ impl TextEditingController {
         let mut state = self.inner.borrow_mut();
         state.preedit_selection = selection.map(|range| range.clamp_to(&text));
         state.preedit = (!text.is_empty()).then_some(text);
-        state.visual_revision = state.visual_revision.saturating_add(1);
+        state.visual_revision = state
+            .visual_revision
+            .checked_add(1)
+            .expect("visual revision exhausted");
         drop(state);
         self.notify_listeners();
     }
@@ -598,7 +613,10 @@ impl TextEditingController {
         let mut state = self.inner.borrow_mut();
         if state.preedit.take().is_some() {
             state.preedit_selection = None;
-            state.visual_revision = state.visual_revision.saturating_add(1);
+            state.visual_revision = state
+                .visual_revision
+                .checked_add(1)
+                .expect("visual revision exhausted");
             drop(state);
             self.notify_listeners();
         }
@@ -634,7 +652,10 @@ impl TextEditingController {
     pub fn reset_caret(&self, now: Instant) {
         let mut state = self.inner.borrow_mut();
         state.caret_reset = Some(now);
-        state.visual_revision = state.visual_revision.saturating_add(1);
+        state.visual_revision = state
+            .visual_revision
+            .checked_add(1)
+            .expect("visual revision exhausted");
     }
 
     /// Returns whether the caret should be painted at `now`.
@@ -791,9 +812,15 @@ impl TextEditingController {
             }
             state.value = value;
             if content_changed {
-                state.content_revision = state.content_revision.saturating_add(1);
+                state.content_revision = state
+                    .content_revision
+                    .checked_add(1)
+                    .expect("content revision exhausted");
             }
-            state.visual_revision = state.visual_revision.saturating_add(1);
+            state.visual_revision = state
+                .visual_revision
+                .checked_add(1)
+                .expect("visual revision exhausted");
             state.preedit = None;
             state.preedit_selection = None;
             state.preferred_caret_x = None;

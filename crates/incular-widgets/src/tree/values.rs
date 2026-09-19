@@ -403,7 +403,12 @@ impl OpacityController {
             return false;
         }
         self.opacity.set(opacity);
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         true
     }
     pub fn animate_to(&self, target: f32, duration: Duration, now: Instant) {

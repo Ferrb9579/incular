@@ -261,7 +261,13 @@ where
 {
     fn new(compute: impl FnMut() -> T + 'static) -> Rc<Self> {
         let inner = Rc::new(Self {
-            id: super::NEXT_REACTIVE_NODE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id: super::NEXT_REACTIVE_NODE
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |id| id.checked_add(1),
+                )
+                .expect("reactive node identity space exhausted"),
             value: RefCell::new(None),
             compute: RefCell::new(Box::new(compute)),
             dirty: Cell::new(true),
@@ -543,7 +549,13 @@ struct EffectInner {
 impl EffectInner {
     fn new(callback: impl FnMut() + 'static) -> Rc<Self> {
         let inner = Rc::new(Self {
-            id: super::NEXT_REACTIVE_NODE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id: super::NEXT_REACTIVE_NODE
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |id| id.checked_add(1),
+                )
+                .expect("reactive node identity space exhausted"),
             callback: RefCell::new(Box::new(callback)),
             dirty: Cell::new(false),
             running: Cell::new(false),
@@ -864,7 +876,12 @@ where
         if let Some(active) = self.inner.active.borrow_mut().take() {
             active.cancel();
         }
-        let generation = self.inner.generation.get().wrapping_add(1);
+        let generation = self
+            .inner
+            .generation
+            .get()
+            .checked_add(1)
+            .expect("action generation exhausted");
         self.inner.generation.set(generation);
         self.inner
             .state
@@ -898,7 +915,12 @@ where
 
     /// Cancels the active operation and exposes a runtime cancellation error.
     pub fn cancel(&self) {
-        let generation = self.inner.generation.get().wrapping_add(1);
+        let generation = self
+            .inner
+            .generation
+            .get()
+            .checked_add(1)
+            .expect("action generation exhausted");
         self.inner.generation.set(generation);
         if let Some(active) = self.inner.active.borrow_mut().take() {
             active.cancel();

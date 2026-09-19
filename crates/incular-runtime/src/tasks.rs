@@ -636,7 +636,10 @@ impl TaskScheduler {
 
     fn next_control(&mut self, scope: &TaskScope) -> Arc<TaskControl> {
         let id = self.next_task;
-        self.next_task = self.next_task.wrapping_add(1);
+        self.next_task = self
+            .next_task
+            .checked_add(1)
+            .expect("runtime task identity space exhausted");
         let control = Arc::new(TaskControl {
             id,
             cancelled: AtomicBool::new(

@@ -297,6 +297,14 @@ struct NavigatorState {
     observers: Vec<std::rc::Weak<NavigatorObserverEntry>>,
 }
 
+fn next_route_id(state: &mut NavigatorState) -> RouteId {
+    state.next_id = state
+        .next_id
+        .checked_add(1)
+        .expect("navigation route identity space exhausted");
+    RouteId(state.next_id)
+}
+
 impl Drop for NavigatorState {
     /// Explicit disposal policy: navigator disposal ends every mounted
     /// lifetime exactly once, invoking removal callbacks. No navigator
@@ -440,8 +448,7 @@ impl Navigator {
         let (id, previous, route) = {
             let mut state = self.state.borrow_mut();
             let previous = state.routes.last().map(|entry| entry.route.clone());
-            state.next_id = state.next_id.wrapping_add(1).max(1);
-            route.id = RouteId(state.next_id);
+            route.id = next_route_id(&mut state);
             let id = route.id;
             state.routes.push(RouteEntry {
                 route: route.clone(),
@@ -449,7 +456,7 @@ impl Navigator {
                 key,
                 lifetime: RouteLifetime::new(),
             });
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             (id, previous, route)
         };
         let mut effects = CommitEffects::default();
@@ -485,10 +492,10 @@ impl Navigator {
             let previous = state.routes.last().map(|entry| entry.route.clone());
             let mut next = Vec::with_capacity(routes.len());
             for (page, route) in routes {
-                state.next_id = state.next_id.wrapping_add(1).max(1);
+                let id = next_route_id(&mut state);
                 next.push(RouteEntry {
                     route: Route {
-                        id: RouteId(state.next_id),
+                        id,
                         settings: RouteSettings::new(page.name.clone()),
                         name: page.name,
                         child: page.child,
@@ -501,7 +508,7 @@ impl Navigator {
                 });
             }
             let retired = std::mem::replace(&mut state.routes, next);
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             let current = state.routes.last().map(|entry| entry.route.clone());
             (previous, current, retired)
         };
@@ -520,8 +527,7 @@ impl Navigator {
         let (previous, current, retired) = {
             let mut state = self.state.borrow_mut();
             let previous = state.routes.last().map(|entry| entry.route.clone());
-            state.next_id = state.next_id.wrapping_add(1).max(1);
-            let id = RouteId(state.next_id);
+            let id = next_route_id(&mut state);
             let retired = std::mem::replace(
                 &mut state.routes,
                 vec![RouteEntry {
@@ -538,7 +544,7 @@ impl Navigator {
                     lifetime: RouteLifetime::new(),
                 }],
             );
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             let current = state.routes.last().map(|entry| entry.route.clone());
             (previous, current, retired)
         };
@@ -630,7 +636,7 @@ impl Navigator {
             return false;
         }
         route.state = value;
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         true
     }
 
@@ -715,10 +721,10 @@ impl Navigator {
                     retired_owned.push((old_transition, old_presentation));
                     next.push(entry);
                 } else {
-                    state.next_id = state.next_id.wrapping_add(1).max(1);
+                    let id = next_route_id(&mut state);
                     next.push(RouteEntry {
                         route: Route {
-                            id: RouteId(state.next_id),
+                            id,
                             settings: RouteSettings::new(page.name.clone()),
                             name: page.name,
                             child: page.child,
@@ -736,7 +742,7 @@ impl Navigator {
             // persisted scope data by design.
             let retired: Vec<RouteEntry> = previous.into_iter().flatten().collect();
             state.routes = next;
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             let current_top = state.routes.last().map(|entry| entry.route.clone());
             (
                 previous_top,
@@ -791,7 +797,7 @@ impl Navigator {
                 .routes
                 .pop()
                 .expect("a non-empty guarded navigator must remain non-empty");
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             let cleanup = entry
                 .restorable
                 .as_ref()
@@ -854,15 +860,14 @@ impl Navigator {
                 .filter(|restorable| restorable.removes_scope_on_pop())
                 .and_then(|restorable| restorable.scope_key.clone())
                 .zip(state.route_scope_cleanup.clone());
-            state.next_id = state.next_id.wrapping_add(1).max(1);
-            route.id = RouteId(state.next_id);
+            route.id = next_route_id(&mut state);
             state.routes.push(RouteEntry {
                 route: route.clone(),
                 restorable: None,
                 key: None,
                 lifetime: RouteLifetime::new(),
             });
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             (previous.route, previous.lifetime, route, cleanup)
         };
         let mut effects = CommitEffects::default();

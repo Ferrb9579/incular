@@ -1,5 +1,6 @@
 //! Contract checks for the pinned Flutter 3.47.1 Material inventory.
 
+use serde_json::Value;
 use std::{collections::HashSet, fs, path::Path};
 
 const ALLOWED: [&str; 8] = [
@@ -14,11 +15,11 @@ const ALLOWED: [&str; 8] = [
 ];
 
 fn json_string(line: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\":\"");
-    let start = line.find(&needle)? + needle.len();
-    let rest = &line[start..];
-    let end = rest.find('\"')?;
-    Some(rest[..end].to_owned())
+    serde_json::from_str::<Value>(line)
+        .ok()?
+        .get(key)?
+        .as_str()
+        .map(str::to_owned)
 }
 
 #[test]

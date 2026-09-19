@@ -15,6 +15,12 @@ use std::{
 
 static NEXT_UNIQUE_KEY: AtomicU64 = AtomicU64::new(1);
 
+fn next_unique_key() -> u64 {
+    NEXT_UNIQUE_KEY
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("unique key identity space exhausted")
+}
+
 /// A compact, hashable description of a concrete key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeyId {
@@ -62,7 +68,7 @@ pub struct UniqueKey(u64);
 impl UniqueKey {
     #[must_use]
     pub fn new() -> Self {
-        Self(NEXT_UNIQUE_KEY.fetch_add(1, Ordering::Relaxed))
+        Self(next_unique_key())
     }
 
     #[must_use]

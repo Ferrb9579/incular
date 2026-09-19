@@ -43,6 +43,11 @@ fn test_member_parity_manifest_has_explicit_reviewed_outcomes() {
         }
         let record: Value = serde_json::from_str(trimmed).expect("Parse manifest line");
         parity_status::validate_member(&record).expect("explicit member contract");
+        parity_status::validate_named_test_evidence(
+            repo_root,
+            record["evidence"].as_str().expect("behavior evidence"),
+        )
+        .expect("member behavior evidence");
 
         let incular_type = record["incular_type"]
             .as_str()

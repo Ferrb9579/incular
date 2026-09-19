@@ -154,7 +154,11 @@ impl MobileAccessibilityProjection {
         }
         let current: HashMap<_, _> = tree.iter().map(|(id, node)| (id, node.clone())).collect();
         for id in current.keys().copied() {
-            self.ensure_native_id(id);
+            if !self.ensure_native_id(id) {
+                self.active = false;
+                self.force_full_update = true;
+                return None;
+            }
         }
         let full = self.force_full_update;
         let mut changed = if full {
@@ -295,14 +299,18 @@ impl MobileAccessibilityProjection {
         Some(SemanticActionRequest { node, action })
     }
 
-    fn ensure_native_id(&mut self, node: SemanticNodeId) {
+    fn ensure_native_id(&mut self, node: SemanticNodeId) -> bool {
         if self.semantic_to_native.contains_key(&node) {
-            return;
+            return true;
         }
         let native_id = self.next_native_id;
-        self.next_native_id = self.next_native_id.wrapping_add(1).max(1);
+        let Some(next_native_id) = self.next_native_id.checked_add(1) else {
+            return false;
+        };
+        self.next_native_id = next_native_id;
         self.semantic_to_native.insert(node, native_id);
         self.native_to_semantic.insert(native_id, node);
+        true
     }
 }
 
@@ -491,7 +499,10 @@ impl AccessKitProjection {
             })
             .collect();
         for id in current.keys().copied() {
-            self.ensure_native_id(id);
+            if !self.ensure_native_id(id) {
+                self.force_full_update = true;
+                return None;
+            }
         }
         let next_host = HostProjection {
             root: tree.root(),
@@ -688,14 +699,18 @@ impl AccessKitProjection {
         Some(SemanticActionRequest { node, action })
     }
 
-    fn ensure_native_id(&mut self, node: SemanticNodeId) {
+    fn ensure_native_id(&mut self, node: SemanticNodeId) -> bool {
         if self.semantic_to_native.contains_key(&node) {
-            return;
+            return true;
         }
         let native = NodeId(self.next_native_id);
-        self.next_native_id = self.next_native_id.wrapping_add(1).max(1);
+        let Some(next_native_id) = self.next_native_id.checked_add(1) else {
+            return false;
+        };
+        self.next_native_id = next_native_id;
         self.semantic_to_native.insert(node, native);
         self.native_to_semantic.insert(native, node);
+        true
     }
 
     fn host_node(&self, host: HostProjection) -> Node {

@@ -81,7 +81,9 @@ impl AnimatedCollectionState {
         let entries = (0..item_count)
             .map(|_| {
                 let id = next_id;
-                next_id = next_id.saturating_add(1).max(1);
+                next_id = next_id
+                    .checked_add(1)
+                    .expect("animated collection identity space exhausted");
                 let animation = AnimationController::new(duration);
                 animation.set_value(1.0);
                 AnimatedEntry {
@@ -189,7 +191,7 @@ impl AnimatedCollectionController {
         for entry in &state.entries {
             entry.animation.set_duration(duration);
         }
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
     }
 
     #[must_use]
@@ -270,13 +272,19 @@ impl AnimatedCollectionController {
             }
         }
         let id = state.next_id;
-        state.next_id = state.next_id.saturating_add(1).max(1);
+        state.next_id = state
+            .next_id
+            .checked_add(1)
+            .expect("animated collection identity space exhausted");
         let mut entry = AnimatedEntry::new(id, duration);
         entry.original_index = logical_index;
         entry.animation.forward(now);
         state.entries.insert(physical_index, entry);
-        state.revision = state.revision.wrapping_add(1);
-        state.structure_revision = state.structure_revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
+        state.structure_revision = state
+            .structure_revision
+            .checked_add(1)
+            .expect("structure revision exhausted");
         id
     }
 
@@ -339,7 +347,7 @@ impl AnimatedCollectionController {
             entry.animation.reverse(now);
             entry.id
         };
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         Some(id)
     }
 
@@ -405,11 +413,14 @@ impl AnimatedCollectionController {
                 && entry.animation.value() <= 0.0)
         });
         if state.entries.len() != before {
-            state.structure_revision = state.structure_revision.wrapping_add(1);
+            state.structure_revision = state
+                .structure_revision
+                .checked_add(1)
+                .expect("structure revision exhausted");
             changed = true;
         }
         if changed {
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
         }
         changed
     }
@@ -543,7 +554,10 @@ impl AnimatedCollectionRenderSliver {
                     let _ = self.index.set_measured_extent(position, extent);
                 }
             }
-            self.structure_revision = self.structure_revision.wrapping_add(1);
+            self.structure_revision = self
+                .structure_revision
+                .checked_add(1)
+                .expect("structure revision exhausted");
         }
         self.entries = next_entries;
     }
@@ -788,8 +802,9 @@ impl RenderSliver for AnimatedCollectionRenderSliver {
     fn revision(&self) -> u64 {
         self.controller
             .revision()
-            .wrapping_add(self.structure_revision)
-            .wrapping_add(self.index.revision())
+            .checked_add(self.structure_revision)
+            .and_then(|revision| revision.checked_add(self.index.revision()))
+            .expect("animated sliver composite revision exhausted")
     }
 
     fn tick(&mut self, now: Instant) -> bool {

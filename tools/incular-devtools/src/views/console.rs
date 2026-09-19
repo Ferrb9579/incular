@@ -20,7 +20,11 @@ pub(crate) fn build_console(
             if let Ok(mut state) = submit_shared.lock() {
                 state.console_filter = query;
             }
-            submit_tick.update(|value| *value = value.wrapping_add(1));
+            submit_tick.update(|value| {
+                *value = value
+                    .checked_add(1)
+                    .expect("DevTools UI revision exhausted")
+            });
         })
         .into();
     controls.push(filter_field.clone());
@@ -31,7 +35,11 @@ pub(crate) fn build_console(
         if let Ok(mut state) = clear_shared.lock() {
             state.console.clear();
         }
-        clear_tick.update(|value| *value = value.wrapping_add(1));
+        clear_tick.update(|value| {
+            *value = value
+                .checked_add(1)
+                .expect("DevTools UI revision exhausted")
+        });
     }));
     body.extend(entries.into_iter().map(|entry| {
         let color = match entry.level.to_ascii_lowercase().as_str() {

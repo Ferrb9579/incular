@@ -96,7 +96,9 @@ impl NativeMenuCommandRegistry {
         for id in ids {
             let command = self.active_by_id.get(&id).copied().unwrap_or_else(|| {
                 let command = NativeMenuCommandId(next_command);
-                next_command += 1;
+                next_command = next_command
+                    .checked_add(1)
+                    .expect("native menu command identity space exhausted");
                 command
             });
             next_by_command.insert(command, id.clone());
@@ -104,7 +106,10 @@ impl NativeMenuCommandRegistry {
         }
 
         if self.active_by_id != next_by_id {
-            self.generation = self.generation.wrapping_add(1);
+            self.generation = self
+                .generation
+                .checked_add(1)
+                .expect("platform menu generation exhausted");
         }
         self.next_command = next_command;
         self.active_by_id = next_by_id;

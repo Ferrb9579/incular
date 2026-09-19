@@ -241,7 +241,7 @@ impl ScrollController {
         let mut state = self.state.borrow_mut();
         let offset = offset.max(0.0);
         state.pending_jump_offset = Some(offset);
-        state.revision = state.revision.wrapping_add(1);
+        state.revision = state.revision.checked_add(1).expect("revision exhausted");
         true
     }
     pub fn scroll_by(&self, delta: f32) -> bool {

@@ -3444,6 +3444,10 @@ report.
 
 ## W9 — Tooling and sustainable closure
 
+Execution plan: [W9 completion plan](docs/W9_COMPLETION_PLAN.md). It covers the
+whole stream and its still-open ownership prerequisites; W8 remains removed.
+Status: planned; implementation and closure results are not claimed yet.
+
 1. Bound DevTools requests and coalesce wake notifications. Define backpressure,
    disconnect/reconnect and stale-response policy; retain session authentication.
    Bound model/history data and surface discovery/session failures usefully.

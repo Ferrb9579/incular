@@ -20,10 +20,11 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-incular = { workspace = true, features = ["devtools"] }
+incular = { workspace = true, features = ["desktop", "controls", "material", "devtools"] }
 incular-devtools-protocol = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 directories = { workspace = true }

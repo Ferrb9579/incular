@@ -553,7 +553,10 @@ impl BackRegistration {
 
 fn next_id(state: &mut DispatcherState) -> u64 {
     let id = state.next_id;
-    state.next_id = state.next_id.wrapping_add(1).max(1);
+    state.next_id = state
+        .next_id
+        .checked_add(1)
+        .expect("back dispatcher identity space exhausted");
     id
 }
 

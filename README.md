@@ -35,6 +35,12 @@ The [architecture contract](docs/ARCHITECTURE.md),
 Flutter manifests are compatibility inventories; Incular's Rust ownership and
 behavior contracts determine implementation boundaries.
 
+| Contract | Status |
+| --- | --- |
+| Ownership | Repository integration-test harness and architecture/parity policy owner. |
+| API class | bridge; the root package exists to validate framework packages and is not an application dependency. |
+| Support | Internal workspace harness; not published and not part of the framework API. |
+
 Run the full validation suite before submitting a change:
 
 ```text

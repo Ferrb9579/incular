@@ -104,6 +104,7 @@ pub enum NativeApplicationShellEvent {
 
 struct Slot<T> {
     generation: u32,
+    retired: bool,
     value: Option<T>,
 }
 
@@ -111,6 +112,7 @@ impl<T> Default for Slot<T> {
     fn default() -> Self {
         Self {
             generation: 0,
+            retired: false,
             value: None,
         }
     }
@@ -478,12 +480,10 @@ impl ApplicationShellService {
             .collect();
         state.completions.extend(pending);
         for slot in &mut state.trays {
-            slot.value = None;
-            slot.generation = slot.generation.wrapping_add(1);
+            retire_slot(slot);
         }
         for slot in &mut state.notifications {
-            slot.value = None;
-            slot.generation = slot.generation.wrapping_add(1);
+            retire_slot(slot);
         }
     }
 }
@@ -607,14 +607,18 @@ fn reserve_tray(slots: &mut Vec<Slot<TrayRecord>>, value: TrayRecord) -> TrayIte
     if let Some((index, slot)) = slots
         .iter_mut()
         .enumerate()
-        .find(|(_, slot)| slot.value.is_none())
+        .find(|(_, slot)| !slot.retired && slot.value.is_none())
     {
         slot.value = Some(value);
-        return TrayItemId::from_parts(index as u32, slot.generation);
+        return TrayItemId::from_parts(
+            u32::try_from(index).expect("tray index was validated on insertion"),
+            slot.generation,
+        );
     }
-    let index = slots.len() as u32;
+    let index = u32::try_from(slots.len()).expect("tray identity space exhausted");
     slots.push(Slot {
         generation: 0,
+        retired: false,
         value: Some(value),
     });
     TrayItemId::from_parts(index, 0)
@@ -627,14 +631,18 @@ fn reserve_notification(
     if let Some((index, slot)) = slots
         .iter_mut()
         .enumerate()
-        .find(|(_, slot)| slot.value.is_none())
+        .find(|(_, slot)| !slot.retired && slot.value.is_none())
     {
         slot.value = Some(value);
-        return NotificationId::from_parts(index as u32, slot.generation);
+        return NotificationId::from_parts(
+            u32::try_from(index).expect("notification index was validated on insertion"),
+            slot.generation,
+        );
     }
-    let index = slots.len() as u32;
+    let index = u32::try_from(slots.len()).expect("notification identity space exhausted");
     slots.push(Slot {
         generation: 0,
+        retired: false,
         value: Some(value),
     });
     NotificationId::from_parts(index, 0)
@@ -685,11 +693,22 @@ fn release_notification(slots: &mut [Slot<NotificationRecord>], id: Notification
     else {
         return false;
     };
-    if slot.value.take().is_none() {
+    if slot.value.is_none() {
         return false;
     }
-    slot.generation = slot.generation.wrapping_add(1);
+    retire_slot(slot);
     true
+}
+
+fn retire_slot<T>(slot: &mut Slot<T>) {
+    if slot.value.take().is_none() {
+        return;
+    }
+    if let Some(next_generation) = slot.generation.checked_add(1) {
+        slot.generation = next_generation;
+    } else {
+        slot.retired = true;
+    }
 }
 
 pub struct TrayItemHandle {
@@ -776,7 +795,11 @@ impl ApplicationShellService {
             .value
             .take()
             .ok_or(ApplicationShellError::StaleResource)?;
-        slot.generation = slot.generation.wrapping_add(1);
+        if let Some(next_generation) = slot.generation.checked_add(1) {
+            slot.generation = next_generation;
+        } else {
+            slot.retired = true;
+        }
         retire_resource(&mut state, ShellResource::Tray(id), record.phase, true);
         drop(state);
         self.wake();

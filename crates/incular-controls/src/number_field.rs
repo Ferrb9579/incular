@@ -29,7 +29,12 @@ impl NumberFieldScope {
             return;
         }
         self.value.set(next);
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         if let Some(callback) = self.on_change.as_ref() {
             callback(next);
         }

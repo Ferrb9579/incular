@@ -296,7 +296,11 @@ impl Runtime {
             window_id,
             window_scope,
             window_manager,
-            driver_domain: Rc::new(RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed)),
+            driver_domain: Rc::new(
+                RUNTIME_SEQUENCE
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                    .expect("runtime driver identity space exhausted"),
+            ),
         };
         // Focus nodes live outside the retained tree so they may be shared by
         // rebuildable descriptors. Resolve the first mounted autofocus listener
@@ -570,7 +574,10 @@ impl Runtime {
         // that snapshot synchronized even when no declarative environment
         // dependency requires rebuilding the application root.
         let retained_environment_dirty = self.tree.set_environment(environment);
-        self.environment_generation = self.environment_generation.wrapping_add(1);
+        self.environment_generation = self
+            .environment_generation
+            .checked_add(1)
+            .expect("runtime environment generation exhausted");
         if retained_environment_dirty {
             self.frame_requested = true;
         }

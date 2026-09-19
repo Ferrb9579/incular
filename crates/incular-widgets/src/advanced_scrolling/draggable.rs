@@ -280,7 +280,10 @@ impl DraggableScrollableActuator {
         });
         let mut actuator = self.state.borrow_mut();
         let id = actuator.next_id;
-        actuator.next_id = actuator.next_id.wrapping_add(1);
+        actuator.next_id = actuator
+            .next_id
+            .checked_add(1)
+            .expect("draggable actuator listener identity space exhausted");
         actuator.listeners.push((id, listener));
         drop(actuator);
         sheet.state.borrow_mut().actuator_subscription = Some(ActuatorSubscription {
@@ -822,7 +825,10 @@ impl DraggableScrollableState {
         let notifications = self.state.borrow().listeners.clone();
         let mut queue = notifications.queue.borrow_mut();
         let id = queue.next_id;
-        queue.next_id = queue.next_id.wrapping_add(1);
+        queue.next_id = queue
+            .next_id
+            .checked_add(1)
+            .expect("draggable notification listener identity space exhausted");
         queue.listeners.push((id, Rc::new(listener)));
         drop(queue);
         DraggableNotificationSubscription {
@@ -839,7 +845,10 @@ impl DraggableScrollableState {
     /// Begins a cancelable activity and returns its generation token.
     pub fn start_activity(&self) -> u64 {
         let mut state = self.state.borrow_mut();
-        state.next_activity = state.next_activity.wrapping_add(1);
+        state.next_activity = state
+            .next_activity
+            .checked_add(1)
+            .expect("draggable activity identity space exhausted");
         let generation = state.next_activity;
         state.activity = Some(SheetActivity { generation });
         generation

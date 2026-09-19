@@ -1317,7 +1317,10 @@ impl Application {
                 let _ = self.with_window_mut(window_id, |record| {
                     if record.metrics != metrics {
                         record.metrics = metrics;
-                        record.surface_generation = record.surface_generation.wrapping_add(1);
+                        record.surface_generation = record
+                            .surface_generation
+                            .checked_add(1)
+                            .expect("runtime surface generation exhausted");
                         record.runtime.update_window_metrics(metrics);
                     }
                 });

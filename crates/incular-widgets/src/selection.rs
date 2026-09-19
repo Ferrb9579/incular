@@ -236,7 +236,10 @@ impl SelectionAreaController {
     pub fn add_listener(&self, listener: impl Fn() + 'static) -> u64 {
         let mut state = self.state.borrow_mut();
         let token = state.next_listener;
-        state.next_listener = state.next_listener.wrapping_add(1);
+        state.next_listener = state
+            .next_listener
+            .checked_add(1)
+            .expect("selection listener identity space exhausted");
         state.listeners.insert(token, Rc::new(listener));
         token
     }
@@ -249,7 +252,10 @@ impl SelectionAreaController {
     pub fn add_geometry_listener(&self, listener: impl Fn(SelectionGeometry) + 'static) -> u64 {
         let mut state = self.state.borrow_mut();
         let token = state.next_geometry_listener;
-        state.next_geometry_listener = state.next_geometry_listener.wrapping_add(1);
+        state.next_geometry_listener = state
+            .next_geometry_listener
+            .checked_add(1)
+            .expect("selection geometry listener identity space exhausted");
         state.geometry_listeners.insert(token, Rc::new(listener));
         token
     }
@@ -302,7 +308,7 @@ impl SelectionAreaController {
             state.selected_text = selected_text;
             state.range = range;
             state.geometry = geometry;
-            state.revision = state.revision.wrapping_add(1);
+            state.revision = state.revision.checked_add(1).expect("revision exhausted");
             (
                 state.listeners.values().cloned().collect::<Vec<_>>(),
                 state
@@ -474,7 +480,10 @@ impl SelectionListenerNotifier {
     pub fn add_listener(&self, listener: impl Fn() + 'static) -> u64 {
         let mut state = self.state.borrow_mut();
         let token = state.next_listener;
-        state.next_listener = state.next_listener.wrapping_add(1);
+        state.next_listener = state
+            .next_listener
+            .checked_add(1)
+            .expect("selection notifier listener identity space exhausted");
         state.listeners.insert(token, Rc::new(listener));
         token
     }

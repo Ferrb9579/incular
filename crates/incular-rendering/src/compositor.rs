@@ -603,7 +603,10 @@ impl LayerTree {
     }
     fn insert(&mut self, kind: LayerKind) -> LayerId {
         let generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         let id = LayerId(self.layers.insert(Layer {
             kind,
             children: Vec::new(),
@@ -646,7 +649,10 @@ impl LayerTree {
             layer.children = children;
             layer.dirty.insert(DirtyFlags::COMPOSITE);
             layer.generation = self.next_generation;
-            self.next_generation = self.next_generation.wrapping_add(1).max(1);
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("layer generation exhausted");
         }
     }
 
@@ -689,7 +695,10 @@ impl LayerTree {
                 .dirty
                 .insert(DirtyFlags::PAINT | DirtyFlags::COMPOSITE);
             layer.generation = self.next_generation;
-            self.next_generation = self.next_generation.wrapping_add(1).max(1);
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("layer generation exhausted");
             self.diagnostics.picture_layers_repainted += 1;
         }
     }
@@ -706,7 +715,10 @@ impl LayerTree {
         *current = transform;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         self.diagnostics.transform_updates += 1;
         true
     }
@@ -724,7 +736,10 @@ impl LayerTree {
         layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         self.diagnostics.clip_updates += 1;
         true
     }
@@ -742,7 +757,10 @@ impl LayerTree {
         layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         self.diagnostics.clip_updates += 1;
         true
     }
@@ -760,7 +778,10 @@ impl LayerTree {
         layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         self.diagnostics.clip_updates += 1;
         true
     }
@@ -783,7 +804,10 @@ impl LayerTree {
         layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         self.diagnostics.clip_updates += 1;
         true
     }
@@ -907,7 +931,10 @@ impl LayerTree {
         *current_transform = mask_transform;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     pub fn update_shader_mask_blend(&mut self, id: LayerId, blend_mode: BlendMode) -> bool {
@@ -927,7 +954,10 @@ impl LayerTree {
         *current = blend_mode;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     pub fn update_backdrop_filter(
@@ -957,7 +987,10 @@ impl LayerTree {
         *current_enabled = enabled;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     pub fn update_annotated_region(
@@ -986,7 +1019,10 @@ impl LayerTree {
         *current_size = size;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     pub fn update_leader(&mut self, id: LayerId, link: LayerLink, size: Size) -> bool {
@@ -1011,7 +1047,10 @@ impl LayerTree {
         *current_size = size;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     pub fn update_leader_size(&mut self, id: LayerId, size: Size) -> bool {
@@ -1027,7 +1066,10 @@ impl LayerTree {
         *current = size;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     // Keep the follower fields explicit to preserve the public update API and
@@ -1074,7 +1116,10 @@ impl LayerTree {
         *current_size = size;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
-        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("layer generation exhausted");
         true
     }
     /// World-space logical bounds captured by the most recent [`Self::flatten`]

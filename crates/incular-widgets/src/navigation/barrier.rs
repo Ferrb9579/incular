@@ -166,7 +166,7 @@ impl From<AnimatedModalBarrier> for Widget {
         let controller = value.color.controller();
         let _listener_id = controller.add_listener(move |_| {
             if let Some(revision) = weak_revision.upgrade() {
-                revision.set(revision.get().wrapping_add(1));
+                revision.set(revision.get().checked_add(1).expect("revision exhausted"));
             }
         });
 

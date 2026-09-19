@@ -64,11 +64,20 @@ impl CollapsibleScope {
         if next == previous {
             return;
         }
-        self.revision.set(self.revision.get().wrapping_add(1));
+        self.revision.set(
+            self.revision
+                .get()
+                .checked_add(1)
+                .expect("revision exhausted"),
+        );
         if let Some(accordion) = self.accordion.as_ref() {
-            accordion
-                .revision
-                .set(accordion.revision.get().wrapping_add(1));
+            accordion.revision.set(
+                accordion
+                    .revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
         if let Some(callback) = self.on_change.as_ref() {
             callback(next);

@@ -55,7 +55,12 @@ impl MenuController {
     pub fn set_open(&self, value: bool) {
         let previous = self.open.replace(value);
         if previous != value {
-            self.revision.set(self.revision.get().wrapping_add(1));
+            self.revision.set(
+                self.revision
+                    .get()
+                    .checked_add(1)
+                    .expect("revision exhausted"),
+            );
         }
     }
 

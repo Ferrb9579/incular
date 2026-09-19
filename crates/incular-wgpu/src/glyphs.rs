@@ -828,7 +828,10 @@ impl GlyphAtlas {
             }
         });
         self.retired_keys.extend(retired);
-        self.eviction_revision = self.eviction_revision.saturating_add(1);
+        self.eviction_revision = self
+            .eviction_revision
+            .checked_add(1)
+            .expect("eviction revision exhausted");
         self.counters.glyph_page_evictions += 1;
     }
 
@@ -841,7 +844,10 @@ impl GlyphAtlas {
     fn retire_page(&mut self, index: usize) {
         self.drop_page_placements(index);
         if let Some(page) = self.pages.get_mut(index) {
-            page.generation = page.generation.saturating_add(1);
+            page.generation = page
+                .generation
+                .checked_add(1)
+                .expect("glyph atlas page generation exhausted");
             page.resident = false;
             page.class = GlyphAtlasClass::Normal;
             page.next_x = 0;
@@ -876,7 +882,10 @@ impl GlyphAtlas {
             .map(|(index, _)| index)?;
         self.drop_page_placements(victim);
         if let Some(page) = self.pages.get_mut(victim) {
-            page.generation = page.generation.saturating_add(1);
+            page.generation = page
+                .generation
+                .checked_add(1)
+                .expect("glyph atlas page generation exhausted");
             page.next_x = 0;
             page.next_y = 0;
             page.row_height = 0;

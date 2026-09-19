@@ -64,18 +64,19 @@ impl<T> Arena<T> {
     }
 
     pub fn insert(&mut self, value: T) -> ArenaId {
-        self.len += 1;
         if let Some(index) = self.free.pop() {
             let slot = &mut self.slots[index as usize];
             debug_assert!(slot.value.is_none());
             slot.value = Some(value);
+            self.len += 1;
             ArenaId::from_parts(index, slot.generation)
         } else {
-            let index = self.slots.len() as u32;
+            let index = u32::try_from(self.slots.len()).expect("arena identity space exhausted");
             self.slots.push(Slot {
                 generation: 0,
                 value: Some(value),
             });
+            self.len += 1;
             ArenaId::from_parts(index, 0)
         }
     }
@@ -101,8 +102,10 @@ impl<T> Arena<T> {
             return None;
         }
         let value = slot.value.take()?;
-        slot.generation = slot.generation.wrapping_add(1);
-        self.free.push(id.index);
+        if let Some(next_generation) = slot.generation.checked_add(1) {
+            slot.generation = next_generation;
+            self.free.push(id.index);
+        }
         self.len -= 1;
         Some(value)
     }
@@ -124,9 +127,15 @@ impl<T> Arena<T> {
 
     pub fn iter(&self) -> impl Iterator<Item = (ArenaId, &T)> {
         self.slots.iter().enumerate().filter_map(|(index, slot)| {
-            slot.value
-                .as_ref()
-                .map(|value| (ArenaId::from_parts(index as u32, slot.generation), value))
+            slot.value.as_ref().map(|value| {
+                (
+                    ArenaId::from_parts(
+                        u32::try_from(index).expect("arena index was validated on insertion"),
+                        slot.generation,
+                    ),
+                    value,
+                )
+            })
         })
     }
 
@@ -136,9 +145,15 @@ impl<T> Arena<T> {
             .enumerate()
             .filter_map(|(index, slot)| {
                 let generation = slot.generation;
-                slot.value
-                    .as_mut()
-                    .map(|value| (ArenaId::from_parts(index as u32, generation), value))
+                slot.value.as_mut().map(|value| {
+                    (
+                        ArenaId::from_parts(
+                            u32::try_from(index).expect("arena index was validated on insertion"),
+                            generation,
+                        ),
+                        value,
+                    )
+                })
             })
     }
 }
