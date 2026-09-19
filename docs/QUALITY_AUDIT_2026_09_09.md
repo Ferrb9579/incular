@@ -66,7 +66,7 @@ deletion or ABI policy is justified by this audit alone.
 
 ## Ordered execution
 
-Plans 16-21 specialize existing W6/W9/W4/W8 work without replacing plan 15.
+Plans 17, 18, 20 and 21 specialize remaining W6/W9 work without replacing plan 15.
 Each plan is independently complete only after reproduction, migration, focused
 tests, ordinary workspace validation, diff review and its own commit.
 
@@ -75,13 +75,12 @@ passed on Windows. Further validation belongs to each plan's completion record.
 
 ## Implementation progress
 
-Q01 is fixed in plan 16: initial regressions reproduced eight failures; all eleven
+Q01 is fixed: initial regressions reproduced eight failures; all eleven
 expanded highlight tests now pass. The default and all-feature workspace runs
 each report 1,429 passed, zero failed and zero ignored. Formatting, workspace
-check, strict Clippy and warning-denied rustdoc also pass on Windows. See plan 16
-for callback ordering, lifetime, unwind and performance-contract evidence.
+check, strict Clippy and warning-denied rustdoc also pass on Windows.
 
-Plans 17-21 are recorded, not implemented by this slice. Q02-Q06 remain source
+Plans 17, 18, 20 and 21 are recorded, not implemented by this slice. Q02-Q06 remain source
 findings awaiting their focused reproductions/fixes; Q07 remains native lifetime
-verification work. This completion does not close plan 15 W6/W9 or certify
+work. This completion does not close plan 15 W6/W9 or certify
 open-source readiness across all hosts and feature/MSRV combinations.

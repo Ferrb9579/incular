@@ -52,5 +52,4 @@ measured viewport geometry; `MenuAnchor` executes its clip/constraint/root
 overlay/animation policies; progress indeterminate motion is retained; and
 `AnimatedTheme` honors duration and retargets from its presented value.
 
-W7 does not claim native-platform verification. Native outcome verification is
-the separate Plan 15 W8 workstream.
+W7 does not claim native-platform verification.

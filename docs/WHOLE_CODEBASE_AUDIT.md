@@ -208,7 +208,7 @@ plan 15. A preserve disposition deliberately avoids gratuitous rewrites.
 | incular-scroll | controller, activity, coordinator, extent index, physics | W5: attachment/activity ownership and differential extent-index tests; preserve bounded deep jumps |
 | incular-gestures | arena, recognizers, focus, keyboard | W6: cancellation, nested arbitration, focus removal, keyboard scope cleanup; distinguish simultaneous recognition from lifecycle flags |
 | incular-semantics | tree updates, IDs, checked state | W3/W6: preserve mixed/absent distinction; test semantic geometry, graph removal and actions |
-| incular-accessibility | AccessKit/mobile projection and action translation | W6/W8: stale native actions, stable IDs, parent/popup projection, adapter teardown; exhaustive role/state mapping |
+| incular-accessibility | AccessKit/mobile projection and action translation | W6: stale native actions, stable IDs, parent/popup projection, adapter teardown; exhaustive role/state mapping |
 | incular-widgets | descriptors/structure/lowering/phases, forms and advanced widgets | W1/W3/W5/W6: property ledger, R02/R03, narrow bridges, executable behavior for all exported options |
 | incular-controls | button/checkbox/selection, theme/styles, visual slots | W3/W7: one behavior owner; equivalent default/custom visuals for focus, keyboard and semantics |
 | incular-material | component_impl, foundation, p0_controls, app shell | W1/W7: remove silent no-ops; resolve tokens consistently; wrapper-only interaction; reconcile builder invariants |
@@ -216,14 +216,14 @@ plan 15. A preserve disposition deliberately avoids gratuitous rewrites.
 | incular-rendering | paths, display lists, layers/effects/compositor | W2/W3: preserve GPU independence; balanced command scopes, layer liveness and geometry property tests |
 | incular-painting | pure re-export lib | W9: preserve current compatibility decision/type identity; no second renderer model |
 | incular-wgpu | shared resources, surfaces, frame acquisition, lowering, pipelines | W2: R04/R06; bounded residency, error outcomes, owned surfaces, backend format/alpha/effect tests |
-| incular-platform | portable operations/capabilities, events, IDs and domains | W8/W9: preserve Winit-free contracts; executable support matrix and exhaustive typed outcome mappings |
+| incular-platform | portable operations/capabilities, events, IDs and domains | W9: preserve Winit-free contracts; executable support matrix and exhaustive typed outcome mappings |
 | incular-runtime | request registry/channel, tasks, application/frame, restoration/profiling | W4/W5/W9: preserve completed lifecycle machinery; smaller owners, cancellation/reentrancy and restore-error contracts |
-| incular-desktop | DesktopHost, window owner, input, transients, presentation/services | W8: preserve one runner; native integration and shared-GPU teardown tests; no new global host state |
-| incular-windows | input/environment/menu/shell/native facade | W8: HWND/menu callback lifetime and Windows acceptance matrix; existing live evidence preserved |
-| incular-macos | native facade, menu/shell/environment | W8: AppKit thread/object lifetime, child windows, menu generations and host-native validation |
-| incular-linux | native facade, environment/shell | W8: separate X11/Wayland/portal capability outcomes; owner close and bus/service failures |
-| incular-android | semantic adapter | W8: test portable mapping/target compile; preserve partial support declaration |
-| incular-ios | semantic adapter | W8: test portable mapping/target compile; preserve partial support declaration |
+| incular-desktop | DesktopHost, window owner, input, transients, presentation/services | preserve one runner; native integration and shared-GPU teardown coverage; no new global host state |
+| incular-windows | input/environment/menu/shell/native facade | preserve callback lifetime correctness and existing live evidence |
+| incular-macos | native facade, menu/shell/environment | preserve AppKit thread/object lifetime and child-window/menu correctness |
+| incular-linux | native facade, environment/shell | preserve distinct X11/Wayland/portal capability outcomes and owner-close correctness |
+| incular-android | semantic adapter | preserve partial support declaration and portable mapping correctness |
+| incular-ios | semantic adapter | preserve partial support declaration and portable mapping correctness |
 | incular-devtools-protocol | versioned messages, handshake and token checks | W9: compatibility/size limits, malformed input and stable wire outcomes |
 | incular-devtools | session, discovery, UI command bridge | W9: R10 backpressure/disconnect diagnostics; preserve authentication and opt-in behavior |
 | incular-macros | empty scaffold lib | W9: explicitly scaffold/defer or retire through migration; do not implement macros just to fill the crate |

@@ -107,12 +107,4 @@ sweep and passed before the final constrained suites were rerun successfully.
 
 Desktop live-native tests that explicitly require
 `INCULAR_DESKTOP_LIVE_TESTS=1` remained skipped by the normal constrained
-workspace run. W7 does not convert those skips into native verification; they
-belong to W8.
-
-## W8 boundary
-
-W7 establishes portable ownership and deterministic retained behavior. It does
-not claim Windows/macOS/Linux native outcome parity, accessibility bridge
-coverage, native feedback execution, or other OS-specific verification. Those
-remain Plan 15 W8 acceptance work.
+workspace run. W7 does not convert those skips into native verification.

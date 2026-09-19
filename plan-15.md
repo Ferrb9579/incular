@@ -14,7 +14,7 @@ including interruption, reduced motion, and the Scaffold/SliverAppBar
 inventory. The AppBar slot-constraint correction is complete and validated,
 and the corrected toolbar rows carry implementation and regression evidence
 in the inventory below. W1 is marked complete.
-Audit baseline `42befb7`, 2026-09-06. W2–W9 are pending.
+Audit baseline `42befb7`, 2026-09-06. Remaining implementation work is tracked below.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
 as the remaining-work schedule, with plan 14 retained as the implementation
@@ -144,8 +144,8 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   quiet, start cancellation composed with a policy change, natural headers
   with semantic bounds, and a retained Material integration with endpoint
   paint, hit testing, and frame scheduling. Other animation policies remain
-  untouched; reduced motion outside header snapping stays tracked under
-  W5/W8. Formatting, workspace compilation, constrained workspace tests,
+  untouched; reduced motion outside header snapping remains ordinary implementation
+  follow-up where applicable. Formatting, workspace compilation, constrained workspace tests,
   strict all-feature/all-target Clippy, all Material all-feature tests and
   warning-denied Widgets/Material rustdoc passed. Live native tests were not
   run. W1 is not marked complete.
@@ -503,8 +503,7 @@ because a file was split or a setter has a construction test.
 | 5 | W5: scrolling and animation attachment/interruption | R09 | W3 phase contract; W4 lifetime boundaries |
 | 6 | W6: text, focus, gestures and accessibility end-to-end | R03, R12–R14 | W1, W3, W5 |
 | 7 | W7: controls and Material ownership/validation | R01, R08, R11 | W1, W3, W6 |
-| 8 | W8: native campaign verification by host | R12 | W2, W4–W7 |
-| 9 | W9: tooling, public surface and lasting quality gates | R10, R11, R13 | Integrate after each stream; final closure last |
+| 8 | W9: tooling, public surface and lasting quality gates | R10, R11, R13 | Integrate after each stream; final closure last |
 
 W1 defects and W2 memory/errors are higher priority than cosmetic cleanup.
 W4 can be implemented before the remainder of W3 if its isolated regression
@@ -1642,7 +1641,7 @@ W3 scope: every family row below is inventoried and complete.
     pinned by regression. Known remaining work belongs to other
     workstreams and is not W3 debt: router/transaction surface (W4),
     attachment policy and transitions (W5), GPU execution and pixel
-    verification (W2), per-host verification (W8).
+    verification (W2).
   - Necessary phase scheduling: frames run layout, composite,
     semantics, then paint (`run_frame_at`); wheel windows refresh from
     the controller revision in the layout prologue like slivers; reset
@@ -3415,10 +3414,7 @@ notification, window drain, mobile diagnostics parity).
 
 ## W7 — Controls and Material as presentation layers
 
-Execution plan: [W7 completion plan](docs/W7_COMPLETION_PLAN.md), prepared
-against `b65751b` on 2026-09-18. It records source-confirmed gaps, file-level
-implementation steps, ownership decisions, regression scenarios, migrations,
-and final validation gates. W7 implementation is complete; executed evidence is
+W7 implementation is complete; executed evidence is
 recorded in [the W7 completion report](docs/W7_COMPLETION_REPORT.md) and public
 migrations in [W7 API migrations](docs/W7_API_MIGRATIONS.md). The final
 source-derived ledgers cover 172 controls symbols / 619 accepted options and 221
@@ -3444,28 +3440,7 @@ invalidate appropriate consumers; all accepted fields reach execution.
 invalidation, retained action/editing/slider/menu/tab/progress motion, exhaustive
 public-option discovery and the W6/performance regressions are pinned by the W7
 focused matrix. Repository-wide closure gates are recorded in the W7 completion
-report. Native outcome verification remains W8 and is not implied by this close.
-
-## W8 — Native verification and historical campaign closure
-
-For each plan 01–13, record public API → portable request/event → runtime owner →
-OS adapter → native outcome → focused test → capability limitation. Reuse Stage
-D/E lifecycle/input tests; do not reimplement them.
-
-- Windows: move/resize, DPI/display changes, pointer capture, menu generations,
-  shortcuts once, popup focus/dismissal, clipboard/drop negotiation, dialog parent
-  closure, shell teardown, activation and reduced motion.
-- macOS: same contract with AppKit main-thread/ownership and child-window/menu rules.
-- Linux: separate X11, Wayland and portal cases; unavailable position/menu/service
-  APIs remain typed unsupported, never fabricated success.
-- Android/iOS: target compile and semantic projection tests for current scope.
-  A full mobile host is a separate product decision, not an implicit task here.
-- Unsafe-site review: thread/lifetime/aliasing justification and owner teardown
-  regression; preserve safe owned surface constructors.
-
-Exit: per-host evidence matrix, no stale callback can affect a recycled owner,
-and untested native behavior is marked unverified. Host limitations do not
-justify marking a native acceptance criterion complete from a Windows build.
+report.
 
 ## W9 — Tooling and sustainable closure
 

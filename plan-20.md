@@ -1,6 +1,6 @@
 # Plan 20 - Bounded DevTools client work
 
-Status: planned. Audit Q06; specializes plan 15 W9. Depends on plan 19.
+Status: planned. Audit Q06; specializes plan 15 W9.
 
 Problem/evidence: tools/incular-devtools/src/transport.rs uses unbounded request
 and unit-update channels, ignores send failures, and drains commands without a

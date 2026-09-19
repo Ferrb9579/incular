@@ -1,6 +1,6 @@
 # Plan 21 - Native callback lifetime evidence and truthful documentation
 
-Status: planned. Audit Q07/Q08; specializes plan 15 W8/W9. Depends on plan 20.
+Status: planned. Audit Q07/Q08; specializes plan 15 W9. Depends on plan 20.
 
 Problem/evidence: macOS environment.rs retains observer tokens in Inner while
 registered blocks capture Rc<Inner>; cleanup is in Inner::drop. Verify native

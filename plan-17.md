@@ -1,6 +1,6 @@
 # Plan 17 - Atomic focus-scope transitions
 
-Status: planned. Audit Q02; specializes plan 15 W6. Depends on plan 16.
+Status: planned. Audit Q02; specializes plan 15 W6.
 
 Problem/evidence: FocusScopeNode request/clear/traversal/restore/unregister calls
 FocusManager while holding its RefMut; FocusManager synchronously notifies nodes.
