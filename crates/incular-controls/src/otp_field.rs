@@ -1,6 +1,11 @@
 //! One retained editor with fixed visual slots, rather than one editor per
 //! digit. This keeps paste, selection, and accessibility coherent.
-use incular_widgets::Widget;
+use incular_widgets::internal::TextEditingController;
+use incular_widgets::{
+    EditableText, LengthLimitingTextInputFormatter, Opacity, Positioned, Stack, TextInputFormatter,
+    Widget,
+};
+use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
 #[derive(Clone, TypedBuilder)]
@@ -43,8 +48,22 @@ impl Root {
 }
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
-        value
-            .child
-            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+        let controller = TextEditingController::new();
+        let limiter = LengthLimitingTextInputFormatter::new(value.length);
+        let mut editor: Widget = EditableText::new(controller)
+            .obscure_text(value.masked)
+            .into();
+        editor = editor.with_edit_callbacks(
+            Some(Rc::new(move |old, next| {
+                limiter.format_edit_update(old, next)
+            })),
+            None,
+        );
+        match value.child {
+            None => editor,
+            Some(visual) => {
+                Stack::new([visual, Positioned::fill(Opacity::new(0.0, editor)).into()]).into()
+            }
+        }
     }
 }

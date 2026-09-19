@@ -52,8 +52,6 @@ impl Root {
 }
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
-        value
-            .child
-            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+        crate::autocomplete::editable_query_surface(value.query, value.child, value.on_query_change)
     }
 }

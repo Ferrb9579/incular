@@ -1,10 +1,10 @@
 //! Free-form completion surface sharing Select/Combobox list parts.
 
+use crate::ControlTheme;
 pub use crate::popup::{Arrow, Popup, Portal, Positioner, Trigger};
 pub use crate::select::{Item, List};
-use crate::{Button, ControlTheme};
-use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{Widget, internal::ExplicitSemantics};
+use incular_widgets::internal::TextEditingController;
+use incular_widgets::{EditableText, Opacity, Positioned, Stack, Widget};
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
@@ -60,21 +60,32 @@ impl Root {
 
     #[must_use]
     pub fn build(&self, _theme: &ControlTheme) -> Widget {
-        let content = self
-            .child
-            .clone()
-            .unwrap_or_else(|| Button::new(self.query.clone()).into());
-        content.semantics(
-            ExplicitSemantics::new(SemanticRole::TextField)
-                .value(self.query.clone())
-                .state(SemanticState {
-                    enabled: true,
-                    focusable: true,
-                    editable: true,
-                    ..SemanticState::default()
-                })
-                .actions([SemanticActionKind::Focus, SemanticActionKind::SetText]),
+        editable_query_surface(
+            self.query.clone(),
+            self.child.clone(),
+            self.on_query_change.clone(),
         )
+    }
+}
+
+pub(crate) fn editable_query_surface(
+    query: String,
+    visual: Option<Widget>,
+    on_query_change: Option<Rc<dyn Fn(String) + 'static>>,
+) -> Widget {
+    let controller = TextEditingController::with_text(query);
+    let mut editor: Widget = EditableText::new(controller).into();
+    if let Some(callback) = on_query_change {
+        editor = editor.with_edit_callbacks(
+            None,
+            Some(Rc::new(move |text: &str| callback(text.to_owned()))),
+        );
+    }
+    match visual {
+        None => editor,
+        Some(visual) => {
+            Stack::new([visual, Positioned::fill(Opacity::new(0.0, editor)).into()]).into()
+        }
     }
 }
 
