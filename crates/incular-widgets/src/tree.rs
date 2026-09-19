@@ -628,6 +628,8 @@ pub enum RenderKind {
         desired: Size,
         style: TextStyle,
         placeholder: String,
+        placeholder_color: Color,
+        focused_border: Option<(incular_rendering::Border, f32)>,
         multiline: bool,
         min_lines: Option<usize>,
         max_lines: Option<usize>,

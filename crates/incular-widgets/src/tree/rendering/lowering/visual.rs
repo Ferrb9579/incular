@@ -122,6 +122,8 @@ pub(super) fn lower_visual(widget: &Widget, context: &DependencyContext) -> Rend
             desired: spec.size,
             style: resolve_text_style(&spec.style, context),
             placeholder: spec.placeholder.clone(),
+            placeholder_color: spec.placeholder_color,
+            focused_border: spec.focused_border,
             multiline: spec.multiline,
             min_lines: spec.min_lines,
             max_lines: spec.max_lines,

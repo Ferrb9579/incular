@@ -613,6 +613,8 @@ impl PartialEq for TextFieldSpec {
             && self.size == other.size
             && self.style == other.style
             && self.placeholder == other.placeholder
+            && self.placeholder_color == other.placeholder_color
+            && self.focused_border == other.focused_border
             && self.multiline == other.multiline
             && self.min_lines == other.min_lines
             && self.max_lines == other.max_lines

@@ -568,6 +568,8 @@ pub struct EditableText {
     size: Size,
     style: TextStyle,
     placeholder: String,
+    placeholder_color: Color,
+    focused_border: Option<(incular_rendering::Border, f32)>,
     on_submit: Option<Rc<dyn Fn(String)>>,
     multiline: bool,
     min_lines: Option<usize>,
@@ -594,6 +596,8 @@ impl EditableText {
             size: Size::ZERO,
             style: TextStyle::default(),
             placeholder: String::new(),
+            placeholder_color: Color::rgba(150, 154, 170, 255),
+            focused_border: None,
             on_submit: None,
             multiline: false,
             min_lines: None,
@@ -626,6 +630,22 @@ impl EditableText {
     #[must_use]
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// Sets the color used while the editor is empty and showing its
+    /// placeholder text.
+    #[must_use]
+    pub fn placeholder_color(mut self, color: Color) -> Self {
+        self.placeholder_color = color;
+        self
+    }
+
+    /// Sets a border painted by the retained editor only while it owns focus.
+    /// This is presentation-only: focus tenure remains in `WidgetTree`.
+    #[must_use]
+    pub fn focused_border(mut self, border: crate::Border, radius: f32) -> Self {
+        self.focused_border = Some((border.into(), radius.max(0.0)));
         self
     }
     #[must_use]
@@ -760,6 +780,8 @@ impl From<EditableText> for Widget {
             value.size,
             value.style,
             value.placeholder,
+            value.placeholder_color,
+            value.focused_border,
             value.on_submit,
             value.multiline,
             value.min_lines,

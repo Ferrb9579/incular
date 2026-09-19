@@ -112,6 +112,8 @@ impl WidgetTree {
                 controller,
                 style,
                 placeholder,
+                placeholder_color,
+                focused_border,
                 multiline,
                 obscure_text,
                 cursor_width,
@@ -192,7 +194,7 @@ impl WidgetTree {
                         )),
                     });
                     let color = if display == placeholder && value.text.is_empty() {
-                        Color::rgba(150, 154, 170, 255)
+                        placeholder_color
                     } else {
                         style.color
                     };
@@ -226,6 +228,12 @@ impl WidgetTree {
                             });
                         }
                     }
+                }
+                if focused && let Some((border, radius)) = focused_border {
+                    cache.push(PaintCommand::Border {
+                        rrect: RRect::uniform(Rect::from_origin_size(Offset::ZERO, size), radius),
+                        border,
+                    });
                 }
                 let state = self.text_field_state_live_mut(id);
                 state.scroll_x = active_scroll_x;

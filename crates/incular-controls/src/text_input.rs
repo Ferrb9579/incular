@@ -2,10 +2,10 @@ use crate::styles::TextFieldStyle;
 use crate::theme::ControlTheme;
 use incular_config::EdgeInsets;
 use incular_core::Size;
-use incular_text::TextStyle;
 use incular_widgets::internal::TextEditingController;
 use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Container, EditableText as RawEditableText, Widget,
+    Border, BorderRadius, BoxDecoration, BuildContext, Container, EditableText as RawEditableText,
+    Widget,
 };
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
@@ -25,6 +25,10 @@ pub struct TextField {
     placeholder: String,
     #[builder(default)]
     style: TextFieldStyle,
+    #[builder(default = true)]
+    enabled: bool,
+    #[builder(default)]
+    read_only: bool,
     #[builder(
         default,
         setter(
@@ -37,6 +41,18 @@ pub struct TextField {
         )
     )]
     on_submit: Option<Rc<dyn Fn(String) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(String) + 'static>>
+            where
+                F: Fn(String) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_changed: Option<Rc<dyn Fn(String) + 'static>>,
 }
 
 impl TextField {
@@ -66,13 +82,43 @@ impl TextField {
     }
 
     #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    #[must_use]
     pub fn on_submit(mut self, on_submit: impl Fn(String) + 'static) -> Self {
         self.on_submit = Some(Rc::new(on_submit));
         self
     }
 
     #[must_use]
+    pub fn on_changed(mut self, on_changed: impl Fn(String) + 'static) -> Self {
+        self.on_changed = Some(Rc::new(on_changed));
+        self
+    }
+
+    #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_form(theme, None)
+    }
+
+    fn build_with_context(&self, context: &BuildContext<'_>, theme: &ControlTheme) -> Widget {
+        self.build_with_form(theme, context.depend_on::<crate::form::FormScope>())
+    }
+
+    fn build_with_form(
+        &self,
+        theme: &ControlTheme,
+        form: Option<crate::form::FormScope>,
+    ) -> Widget {
         let bg = self.style.background.unwrap_or(theme.colors.surface);
         let fg = self.style.foreground.unwrap_or(theme.colors.foreground);
         let radius = self.style.border_radius.unwrap_or(theme.input.radius);
@@ -84,18 +130,42 @@ impl TextField {
             .style
             .border
             .unwrap_or_else(|| Border::new(theme.input.border_width, theme.colors.border));
+        let placeholder_color = self
+            .style
+            .placeholder_color
+            .unwrap_or(theme.colors.foreground_muted);
 
+        let effective_enabled =
+            self.enabled && !form.as_ref().is_some_and(|scope| scope.disabled());
         let mut raw = RawEditableText::new(self.controller.clone())
             .size(self.size)
             .placeholder(self.placeholder.clone())
-            .style(
-                TextStyle::new()
-                    .font_size(theme.typography.body.size)
-                    .color(fg),
-            );
+            .placeholder_color(placeholder_color)
+            .style(theme.typography.body.clone().color(fg))
+            .enabled(effective_enabled)
+            .read_only(self.read_only);
+        if let Some(border) = self.style.border_focused {
+            raw = raw.focused_border(border, radius);
+        }
 
-        if let Some(cb) = self.on_submit.clone() {
-            raw = raw.on_submit(move |value| cb(value));
+        if self.on_submit.is_some() || form.is_some() {
+            let callback = self.on_submit.clone();
+            raw = raw.on_submit(move |value| {
+                if let Some(callback) = callback.as_ref() {
+                    callback(value);
+                }
+                if let Some(form) = form.as_ref() {
+                    let _ = form.submit();
+                }
+            });
+        }
+
+        let mut editor: Widget = raw.into();
+        if let Some(callback) = self.on_changed.clone() {
+            editor = editor.with_edit_callbacks(
+                None,
+                Some(Rc::new(move |text: &str| callback(text.to_owned()))),
+            );
         }
 
         Container::new()
@@ -106,7 +176,7 @@ impl TextField {
                     .border(border)
                     .border_radius(BorderRadius::circular(radius)),
             )
-            .child(raw)
+            .child(editor)
             .into()
     }
 }
@@ -116,7 +186,7 @@ impl From<TextField> for Widget {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
-            value.build(&theme)
+            value.build_with_context(context, &theme)
         }))
     }
 }
@@ -132,6 +202,22 @@ pub struct TextArea {
     placeholder: String,
     #[builder(default)]
     style: TextFieldStyle,
+    #[builder(default = true)]
+    enabled: bool,
+    #[builder(default)]
+    read_only: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(String) + 'static>>
+            where
+                F: Fn(String) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_changed: Option<Rc<dyn Fn(String) + 'static>>,
 }
 
 impl TextArea {
@@ -161,7 +247,37 @@ impl TextArea {
     }
 
     #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    #[must_use]
+    pub fn on_changed(mut self, on_changed: impl Fn(String) + 'static) -> Self {
+        self.on_changed = Some(Rc::new(on_changed));
+        self
+    }
+
+    #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_form(theme, None)
+    }
+
+    fn build_with_context(&self, context: &BuildContext<'_>, theme: &ControlTheme) -> Widget {
+        self.build_with_form(theme, context.depend_on::<crate::form::FormScope>())
+    }
+
+    fn build_with_form(
+        &self,
+        theme: &ControlTheme,
+        form: Option<crate::form::FormScope>,
+    ) -> Widget {
         let bg = self.style.background.unwrap_or(theme.colors.surface);
         let fg = self.style.foreground.unwrap_or(theme.colors.foreground);
         let radius = self.style.border_radius.unwrap_or(theme.input.radius);
@@ -170,17 +286,32 @@ impl TextArea {
             .style
             .border
             .unwrap_or_else(|| Border::new(theme.input.border_width, theme.colors.border));
+        let placeholder_color = self
+            .style
+            .placeholder_color
+            .unwrap_or(theme.colors.foreground_muted);
 
-        let raw = RawEditableText::new(self.controller.clone())
+        let effective_enabled =
+            self.enabled && !form.as_ref().is_some_and(|scope| scope.disabled());
+        let mut raw = RawEditableText::new(self.controller.clone())
             .size(self.size)
             .multiline(true)
             .placeholder(self.placeholder.clone())
-            .style(
-                TextStyle::new()
-                    .font_size(theme.typography.body.size)
-                    .line_height_multiplier(1.4)
-                    .color(fg),
+            .placeholder_color(placeholder_color)
+            .style(theme.typography.body.clone().color(fg))
+            .enabled(effective_enabled)
+            .read_only(self.read_only);
+        if let Some(border) = self.style.border_focused {
+            raw = raw.focused_border(border, radius);
+        }
+
+        let mut editor: Widget = raw.into();
+        if let Some(callback) = self.on_changed.clone() {
+            editor = editor.with_edit_callbacks(
+                None,
+                Some(Rc::new(move |text: &str| callback(text.to_owned()))),
             );
+        }
 
         Container::new()
             .padding(padding)
@@ -190,7 +321,7 @@ impl TextArea {
                     .border(border)
                     .border_radius(BorderRadius::circular(radius)),
             )
-            .child(raw)
+            .child(editor)
             .into()
     }
 }
@@ -200,7 +331,7 @@ impl From<TextArea> for Widget {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
-            value.build(&theme)
+            value.build_with_context(context, &theme)
         }))
     }
 }

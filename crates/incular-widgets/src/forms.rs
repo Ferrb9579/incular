@@ -90,6 +90,14 @@ impl Form {
         }
     }
 
+    /// Replaces only the declarative child while retaining this form's
+    /// registry/controller identity.
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self
+    }
+
     /// Sets the autovalidate mode for the form.
     #[must_use]
     pub fn autovalidate_mode(mut self, mode: AutovalidateMode) -> Self {
