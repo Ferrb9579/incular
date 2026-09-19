@@ -1,11 +1,13 @@
-use std::{rc::Rc, sync::Arc};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 use crate::feedback::current_progress_indicator_theme;
 use crate::material_theme::helpers::{finite_non_negative, normalized, with_alpha};
-use incular_controls::{ControlTheme, current_control_theme};
+use incular_controls::{ControlTheme, ControlThemeScope, current_control_theme};
 use incular_core::{Color, Offset, Size};
 use incular_rendering::{Canvas, LineCap, LineJoin, Path, Stroke};
-use incular_widgets::{Container, Semantics, Widget};
+use incular_semantics::{Role as SemanticRole, SemanticState};
+use incular_widgets::internal::{AnimationRetargetBridge, ExplicitSemantics};
+use incular_widgets::{AnimationController, Container, Widget};
 use typed_builder::TypedBuilder;
 
 /// Material linear progress indicator.
@@ -134,7 +136,8 @@ impl LinearProgressIndicator {
             Some(value) => progress.value(value),
             None => progress.indeterminate(true),
         };
-        let mut widget = progress.build(&controls_theme);
+        let mut widget: Widget =
+            ControlThemeScope::new(controls_theme, Widget::from(progress)).into();
         if let Some(padding) = indicator_theme.padding {
             widget = Container::with_child(widget).padding(padding).into();
         }
@@ -269,6 +272,15 @@ impl CircularProgressIndicator {
         context: &incular_widgets::BuildContext<'_>,
         theme: &ControlTheme,
     ) -> Widget {
+        self.build_with_phase(context, theme, 0.0)
+    }
+
+    fn build_with_phase(
+        &self,
+        context: &incular_widgets::BuildContext<'_>,
+        theme: &ControlTheme,
+        phase: f32,
+    ) -> Widget {
         let indicator_theme = current_progress_indicator_theme(context).unwrap_or_default();
         let size = self.size.max(1.0);
         let stroke = self
@@ -305,10 +317,14 @@ impl CircularProgressIndicator {
                 miter_limit: 4.0,
             },
         );
-        let progress_end = ratio.map_or(1.25 * std::f32::consts::PI, |value| {
-            -std::f32::consts::FRAC_PI_2 + value * std::f32::consts::TAU
-        });
-        let progress_start = -std::f32::consts::FRAC_PI_2;
+        let progress_start = ratio.map_or_else(
+            || -std::f32::consts::FRAC_PI_2 + phase.clamp(0.0, 1.0) * std::f32::consts::TAU,
+            |_| -std::f32::consts::FRAC_PI_2,
+        );
+        let progress_end = ratio.map_or_else(
+            || progress_start + std::f32::consts::TAU * 0.72,
+            |value| progress_start + value * std::f32::consts::TAU,
+        );
         if ratio.is_none_or(|value| value > 0.0) {
             let progress_path = Arc::new(circle_arc(center, radius, progress_start, progress_end));
             canvas.stroke_path(
@@ -335,10 +351,19 @@ impl CircularProgressIndicator {
         let value_text = ratio
             .map(|value| format!("{:.0}%", value * 100.0))
             .unwrap_or_else(|| "In progress".to_owned());
-        Semantics::new(visual)
-            .label(self.label.clone().unwrap_or_else(|| "Progress".to_owned()))
-            .value(value_text)
-            .into()
+        visual.semantics(
+            ExplicitSemantics::new(SemanticRole::ProgressBar)
+                .label(self.label.clone().unwrap_or_else(|| "Progress".to_owned()))
+                .value(value_text)
+                .state(SemanticState {
+                    enabled: true,
+                    busy: ratio.is_none(),
+                    numeric_value: self.value.filter(|value| value.is_finite()).map(f64::from),
+                    numeric_min: Some(f64::from(self.min)),
+                    numeric_max: Some(f64::from(self.max)),
+                    ..SemanticState::default()
+                }),
+        )
     }
 }
 
@@ -366,6 +391,32 @@ fn circle_arc(center: Offset, radius: f32, start: f32, end: f32) -> Path {
 impl From<CircularProgressIndicator> for Widget {
     fn from(value: CircularProgressIndicator) -> Self {
         let value = Rc::new(value);
+        if value.value.is_none() {
+            const CYCLE: Duration = Duration::from_millis(1100);
+            let controller = AnimationController::new(CYCLE);
+            let revision = Rc::new(Cell::new(0_u64));
+            let value_for_build = value.clone();
+            let controller_for_build = controller.clone();
+            let animated = Widget::stateful_layout_builder(revision.clone(), move |context, _| {
+                value_for_build.build_with_phase(
+                    context,
+                    &current_control_theme(context),
+                    controller_for_build.value(),
+                )
+            });
+            let replacement = controller.clone();
+            let bridge =
+                AnimationRetargetBridge::new(Rc::new(controller.clone()), move |previous| {
+                    replacement.adopt_timeline_from(previous);
+                });
+            return Widget::animation_ticker_repeating_with_retarget(
+                controller,
+                false,
+                revision,
+                Some(bridge),
+                animated,
+            );
+        }
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build(context, &current_control_theme(context))
         }))

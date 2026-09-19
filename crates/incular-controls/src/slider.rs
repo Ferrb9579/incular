@@ -692,7 +692,7 @@ impl Root {
                 detector.into()
             }
         } else {
-            visual.into()
+            visual
         };
 
         // Sliders are keyboard controls as well as pointer controls. Keep the

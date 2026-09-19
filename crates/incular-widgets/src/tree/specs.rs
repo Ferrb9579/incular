@@ -4,12 +4,14 @@
 
 use super::*;
 
+type AnimationRetargetCarry = dyn Fn(&dyn Any);
+
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct AnimationRetargetBridge {
     payload: Rc<dyn Any>,
     type_id: TypeId,
-    carry: Rc<dyn Fn(&dyn Any)>,
+    carry: Rc<AnimationRetargetCarry>,
 }
 
 impl AnimationRetargetBridge {
@@ -201,6 +203,8 @@ pub struct ButtonSpec {
     pub(crate) has_callback: bool,
     pub(crate) child: Option<Widget>,
     pub(crate) interaction: Option<crate::internal::ActionInteractionController>,
+    pub(crate) policy: crate::internal::ActionPolicy,
+    pub(crate) mouse_cursor: crate::MouseCursor,
 }
 
 pub(crate) type EditTransform = Rc<
@@ -360,6 +364,7 @@ pub(crate) enum WidgetKind {
     AnimationTicker {
         controller: AnimationController,
         auto_start: bool,
+        repeat: Option<bool>,
         revision: Rc<Cell<u64>>,
         retarget: Option<AnimationRetargetBridge>,
         child: Widget,

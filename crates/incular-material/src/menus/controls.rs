@@ -15,7 +15,7 @@ use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
 use incular_widgets::{
-    Border, BoxDecoration, Container, Row, Text, TransientDismissReason, Widget,
+    Border, BoxDecoration, Container, MouseRegion, Row, Text, TransientDismissReason, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -200,7 +200,7 @@ impl From<MenuBar> for Widget {
             }
             let surface = Container::with_child(row)
                 .padding(style.padding.unwrap_or(value.padding))
-                .alignment(value.alignment)
+                .alignment(style.alignment.unwrap_or(value.alignment))
                 .decoration(
                     BoxDecoration::new()
                         .border_radius(style.resolve_shape(ControlState::empty()))
@@ -214,19 +214,30 @@ impl From<MenuBar> for Widget {
                 )
                 .clip_behavior(value.clip_behavior);
             let state = ControlState::from_enabled(value.enabled);
-            let material: Widget = Material::new(surface)
+            let material = Material::new(surface)
                 .color(style.resolve_background(state, &theme))
                 .shadow_color(style.resolve_shadow(state, &theme))
                 .elevation(style.resolve_elevation(state))
                 .border_radius(style.resolve_shape(state))
-                .clip_behavior(value.clip_behavior)
-                .into();
-            material.semantics(
+                .clip_behavior(value.clip_behavior);
+            let material: Widget = if let Some(tint) = style.resolve_tint(state) {
+                material.surface_tint_color(tint).into()
+            } else {
+                material.into()
+            };
+            let material = style.constrained(material).semantics(
                 ExplicitSemantics::new(SemanticRole::Menu).state(SemanticState {
                     enabled: value.enabled,
                     ..SemanticState::default()
                 }),
-            )
+            );
+            if let Some(cursor) = style.mouse_cursor.as_deref() {
+                MouseRegion::new(material)
+                    .cursor(incular_controls::styles::mouse_cursor_from_name(cursor))
+                    .into()
+            } else {
+                material
+            }
         }))
     }
 }

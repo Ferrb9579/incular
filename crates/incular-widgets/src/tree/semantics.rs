@@ -323,6 +323,9 @@ impl WidgetTree {
             if *action == SemanticActionKind::Focus {
                 return focusable;
             }
+            if *action == SemanticActionKind::Activate && self.pointer_actions_blocked(element) {
+                return false;
+            }
             semantic_action_is_executable(
                 entry.widget.kind(),
                 *action,

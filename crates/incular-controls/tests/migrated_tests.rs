@@ -271,10 +271,13 @@ mod collapsible_tests {
         let accordion = Accordion::builder().child(Text::new("Items")).build();
 
         assert_eq!(
-            Widget::from(trigger).text_if_any().as_deref(),
+            Widget::from(trigger).semantic_text().as_deref(),
             Some("Trigger")
         );
-        assert_eq!(Widget::from(panel).text_if_any().as_deref(), Some("Panel"));
+        assert_eq!(
+            Widget::from(panel).semantic_text().as_deref(),
+            Some("Panel")
+        );
         let _: Widget = accordion.into();
 
         let _: Widget = Trigger::new(Text::new("Trigger")).into();

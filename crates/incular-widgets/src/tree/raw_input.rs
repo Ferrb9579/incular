@@ -82,11 +82,36 @@ impl WidgetTree {
     /// does for `MouseRegion` annotations.
     #[must_use]
     pub fn mouse_cursor_at(&self, point: Offset) -> MouseCursor {
-        self.raw_hit_elements(point)
+        let raw = self
+            .raw_hit_elements(point)
             .into_iter()
             .filter_map(|id| self.cursor_for_raw_input(id))
             .find(|cursor| *cursor != MouseCursor::Defer)
-            .unwrap_or(MouseCursor::Defer)
+            .unwrap_or(MouseCursor::Defer);
+        if raw != MouseCursor::Defer {
+            return raw;
+        }
+
+        let Some(render) = self.hit_test(point) else {
+            return MouseCursor::Defer;
+        };
+        let Some(mut element) = self.element_for_render(render) else {
+            return MouseCursor::Defer;
+        };
+        loop {
+            if let Some(WidgetKind::Button(spec)) = self
+                .elements
+                .get(element.0)
+                .map(|entry| entry.widget.kind())
+                && spec.mouse_cursor != MouseCursor::Defer
+            {
+                return spec.mouse_cursor;
+            }
+            let Some(parent) = self.parent(element) else {
+                return MouseCursor::Defer;
+            };
+            element = parent;
+        }
     }
 
     fn cursor_for_raw_input(&self, element: ElementId) -> Option<MouseCursor> {

@@ -1,15 +1,21 @@
-use crate::styles::{ButtonStyle, ButtonVariant, ControlState};
+use crate::styles::{
+    ButtonStyle, ButtonVariant, ControlState, IconAlignment, SplashFactory, TapTargetSize,
+    mouse_cursor_from_name,
+};
 use crate::theme::ControlTheme;
-use incular_config::{Alignment, EdgeInsets};
+use incular_config::{Alignment, Constraints, CrossAxisAlignment, EdgeInsets};
 use incular_core::Color;
 use incular_core::Offset;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{
-    ActionInteractionController, ActionInteractionState, ActionSurface, DropShadow,
-    ExplicitSemantics,
+    ActionInteractionController, ActionInteractionState, ActionPolicy, ActionSplashPolicy,
+    ActionSurface, DropShadow, ExplicitSemantics,
 };
-use incular_widgets::{Align, Border, BorderRadius, BoxDecoration, Container, Text, Widget};
-use std::rc::Rc;
+use incular_widgets::{
+    Align, Border, BorderRadius, BoxDecoration, Container, IconTheme, MouseCursor, Row, SizedBox,
+    Text, Widget,
+};
+use std::{rc::Rc, time::Duration};
 use typed_builder::TypedBuilder;
 
 /// Platform-neutral styled push button.
@@ -19,6 +25,8 @@ pub struct Button {
     label: Option<String>,
     #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
+    icon: Option<Widget>,
     #[builder(default)]
     style: ButtonStyle,
     #[builder(default = true)]
@@ -46,6 +54,7 @@ impl Default for Button {
         Self {
             label: None,
             child: None,
+            icon: None,
             style: ButtonStyle::default(),
             enabled: true,
             focusable_when_disabled: false,
@@ -68,11 +77,19 @@ impl Button {
         Self::builder().child(child).build()
     }
 
+    /// Creates a button whose icon and label are composed by the live retained
+    /// presentation root, allowing state-aware icon styling and alignment.
+    #[must_use]
+    pub fn with_icon_label(icon: impl Into<Widget>, label: impl Into<String>) -> Self {
+        Self::builder().icon(icon).label(label).build()
+    }
+
     /// Replaces the button's text label and clears any custom child.
     #[must_use]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self.child = None;
+        self.icon = None;
         self
     }
 
@@ -81,6 +98,7 @@ impl Button {
     pub fn child(mut self, child: impl Into<Widget>) -> Self {
         self.child = Some(child.into());
         self.label = None;
+        self.icon = None;
         self
     }
 
@@ -156,7 +174,30 @@ impl Button {
             .disabled_color(Color::TRANSPARENT)
             .enabled(effective_enabled)
             .focusable_when_disabled(self.focusable_when_disabled || self.loading)
-            .interaction_controller(interaction);
+            .interaction_controller(interaction)
+            .policy(ActionPolicy {
+                feedback_enabled: self.style.enable_feedback.unwrap_or(true),
+                splash: match self.style.splash_factory.unwrap_or_default() {
+                    SplashFactory::Ripple => ActionSplashPolicy::Ripple,
+                    SplashFactory::Splash => ActionSplashPolicy::Splash,
+                    SplashFactory::Sparkle => ActionSplashPolicy::Sparkle,
+                    SplashFactory::NoSplash => ActionSplashPolicy::None,
+                },
+                transition_duration: self.style.animation_duration.unwrap_or_else(|| {
+                    Duration::from_millis(u64::from(theme.motion.pressed_duration_ms))
+                }),
+            })
+            .mouse_cursor(
+                self.style
+                    .mouse_cursor
+                    .as_deref()
+                    .map(mouse_cursor_from_name)
+                    .unwrap_or(if effective_enabled {
+                        MouseCursor::Click
+                    } else {
+                        MouseCursor::Basic
+                    }),
+            );
         if let Some(cb) = self.on_click.clone()
             && effective_enabled
         {
@@ -180,8 +221,7 @@ impl Button {
         } else if self.focusable_when_disabled || self.loading {
             semantics = semantics.actions([SemanticActionKind::Focus]);
         }
-        let raw: Widget = raw.into();
-        raw.semantics(semantics)
+        Widget::from(raw).semantics(semantics)
     }
 
     fn control_state(
@@ -204,10 +244,27 @@ impl Button {
     }
 
     fn build_presentation(&self, theme: &ControlTheme, state: ControlState) -> Widget {
-        let background = blend_overlay(
-            self.style.resolve_background(state, theme),
-            self.style.resolve_overlay_color(state, theme),
-        );
+        let elevation = self.style.resolve_elevation(state, theme);
+        let splash = self.style.splash_factory.unwrap_or_default();
+        let overlay = if state.is_pressed() && splash == SplashFactory::NoSplash {
+            Color::TRANSPARENT
+        } else {
+            self.style.resolve_overlay_color(state, theme)
+        };
+        let mut background = blend_overlay(self.style.resolve_background(state, theme), overlay);
+        if self.style.surface_tint_color.is_some() && elevation > 0.0 {
+            let tint = self.style.resolve_surface_tint_color(state, theme);
+            let alpha = (elevation * 0.04).clamp(0.0, 0.16);
+            background = blend_overlay(
+                background,
+                Color::rgba(
+                    tint.red,
+                    tint.green,
+                    tint.blue,
+                    (alpha * 255.0).round() as u8,
+                ),
+            );
+        }
         let fg = self.style.resolve_foreground(state, theme);
         let radius = self
             .style
@@ -217,31 +274,79 @@ impl Button {
             .unwrap_or_else(|| {
                 BorderRadius::circular(self.style.border_radius.unwrap_or(theme.button.radius))
             });
-        let padding = self
-            .style
-            .padding
-            .unwrap_or_else(|| theme.density.padding());
+        let density = self.style.visual_density.unwrap_or(theme.density);
+        let padding = self.style.padding.unwrap_or_else(|| density.padding());
         let fixed_size = self.style.fixed_size;
-        let height = fixed_size
+        let mut height = fixed_size
             .map(|size| size.height)
             .or(self.style.height)
-            .unwrap_or(theme.button.height);
-        let elevation = self.style.resolve_elevation(state, theme);
+            .unwrap_or_else(|| {
+                if self.style.visual_density.is_some() {
+                    density.control_height()
+                } else {
+                    theme.button.height
+                }
+            });
+        if fixed_size.is_none() {
+            let mut minimum_height = self
+                .style
+                .minimum_size
+                .map_or(0.0, |size| size.height.max(0.0));
+            if self.style.tap_target_size == Some(TapTargetSize::Padded) {
+                minimum_height = minimum_height.max(48.0);
+            }
+            height = height.max(minimum_height);
+            if let Some(maximum) = self.style.maximum_size {
+                height = height.min(maximum.height.max(minimum_height));
+            }
+        }
 
-        let mut content: Widget = if let Some(label) = self.label.as_ref() {
-            Text::new(label.clone())
-                .style(
+        let label: Option<Widget> = self.label.as_ref().map(|label| {
+            Widget::from(
+                Text::new(label.clone()).style(
                     self.style
                         .text_style
                         .clone()
                         .unwrap_or_else(|| theme.typography.body.clone())
                         .color(fg),
-                )
+                ),
+            )
+        });
+        let icon: Option<Widget> = self.icon.as_ref().map(|icon| {
+            let icon_color = self
+                .style
+                .icon_color
+                .as_ref()
+                .map_or(fg, |value| value.resolve(state));
+            let icon_size = self
+                .style
+                .icon_size
+                .as_ref()
+                .map_or(theme.metrics.icon_size, |value| {
+                    value.resolve(state).max(0.0)
+                });
+            IconTheme::new(icon.clone())
+                .color(icon_color)
+                .size(icon_size)
                 .into()
-        } else if let Some(child) = self.child.as_ref() {
-            child.clone()
-        } else {
-            incular_widgets::SizedBox::shrink().into()
+        });
+        let mut content: Widget = match (icon, label) {
+            (Some(icon), Some(label)) => {
+                let spacing: Widget = SizedBox::new().width(theme.metrics.small_spacing).into();
+                let children = match self.style.icon_alignment.unwrap_or_default() {
+                    IconAlignment::Start => [icon, spacing, label],
+                    IconAlignment::End => [label, spacing, icon],
+                };
+                Row::new(children)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .into()
+            }
+            (Some(icon), None) => icon,
+            (None, Some(label)) => label,
+            (None, None) => self
+                .child
+                .clone()
+                .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into()),
         };
 
         if let Some(builder) = self.style.foreground_builder.as_ref() {
@@ -287,6 +392,38 @@ impl Button {
         }
         if !shrink_wrap {
             decorated = decorated.alignment(self.style.alignment.unwrap_or(Alignment::CENTER));
+        }
+
+        let mut min_width = self
+            .style
+            .minimum_size
+            .map_or(0.0, |size| size.width.max(0.0));
+        let mut min_height = self
+            .style
+            .minimum_size
+            .map_or(0.0, |size| size.height.max(0.0));
+        if self.style.tap_target_size == Some(TapTargetSize::Padded) {
+            min_width = min_width.max(48.0);
+            min_height = min_height.max(48.0);
+        }
+        let mut max_width = self
+            .style
+            .maximum_size
+            .map_or(f32::INFINITY, |size| size.width.max(min_width));
+        let mut max_height = self
+            .style
+            .maximum_size
+            .map_or(f32::INFINITY, |size| size.height.max(min_height));
+        if let Some(size) = fixed_size {
+            min_width = size.width.max(0.0);
+            max_width = min_width;
+            min_height = size.height.max(0.0);
+            max_height = min_height;
+        }
+        if min_width > 0.0 || min_height > 0.0 || max_width.is_finite() || max_height.is_finite() {
+            decorated = decorated.constraints(Constraints::new(
+                min_width, max_width, min_height, max_height,
+            ));
         }
 
         let mut decorated: Widget = decorated.into();
@@ -449,6 +586,7 @@ impl PrimaryButton {
         Button {
             label: self.label,
             child: self.child,
+            icon: None,
             style: self.style,
             enabled: self.enabled,
             focusable_when_disabled: self.focusable_when_disabled,
@@ -559,6 +697,7 @@ impl GhostButton {
         Button {
             label: self.label,
             child: self.child,
+            icon: None,
             style: self.style,
             enabled: self.enabled,
             focusable_when_disabled: self.focusable_when_disabled,
@@ -674,6 +813,7 @@ impl IconButton {
         Button {
             label: self.label,
             child: self.child,
+            icon: None,
             style: self.style,
             enabled: self.enabled,
             focusable_when_disabled: self.focusable_when_disabled,

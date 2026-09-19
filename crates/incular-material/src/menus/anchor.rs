@@ -1,19 +1,24 @@
-use std::rc::Rc;
+use std::{
+    cell::Cell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use super::{
     controls::{MenuCloseScope, MenuController},
     popup::menu_panel,
     style::MenuStyle,
 };
+use crate::material_theme::MenuComponentThemes;
 use incular_config::{Axis, Clip};
 use incular_controls::{Button as ControlButton, ButtonStyle, current_control_theme};
 use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
+use incular_widgets::internal::{ActionSurface, AnimationRetargetBridge, ExplicitSemantics};
 use incular_widgets::{
-    ClipRect, Container, ExcludeSemantics, GestureDetector, HitTestBehavior, IgnorePointer,
-    OverlayPortal, Positioned, SizedBox, Text, TransientPlacement, TransientRole, UnconstrainedBox,
-    Widget,
+    AnimationController, ClipRect, Container, ExcludeSemantics, GestureDetector, HitTestBehavior,
+    IgnorePointer, Opacity, OverlayPortal, Positioned, SizedBox, Text, TransientPlacement,
+    TransientRole, UnconstrainedBox, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -61,6 +66,10 @@ pub struct MenuAnchor {
     use_root_overlay: bool,
     #[builder(default)]
     animated: bool,
+    #[builder(default = AnimationController::new(Duration::from_millis(120)), setter(skip))]
+    transition: AnimationController,
+    #[builder(default = Rc::new(Cell::new(false)), setter(skip))]
+    transition_open: Rc<Cell<bool>>,
     #[builder(default = true)]
     enabled: bool,
     #[builder(default)]
@@ -115,6 +124,8 @@ impl MenuAnchor {
             cross_axis_unconstrained: true,
             use_root_overlay: false,
             animated: false,
+            transition: AnimationController::new(Duration::from_millis(120)),
+            transition_open: Rc::new(Cell::new(false)),
             enabled: true,
             controller: MenuController::new(),
             on_open: None,
@@ -220,11 +231,19 @@ impl MenuAnchor {
     }
 
     fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
-        assert!(
-            !self.animated,
-            "MenuAnchor::animated(true) is not supported until retained open/close transitions are available; W7 rejects this option rather than silently ignoring it"
-        );
         let open = self.controller.is_open();
+        let opacity = if self.animated {
+            if self.transition_open.get() != open {
+                self.transition_open.set(open);
+                self.transition
+                    .animate_to(Instant::now(), if open { 1.0 } else { 0.0 });
+            }
+            self.transition.value()
+        } else if open {
+            1.0
+        } else {
+            0.0
+        };
         let anchor_child = self.builder.as_ref().map_or_else(
             || {
                 self.child
@@ -279,12 +298,19 @@ impl MenuAnchor {
             Vec::new()
         }));
 
-        if !open {
+        let presenting =
+            open || (self.animated && (self.transition.is_active() || opacity > f32::EPSILON));
+        if !presenting {
             return anchor;
         }
 
         let theme = current_control_theme(context);
-        let style = self.style.clone().unwrap_or_default();
+        let mut style = self.style.clone().unwrap_or_default();
+        if let Some(menus) = context.depend_on_shared::<MenuComponentThemes>()
+            && let Some(inherited) = menus.menu_theme.style.as_ref()
+        {
+            style = style.merge(inherited);
+        }
         let items = if let Some(item_style) = self.item_style.clone() {
             self.menu_children
                 .iter()
@@ -330,6 +356,11 @@ impl MenuAnchor {
         })
             as Rc<dyn Fn(incular_widgets::TransientDismissReason) + 'static>;
         let panel = Widget::environment_scope(MenuCloseScope(close_chain), panel);
+        let panel = if self.animated {
+            Opacity::new(opacity, panel).into()
+        } else {
+            panel
+        };
         // The lower-level overlay portal is retained here.  When requested,
         // add a transparent, full-bounds barrier beneath the anchor/panel so
         // an outside activation closes the menu while the visible rows remain
@@ -376,6 +407,38 @@ impl From<MenuAnchor> for Widget {
     fn from(value: MenuAnchor) -> Self {
         let value = Rc::new(value);
         let revision = value.controller.revision();
-        Widget::stateful_layout_builder(revision, move |context, _| value.build(context))
+        let value_for_build = value.clone();
+        let child = Widget::stateful_layout_builder(revision.clone(), move |context, _| {
+            value_for_build.build(context)
+        });
+        if !value.animated {
+            return child;
+        }
+
+        #[derive(Clone)]
+        struct MenuTransitionCarry {
+            controller: AnimationController,
+            target_open: Rc<Cell<bool>>,
+        }
+
+        let transition = value.transition.clone();
+        let target_open = value.transition_open.clone();
+        let replacement = MenuTransitionCarry {
+            controller: transition.clone(),
+            target_open: target_open.clone(),
+        };
+        let bridge = AnimationRetargetBridge::new(
+            Rc::new(MenuTransitionCarry {
+                controller: transition.clone(),
+                target_open,
+            }),
+            move |previous| {
+                replacement
+                    .controller
+                    .adopt_timeline_from(&previous.controller);
+                replacement.target_open.set(previous.target_open.get());
+            },
+        );
+        Widget::animation_ticker_with_retarget(transition, false, revision, Some(bridge), child)
     }
 }

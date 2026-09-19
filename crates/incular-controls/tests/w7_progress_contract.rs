@@ -3,6 +3,7 @@ use incular_controls::{ControlTheme, progress::Root as Progress};
 use incular_core::{Color, Size};
 use incular_semantics::Role;
 use incular_widgets::{Widget, internal::WidgetTree};
+use std::time::{Duration, Instant};
 
 #[test]
 fn custom_progress_keeps_busy_range_and_label_semantics() {
@@ -49,4 +50,38 @@ fn zero_progress_has_no_active_fill_command() {
             } if *color == accent
         )
     }));
+}
+
+#[test]
+fn indeterminate_progress_moves_on_retained_ticks_and_stops_after_unmount() {
+    let mut tree = WidgetTree::new();
+    tree.mount(Widget::from(Progress::new().indeterminate(true)))
+        .expect("mount indeterminate progress");
+    let constraints = Constraints::loose(Size::new(240.0, 40.0));
+    tree.layout(constraints).expect("layout progress");
+    let before = tree.diagnostics();
+
+    let now = Instant::now();
+    let (_, active) = tree.update_compositor(now).expect("start progress ticker");
+    assert!(active);
+    tree.update_compositor(now + Duration::from_millis(600))
+        .expect("advance progress ticker");
+    tree.layout(constraints).expect("rebuild moving segment");
+    let after = tree.diagnostics();
+    assert!(after.animation_ticks > before.animation_ticks);
+    assert!(
+        after.rebuilds > before.rebuilds,
+        "retained phase changes must rebuild the positioned segment"
+    );
+
+    tree.mount(Widget::box_(Size::new(1.0, 1.0), Color::TRANSPARENT))
+        .expect("replace progress");
+    tree.layout(constraints).expect("layout replacement");
+    let (_, active) = tree
+        .update_compositor(now + Duration::from_millis(700))
+        .expect("tick after unmount");
+    assert!(
+        !active,
+        "unmounted indeterminate progress must not schedule frames"
+    );
 }

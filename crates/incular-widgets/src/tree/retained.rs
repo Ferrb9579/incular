@@ -1042,6 +1042,9 @@ impl WidgetTree {
     /// current eligibility; native projections may describe an earlier frame.
     #[must_use]
     pub fn semantic_activate_executable(&self, id: ElementId) -> bool {
+        if self.pointer_actions_blocked(id) {
+            return false;
+        }
         self.elements.get(id.0).is_some_and(|element| {
             super::semantics::semantic_action_is_executable(
                 element.widget.kind(),
@@ -1049,6 +1052,25 @@ impl WidgetTree {
                 &element.widget.semantic_properties().callbacks,
             )
         })
+    }
+
+    pub(super) fn pointer_actions_blocked(&self, mut id: ElementId) -> bool {
+        loop {
+            let Some(element) = self.elements.get(id.0) else {
+                return true;
+            };
+            match element.widget.kind() {
+                WidgetKind::IgnorePointer { ignoring: true, .. }
+                | WidgetKind::AbsorbPointer {
+                    absorbing: true, ..
+                } => return true,
+                _ => {}
+            }
+            let Some(parent) = element.parent else {
+                return false;
+            };
+            id = parent;
+        }
     }
     /// Returns an application-provided semantic action callback, if one was
     /// attached by [`Semantics`](crate::Semantics). The callback is cloned

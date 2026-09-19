@@ -5,7 +5,7 @@
 //! public widget prelude and are not part of Incular's Flutter-facing API.
 
 use std::any::Any;
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use incular_config::EdgeInsets;
 use incular_core::{Color, Size};
@@ -194,6 +194,42 @@ impl PartialEq for ActionInteractionController {
 
 impl Eq for ActionInteractionController {}
 
+/// Renderer-neutral press-effect policy carried by a retained action surface.
+/// Design-system crates map their public splash vocabulary into this enum;
+/// native/runtime integrations may inspect it without depending on Material.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActionSplashPolicy {
+    #[default]
+    Ripple,
+    Splash,
+    Sparkle,
+    None,
+}
+
+/// Retained activation policy owned by the action surface.
+///
+/// `feedback_enabled` is an explicit platform-boundary value contract. W7
+/// preserves it on the mounted action; platform capability execution is owned
+/// by W8 rather than silently guessed inside a presentation crate.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActionPolicy {
+    pub feedback_enabled: bool,
+    pub splash: ActionSplashPolicy,
+    pub transition_duration: Duration,
+}
+
+impl Default for ActionPolicy {
+    fn default() -> Self {
+        Self {
+            feedback_enabled: true,
+            splash: ActionSplashPolicy::Ripple,
+            transition_duration: Duration::ZERO,
+        }
+    }
+}
+
 /// Internal action surface used by control implementations.
 ///
 /// Flutter has no `widgets::ActionSurface`. Material's raw button is
@@ -217,6 +253,8 @@ pub struct ActionSurface {
     pub(crate) padding: EdgeInsets,
     pub(crate) content: Option<Widget>,
     pub(crate) interaction: Option<ActionInteractionController>,
+    pub(crate) policy: ActionPolicy,
+    pub(crate) mouse_cursor: crate::MouseCursor,
 }
 
 impl ActionSurface {
@@ -239,6 +277,8 @@ impl ActionSurface {
             padding: EdgeInsets::ZERO,
             content: None,
             interaction: None,
+            policy: ActionPolicy::default(),
+            mouse_cursor: crate::MouseCursor::Defer,
         }
     }
 
@@ -357,6 +397,30 @@ impl ActionSurface {
     pub fn interaction_controller(mut self, controller: ActionInteractionController) -> Self {
         self.interaction = Some(controller);
         self
+    }
+
+    #[must_use]
+    pub fn policy(mut self, policy: ActionPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    #[must_use]
+    pub fn mouse_cursor(mut self, cursor: crate::MouseCursor) -> Self {
+        self.mouse_cursor = cursor;
+        self
+    }
+}
+
+/// Returns the explicit action policy when `widget` is the retained action
+/// node itself. Framework tests use this to prove design-system setters reach
+/// the neutral behavior owner without exposing `WidgetKind` publicly.
+#[doc(hidden)]
+#[must_use]
+pub fn action_policy(widget: &Widget) -> Option<ActionPolicy> {
+    match widget.kind() {
+        crate::tree::WidgetKind::Button(spec) => Some(spec.policy),
+        _ => None,
     }
 }
 

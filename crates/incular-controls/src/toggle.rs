@@ -12,6 +12,13 @@ use std::time::{Duration, Instant};
 use typed_builder::TypedBuilder;
 
 #[derive(Clone)]
+struct ToggleGroupScope {
+    multiple: bool,
+    active: Rc<Cell<Option<usize>>>,
+    revision: Rc<Cell<u64>>,
+}
+
+#[derive(Clone)]
 pub struct Toggle {
     pressed: Rc<Cell<bool>>,
     revision: Rc<Cell<u64>>,
@@ -69,6 +76,10 @@ impl Toggle {
     }
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_group(theme, None)
+    }
+
+    fn build_with_group(&self, theme: &ControlTheme, group: Option<ToggleGroupScope>) -> Widget {
         let content = self
             .child
             .clone()
@@ -78,7 +89,24 @@ impl Toggle {
                     .map(|label| incular_widgets::Text::new(label).into())
             })
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into());
-        let pressed = self.pressed.get();
+        let id = Rc::as_ptr(&self.pressed) as usize;
+        if let Some(group) = group.as_ref()
+            && !group.multiple
+            && self.pressed.get()
+            && group.active.get().is_none()
+        {
+            group.active.set(Some(id));
+        }
+        let pressed = group.as_ref().map_or_else(
+            || self.pressed.get(),
+            |group| {
+                if group.multiple {
+                    self.pressed.get()
+                } else {
+                    group.active.get() == Some(id)
+                }
+            },
+        );
         let transition = if theme.motion.reduced_motion {
             Duration::ZERO
         } else {
@@ -131,15 +159,31 @@ impl Toggle {
         let selected_opacity = self.selected_opacity.clone();
         let unselected_opacity = self.unselected_opacity.clone();
         let callback = self.on_change.clone();
+        let group_for_click = group.clone();
         let mut button = ActionSurface::with_child(visual)
             .color(Color::TRANSPARENT)
             .disabled_color(theme.colors.disabled_surface)
             .enabled(self.enabled);
         if self.enabled {
             button = button.on_click(move || {
-                let next = !pressed_state.get();
+                let next = group_for_click.as_ref().map_or_else(
+                    || !pressed_state.get(),
+                    |group| {
+                        if group.multiple {
+                            !pressed_state.get()
+                        } else {
+                            group.active.get() != Some(id)
+                        }
+                    },
+                );
                 pressed_state.set(next);
                 revision.set(revision.get().wrapping_add(1));
+                if let Some(group) = group_for_click.as_ref()
+                    && !group.multiple
+                {
+                    group.active.set(next.then_some(id));
+                    group.revision.set(group.revision.get().wrapping_add(1));
+                }
                 let selected_target = if next { 1. } else { 0. };
                 if transition.is_zero() {
                     selected_opacity.set_opacity(selected_target);
@@ -178,7 +222,8 @@ impl From<Toggle> for Widget {
         let revision = value.revision.clone();
         Widget::stateful_layout_builder(revision, move |context, _| {
             let theme = crate::theme::current_control_theme(context);
-            value.build(&theme)
+            let group = context.depend_on::<ToggleGroupScope>();
+            value.build_with_group(&theme, group)
         })
     }
 }
@@ -189,6 +234,8 @@ pub struct Group {
     multiple: bool,
     #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(skip))]
+    controller: crate::CompositeController,
 }
 
 impl Group {
@@ -210,11 +257,28 @@ impl Group {
         self.child = Some(value.into());
         self
     }
+    #[must_use]
+    pub fn navigation(&self) -> crate::CompositeController {
+        self.controller.clone()
+    }
 }
 impl From<Group> for Widget {
     fn from(value: Group) -> Self {
-        value
+        let child = value
             .child
-            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into());
+        let revision = Rc::new(Cell::new(0_u64));
+        let scope = ToggleGroupScope {
+            multiple: value.multiple,
+            active: Rc::new(Cell::new(None)),
+            revision: revision.clone(),
+        };
+        let controller = value.controller;
+        Widget::stateful_layout_builder(revision, move |_, _| {
+            Widget::environment_scope(
+                controller.clone(),
+                Widget::environment_scope(scope.clone(), child.clone()),
+            )
+        })
     }
 }

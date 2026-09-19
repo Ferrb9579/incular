@@ -1,7 +1,8 @@
 use incular_config::Constraints;
 use incular_core::Size;
 use incular_widgets::internal::{
-    ActionInteractionController, ActionInteractionState, ActionSurface,
+    ActionInteractionController, ActionInteractionState, ActionPolicy, ActionSplashPolicy,
+    ActionSurface, action_policy,
 };
 use incular_widgets::{Widget, internal::WidgetTree};
 use std::time::{Duration, Instant};
@@ -100,4 +101,15 @@ fn unmounted_presentation_has_no_subscriptions_or_animation_work() {
         1,
         "detached action cannot publish new presentation"
     );
+}
+
+#[test]
+fn action_policy_reaches_the_retained_action_owner() {
+    let policy = ActionPolicy {
+        feedback_enabled: false,
+        splash: ActionSplashPolicy::Sparkle,
+        transition_duration: Duration::from_millis(175),
+    };
+    let widget = Widget::from(ActionSurface::new("Action").policy(policy));
+    assert_eq!(action_policy(&widget), Some(policy));
 }

@@ -1647,18 +1647,24 @@ impl WidgetTree {
                 RenderKind::AnimationTicker {
                     controller,
                     auto_start,
+                    repeat,
                     revision,
                     ..
                 } => {
-                    if ticking
-                        && auto_start
-                        && matches!(
-                            controller.status(),
-                            incular_animation::AnimationStatus::Idle
-                                | incular_animation::AnimationStatus::Dismissed
-                        )
-                    {
-                        controller.forward(now);
+                    if ticking {
+                        if let Some(reverse) = repeat {
+                            if !controller.is_active() {
+                                controller.repeat(now, reverse);
+                            }
+                        } else if auto_start
+                            && matches!(
+                                controller.status(),
+                                incular_animation::AnimationStatus::Idle
+                                    | incular_animation::AnimationStatus::Dismissed
+                            )
+                        {
+                            controller.forward(now);
+                        }
                     }
                     if ticking && controller.tick(now) {
                         changed = true;

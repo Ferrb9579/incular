@@ -4,7 +4,7 @@
 use incular_config::CrossAxisAlignment;
 use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::internal::ExplicitSemantics;
-use incular_widgets::{Column, Text, Widget};
+use incular_widgets::{AbsorbPointer, Column, ExcludeFocus, Text, Widget};
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
@@ -20,6 +20,8 @@ pub struct Root {
     error: Option<String>,
     #[builder(default = false)]
     disabled: bool,
+    #[builder(default = false)]
+    required: bool,
     #[builder(default, setter(strip_option))]
     invalid: Option<bool>,
 }
@@ -60,6 +62,11 @@ impl Root {
         self
     }
     #[must_use]
+    pub fn required(mut self, value: bool) -> Self {
+        self.required = value;
+        self
+    }
+    #[must_use]
     pub fn is_invalid(&self) -> bool {
         self.invalid.unwrap_or_else(|| self.error.is_some())
     }
@@ -70,6 +77,10 @@ impl Root {
 
     #[must_use]
     pub fn build(&self) -> Widget {
+        self.build_with_inherited_disabled(false)
+    }
+
+    fn build_with_inherited_disabled(&self, inherited_disabled: bool) -> Widget {
         let mut children = Vec::new();
         if let Some(label) = &self.label {
             children.push(Text::new(label.clone()).into());
@@ -87,11 +98,15 @@ impl Root {
         // align with the leading edge while the input may expand to the
         // available width.  Column's generic default is centered, which made
         // a full-width field look detached from its label in desktop layouts.
-        let visual: Widget = Column::new(children)
+        let mut visual: Widget = Column::new(children)
             .spacing(4.)
             .cross_axis_alignment(CrossAxisAlignment::Start)
             .into();
         let invalid = self.is_invalid();
+        let disabled = self.disabled || inherited_disabled;
+        if disabled {
+            visual = ExcludeFocus::new(AbsorbPointer::new(visual)).into();
+        }
         visual.semantics(
             ExplicitSemantics::new(SemanticRole::GenericContainer)
                 .label(self.label.clone().unwrap_or_default())
@@ -102,8 +117,9 @@ impl Root {
                         .unwrap_or_default(),
                 )
                 .state(SemanticState {
-                    enabled: !self.disabled,
-                    read_only: invalid,
+                    enabled: !disabled,
+                    invalid,
+                    required: self.required,
                     ..SemanticState::default()
                 }),
         )
@@ -111,7 +127,13 @@ impl Root {
 }
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
-        value.build()
+        let value = Rc::new(value);
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            let inherited_disabled = context
+                .depend_on::<crate::fieldset::FieldsetScope>()
+                .is_some_and(|scope| scope.disabled);
+            value.build_with_inherited_disabled(inherited_disabled)
+        }))
     }
 }
 

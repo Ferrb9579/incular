@@ -527,6 +527,7 @@ pub enum RenderKind {
     AnimationTicker {
         controller: AnimationController,
         auto_start: bool,
+        repeat: Option<bool>,
         revision: Rc<Cell<u64>>,
         retarget: Option<AnimationRetargetBridge>,
     },

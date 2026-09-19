@@ -1,14 +1,15 @@
 use crate::material_theme::{StateProperty, ThemeData};
-use crate::{TabAlignment, TabBarIndicatorSize};
+use crate::{K_TAB_SCROLL_DURATION, TabAlignment, TabBarIndicatorSize};
 use incular_config::{CrossAxisAlignment, MainAxisAlignment};
 use incular_core::Color;
 use incular_text::TextStyle;
 use incular_widgets::{
-    Column, Container, ExcludeSemantics, IgnorePointer, PageView, Positioned, Row, Stack, Text,
-    Widget,
+    AnimationController, Column, Container, ExcludeSemantics, IgnorePointer, PageView, Positioned,
+    Row, Stack, Text, Widget,
 };
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Instant;
 use typed_builder::TypedBuilder;
 
 /// A Material tab descriptor. `text` and `icon` are convenience constructors;
@@ -135,17 +136,35 @@ pub struct TabController {
     revision: Rc<Cell<u64>>,
     page_controller: incular_scroll::ScrollController,
     page_extent: Rc<Cell<f32>>,
+    page_animation: AnimationController,
+    page_animation_from: Rc<Cell<f32>>,
+    page_animation_to: Rc<Cell<f32>>,
 }
 
 impl TabController {
     #[must_use]
     pub fn new(length: usize) -> Self {
+        let page_controller = incular_scroll::ScrollController::new();
+        let page_animation = AnimationController::new(K_TAB_SCROLL_DURATION);
+        let page_animation_from = Rc::new(Cell::new(0.0));
+        let page_animation_to = Rc::new(Cell::new(0.0));
+        let observed_controller = page_controller.clone();
+        let observed_from = page_animation_from.clone();
+        let observed_to = page_animation_to.clone();
+        page_animation.add_listener(move |progress| {
+            let from = observed_from.get();
+            let to = observed_to.get();
+            observed_controller.jump_to(from + (to - from) * progress.clamp(0.0, 1.0));
+        });
         Self {
             length,
             index: Rc::new(Cell::new(0)),
             revision: Rc::new(Cell::new(0)),
-            page_controller: incular_scroll::ScrollController::new(),
+            page_controller,
             page_extent: Rc::new(Cell::new(1.0)),
+            page_animation,
+            page_animation_from,
+            page_animation_to,
         }
     }
 
@@ -164,6 +183,7 @@ impl TabController {
         if index == self.index() {
             return;
         }
+        self.page_animation.stop();
         self.index.set(index);
         let offset = index as f32 * self.page_extent.get();
         if self.page_controller.max_offset() > 0.0 {
@@ -175,7 +195,21 @@ impl TabController {
     }
 
     pub fn animate_to(&self, value: usize) {
-        self.set_index(value);
+        let index = value.min(self.length.saturating_sub(1));
+        let target = index as f32 * self.page_extent.get();
+        let current = self.page_controller.offset();
+        let index_changed = index != self.index();
+        if !index_changed && (current - target).abs() <= f32::EPSILON {
+            return;
+        }
+        self.index.set(index);
+        self.revision.set(self.revision.get().wrapping_add(1));
+        if self.page_controller.max_offset() <= 0.0 {
+            self.page_animation.stop();
+            self.page_controller.deferred_jump_to(target);
+            return;
+        }
+        self.start_page_animation(target);
     }
 
     #[must_use]
@@ -185,6 +219,18 @@ impl TabController {
 
     fn revision_cell(&self) -> Rc<Cell<u64>> {
         self.revision.clone()
+    }
+
+    fn page_animation(&self) -> AnimationController {
+        self.page_animation.clone()
+    }
+
+    fn start_page_animation(&self, target: f32) {
+        let current = self.page_controller.offset();
+        self.page_animation_from.set(current);
+        self.page_animation_to.set(target);
+        self.page_animation.set_value(0.0);
+        self.page_animation.forward(Instant::now());
     }
 
     /// Returns the retained page position shared by `TabBarView`.
@@ -204,6 +250,10 @@ impl TabController {
         }
         self.page_extent.set(extent);
         let offset = self.index() as f32 * self.page_extent.get();
+        if self.page_animation.is_active() && self.page_controller.max_offset() > 0.0 {
+            self.start_page_animation(offset);
+            return;
+        }
         // LayoutBuilder runs before the PageView publishes its new metrics.
         // Always defer the extent-derived target so a resize cannot clamp the
         // new page offset against the previous viewport's max extent.
@@ -497,7 +547,8 @@ impl From<TabBarView> for Widget {
         let children = value.children;
         let viewport_fraction = value.viewport_fraction.max(0.01);
         let physics = value.physics;
-        Widget::from(incular_widgets::LayoutBuilder::new(
+        let page_animation = controller.page_animation();
+        let content = Widget::from(incular_widgets::LayoutBuilder::new(
             move |_, constraints| {
                 let viewport_width = if constraints.is_width_bounded() {
                     constraints.max_width()
@@ -513,7 +564,8 @@ impl From<TabBarView> for Widget {
                 }
                 page_view.into()
             },
-        ))
+        ));
+        Widget::animation_ticker(page_animation, content)
     }
 }
 

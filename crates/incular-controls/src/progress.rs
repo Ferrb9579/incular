@@ -7,9 +7,11 @@
 use crate::theme::ControlTheme;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::internal::ExplicitSemantics;
-use incular_widgets::{BorderRadius, BoxDecoration, Container, Positioned, Stack, Widget};
-use std::rc::Rc;
+use incular_widgets::internal::{AnimationRetargetBridge, ExplicitSemantics};
+use incular_widgets::{
+    AnimationController, BorderRadius, BoxDecoration, Container, Positioned, Stack, Widget,
+};
+use std::{cell::Cell, rc::Rc, time::Duration};
 use typed_builder::TypedBuilder;
 
 #[derive(Clone, TypedBuilder)]
@@ -65,7 +67,11 @@ impl Root {
     /// Switches to a retained indeterminate indicator.
     #[must_use]
     pub fn indeterminate(mut self, value: bool) -> Self {
-        self.value = value.then_some(f32::NAN);
+        if value {
+            self.value = Some(f32::NAN);
+        } else if self.value.is_none() || self.value.is_some_and(f32::is_nan) {
+            self.value = Some(self.min);
+        }
         self
     }
 
@@ -119,6 +125,10 @@ impl Root {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
+        self.build_with_phase(theme, 0.0)
+    }
+
+    fn build_with_phase(&self, theme: &ControlTheme, phase: f32) -> Widget {
         let visual: Widget = if let Some(child) = &self.child {
             child.clone()
         } else {
@@ -130,8 +140,13 @@ impl Root {
             let width = self.width.max(1.);
             let radius = theme.progress.radius.max(0.);
             let track_color = with_alpha(theme.colors.border, theme.progress.track_alpha);
-            let ratio = self.normalized_value().unwrap_or(0.33);
-            let indicator_width = width * ratio;
+            let determinate = self.normalized_value();
+            let indicator_width = width * determinate.unwrap_or(0.33);
+            let indicator_left = if determinate.is_none() {
+                (width - indicator_width).max(0.0) * phase.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let track: Widget = Container::new()
                 .width(width)
                 .height(height)
@@ -152,7 +167,12 @@ impl Root {
                             .border_radius(BorderRadius::circular(radius)),
                     )
                     .into();
-                children.push(Positioned::new(indicator).left(0.).top(0.).into());
+                children.push(
+                    Positioned::new(indicator)
+                        .left(indicator_left)
+                        .top(0.)
+                        .into(),
+                );
             }
             Stack::new(children).into()
         };
@@ -179,6 +199,29 @@ impl Root {
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
+        if value.is_indeterminate() && value.child.is_none() {
+            const CYCLE: Duration = Duration::from_millis(1200);
+            let controller = AnimationController::new(CYCLE);
+            let revision = Rc::new(Cell::new(0_u64));
+            let value_for_build = value.clone();
+            let controller_for_build = controller.clone();
+            let animated = Widget::stateful_layout_builder(revision.clone(), move |context, _| {
+                let theme = crate::theme::current_control_theme(context);
+                value_for_build.build_with_phase(&theme, controller_for_build.value())
+            });
+            let replacement = controller.clone();
+            let bridge =
+                AnimationRetargetBridge::new(Rc::new(controller.clone()), move |previous| {
+                    replacement.adopt_timeline_from(previous);
+                });
+            return Widget::animation_ticker_repeating_with_retarget(
+                controller,
+                true,
+                revision,
+                Some(bridge),
+                animated,
+            );
+        }
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
             value.build(&theme)

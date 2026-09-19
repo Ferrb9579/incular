@@ -1,6 +1,13 @@
 //! Fieldset/legend semantic grouping.
-use incular_widgets::Widget;
+use incular_semantics::{Role as SemanticRole, SemanticState};
+use incular_widgets::internal::ExplicitSemantics;
+use incular_widgets::{AbsorbPointer, ExcludeFocus, Widget};
 use typed_builder::TypedBuilder;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FieldsetScope {
+    pub disabled: bool,
+}
 
 #[derive(Clone, TypedBuilder)]
 pub struct Root {
@@ -32,9 +39,24 @@ impl Root {
 }
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
-        value
+        let mut child = value
             .child
-            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into());
+        if value.disabled {
+            child = ExcludeFocus::new(AbsorbPointer::new(child)).into();
+        }
+        let child = Widget::environment_scope(
+            FieldsetScope {
+                disabled: value.disabled,
+            },
+            child,
+        );
+        child.semantics(
+            ExplicitSemantics::new(SemanticRole::GenericContainer).state(SemanticState {
+                enabled: !value.disabled,
+                ..SemanticState::default()
+            }),
+        )
     }
 }
 #[derive(Clone, TypedBuilder)]

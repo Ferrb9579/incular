@@ -7,6 +7,8 @@ use typed_builder::TypedBuilder;
 pub struct Root {
     #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(skip))]
+    controller: CompositeController,
 }
 
 impl Root {
@@ -21,14 +23,15 @@ impl Root {
     }
     #[must_use]
     pub fn navigation(&self) -> CompositeController {
-        CompositeController::new()
+        self.controller.clone()
     }
 }
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
-        value
+        let child = value
             .child
-            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into());
+        Widget::environment_scope(value.controller, child)
     }
 }
 macro_rules! toolbar_part {

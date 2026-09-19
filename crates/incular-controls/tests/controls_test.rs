@@ -5,10 +5,10 @@ use incular_controls::prelude::*;
 use incular_controls::{
     alert_dialog, avatar, checkbox, drawer, meter, progress, scroll_area, tabs, toast,
 };
-use incular_core::Size;
+use incular_core::{Offset, Size};
 use incular_rendering::{Brush, PaintCommand};
 use incular_widgets::{
-    Widget,
+    MouseCursor, Widget,
     internal::{ActionId, ButtonState, TextEditingController, WidgetTree},
 };
 
@@ -79,6 +79,28 @@ fn button_suite_build_and_mount() {
     let _ = tree.mount(primary.into()).unwrap();
     let _ = tree.mount(ghost.into()).unwrap();
     let _ = tree.mount(icon.into()).unwrap();
+}
+
+#[test]
+fn button_style_cursor_and_direct_size_constraints_reach_retained_owners() {
+    let button = Button::new("Policy").style(
+        ButtonStyle::new()
+            .mouse_cursor("grab")
+            .minimum_size(Size::new(140.0, 52.0)),
+    );
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(button.into()).expect("mount styled button");
+    tree.layout(Constraints::loose(Size::new(220.0, 100.0)))
+        .expect("layout styled button");
+    let size = tree
+        .render_size(tree.render_id(root).expect("render id"))
+        .expect("render size");
+    assert!(size.width >= 140.0, "width={}", size.width);
+    assert!(size.height >= 52.0, "height={}", size.height);
+    assert_eq!(
+        tree.mouse_cursor_at(Offset::new(10.0, 10.0)),
+        MouseCursor::Grab
+    );
 }
 
 #[test]

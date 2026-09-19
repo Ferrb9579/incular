@@ -218,6 +218,6 @@ pub fn current_progress_indicator_theme(
         .or_else(|| {
             context
                 .depend_on_shared::<crate::material_theme::FeedbackComponentThemes>()
-                .map(|themes| themes.progress_indicator_theme.clone())
+                .map(|themes| themes.progress_indicator_theme)
         })
 }

@@ -269,6 +269,8 @@ impl Widget {
                 has_callback: false,
                 child: None,
                 interaction: None,
+                policy: crate::internal::ActionPolicy::default(),
+                mouse_cursor: crate::MouseCursor::Defer,
             }),
             semantics: SemanticProperties::default(),
         })
@@ -311,6 +313,8 @@ impl Widget {
                 has_callback: false,
                 child: Some(label),
                 interaction: surface.interaction,
+                policy: surface.policy,
+                mouse_cursor: surface.mouse_cursor,
             }),
             semantics: SemanticProperties {
                 // Custom content is inspected for a text or explicit semantic
@@ -592,7 +596,7 @@ impl Widget {
         revision: Rc<Cell<u64>>,
         child: impl Into<Self>,
     ) -> Self {
-        Self::animation_ticker_with_retarget(controller, auto_start, revision, None, child)
+        Self::animation_ticker_with_policy(controller, auto_start, None, revision, None, child)
     }
 
     #[doc(hidden)]
@@ -604,11 +608,59 @@ impl Widget {
         retarget: Option<AnimationRetargetBridge>,
         child: impl Into<Self>,
     ) -> Self {
+        Self::animation_ticker_with_policy(controller, auto_start, None, revision, retarget, child)
+    }
+
+    /// Retains a controller as a repeating frame source. `reverse` mirrors
+    /// [`AnimationController::repeat`]: when true, every other cycle runs
+    /// backwards. The repeat begins on the runtime-provided animation clock,
+    /// never at descriptor-construction wall-clock time.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn animation_ticker_repeating_with_revision(
+        controller: AnimationController,
+        reverse: bool,
+        revision: Rc<Cell<u64>>,
+        child: impl Into<Self>,
+    ) -> Self {
+        Self::animation_ticker_repeating_with_retarget(controller, reverse, revision, None, child)
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn animation_ticker_repeating_with_retarget(
+        controller: AnimationController,
+        reverse: bool,
+        revision: Rc<Cell<u64>>,
+        retarget: Option<AnimationRetargetBridge>,
+        child: impl Into<Self>,
+    ) -> Self {
+        Self::animation_ticker_with_policy(
+            controller,
+            false,
+            Some(reverse),
+            revision,
+            retarget,
+            child,
+        )
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    fn animation_ticker_with_policy(
+        controller: AnimationController,
+        auto_start: bool,
+        repeat: Option<bool>,
+        revision: Rc<Cell<u64>>,
+        retarget: Option<AnimationRetargetBridge>,
+        child: impl Into<Self>,
+    ) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::AnimationTicker {
                 controller,
                 auto_start,
+                repeat,
                 revision,
                 retarget,
                 child: child.into(),

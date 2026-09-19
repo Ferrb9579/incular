@@ -175,6 +175,7 @@ impl std::fmt::Debug for WidgetKind {
             Self::AnimationTicker {
                 controller,
                 auto_start,
+                repeat,
                 revision,
                 retarget,
                 child,
@@ -182,6 +183,7 @@ impl std::fmt::Debug for WidgetKind {
                 .debug_struct("AnimationTicker")
                 .field("controller", controller)
                 .field("auto_start", auto_start)
+                .field("repeat", repeat)
                 .field("revision", &revision.get())
                 .field("retarget", retarget)
                 .field("child", child)
@@ -615,6 +617,8 @@ impl PartialEq for ButtonSpec {
             && self.has_callback == other.has_callback
             && self.child == other.child
             && self.interaction == other.interaction
+            && self.policy == other.policy
+            && self.mouse_cursor == other.mouse_cursor
             && same_optional_callback(&self.callback, &other.callback)
             && same_optional_callback(&self.hover_callback, &other.hover_callback)
             && same_optional_callback(&self.exit_callback, &other.exit_callback)
@@ -770,6 +774,7 @@ impl PartialEq for WidgetKind {
                 Self::AnimationTicker {
                     controller: a,
                     auto_start: a_start,
+                    repeat: a_repeat,
                     revision: a_revision,
                     retarget: a_retarget,
                     child: b,
@@ -777,6 +782,7 @@ impl PartialEq for WidgetKind {
                 Self::AnimationTicker {
                     controller: c,
                     auto_start: c_start,
+                    repeat: c_repeat,
                     revision: c_revision,
                     retarget: c_retarget,
                     child: d,
@@ -784,6 +790,7 @@ impl PartialEq for WidgetKind {
             ) => {
                 a == c
                     && a_start == c_start
+                    && a_repeat == c_repeat
                     && Rc::ptr_eq(a_revision, c_revision)
                     && a_retarget == c_retarget
                     && b == d

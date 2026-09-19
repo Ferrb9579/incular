@@ -16,9 +16,9 @@ use incular_semantics::Role as SemanticRole;
 use incular_text::TextStyle;
 use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{
-    Border, BoxDecoration, Container, GestureDetector, HitTestBehavior, ListView, Positioned, Row,
-    SizedBox, Text, TransientDismissPolicy, TransientDismissReason, TransientPlacement,
-    TransientRole, Widget,
+    Border, BoxDecoration, Container, GestureDetector, HitTestBehavior, ListView, MouseRegion,
+    Positioned, Row, SizedBox, Text, TransientDismissPolicy, TransientDismissReason,
+    TransientPlacement, TransientRole, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -861,14 +861,17 @@ pub(super) fn menu_panel(
         .max(1.0);
     let shape = style.resolve_shape(state);
     let border = style.side.as_ref().map(|value| value.resolve(state));
-    let surface: Widget = Container::with_child(item_list)
+    let mut surface = Container::with_child(item_list)
         .padding(padding)
         .decoration(
             BoxDecoration::new()
                 .border_radius(shape)
                 .border(border.unwrap_or_else(|| Border::new(0.0, Color::TRANSPARENT))),
-        )
-        .into();
+        );
+    if let Some(alignment) = style.alignment {
+        surface = surface.alignment(alignment);
+    }
+    let surface: Widget = surface.into();
     let material = Material::new(surface)
         .color(style.resolve_background(state, theme))
         .shadow_color(style.resolve_shadow(state, theme))
@@ -883,5 +886,12 @@ pub(super) fn menu_panel(
     let panel = style
         .constrained(material)
         .semantics(ExplicitSemantics::new(SemanticRole::Menu));
+    let panel = if let Some(cursor) = style.mouse_cursor.as_deref() {
+        MouseRegion::new(panel)
+            .cursor(incular_controls::styles::mouse_cursor_from_name(cursor))
+            .into()
+    } else {
+        panel
+    };
     (panel, panel_height)
 }

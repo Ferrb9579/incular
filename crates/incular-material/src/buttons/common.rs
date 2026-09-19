@@ -4,16 +4,17 @@ use super::style::ButtonKind;
 use crate::material_theme::{
     ButtonComponentThemes, ComponentThemeData, CoreThemeData, Theme, ThemeData,
 };
-use incular_config::{Constraints, CrossAxisAlignment};
+use incular_config::Constraints;
 use incular_controls::{Button as ControlButton, ControlTheme, current_control_theme};
 use incular_core::{Color, Size};
-use incular_widgets::{Border, Container, Row, SizedBox, Widget};
+use incular_widgets::{Border, Container, SizedBox, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]
 pub(super) struct ButtonSpec {
     pub(super) kind: ButtonKind,
     pub(super) label: Option<String>,
+    pub(super) icon: Option<Widget>,
     pub(super) child: Option<Widget>,
     pub(super) semantic_label: Option<String>,
     pub(super) style: incular_controls::ButtonStyle,
@@ -30,6 +31,7 @@ impl ButtonSpec {
             kind,
             semantic_label: Some(label.clone()),
             label: Some(label),
+            icon: None,
             child: None,
             style: incular_controls::ButtonStyle::new(),
             enabled: true,
@@ -43,6 +45,7 @@ impl ButtonSpec {
         Self {
             kind,
             label: None,
+            icon: None,
             child: Some(child.into()),
             semantic_label: None,
             style: incular_controls::ButtonStyle::new(),
@@ -57,12 +60,14 @@ impl ButtonSpec {
         let label = label.into();
         self.label = Some(label.clone());
         self.child = None;
+        self.icon = None;
         self.semantic_label = Some(label);
         self
     }
 
     pub(super) fn set_child(mut self, child: impl Into<Widget>) -> Self {
         self.label = None;
+        self.icon = None;
         self.child = Some(child.into());
         self.semantic_label = None;
         self
@@ -74,14 +79,8 @@ impl ButtonSpec {
         label: impl Into<String>,
     ) -> Self {
         let label = label.into();
-        let child: Widget = Row::new([
-            icon.into(),
-            SizedBox::new().width(8.0).into(),
-            incular_widgets::Text::new(label.clone()).into(),
-        ])
-        .alignment(CrossAxisAlignment::Center)
-        .into();
-        let mut spec = Self::child(kind, child);
+        let mut spec = Self::label(kind, label.clone());
+        spec.icon = Some(icon.into());
         spec.semantic_label = Some(label);
         spec
     }
@@ -170,19 +169,22 @@ impl ButtonSpec {
 
     fn build(&self, theme: &ThemeData, controls_theme: &ControlTheme) -> Widget {
         let style = self.resolve_style(theme);
-        let mut button = if let Some(label) = self.label.as_ref() {
-            ControlButton::new(label.clone())
-        } else {
-            ControlButton::with_child(
-                self.child
-                    .clone()
-                    .unwrap_or_else(|| SizedBox::shrink().into()),
-            )
-        }
-        .style(style.clone())
-        .enabled(self.enabled)
-        .focusable_when_disabled(self.focusable_when_disabled)
-        .loading(self.loading);
+        let mut button =
+            if let (Some(icon), Some(label)) = (self.icon.as_ref(), self.label.as_ref()) {
+                ControlButton::with_icon_label(icon.clone(), label.clone())
+            } else if let Some(label) = self.label.as_ref() {
+                ControlButton::new(label.clone())
+            } else {
+                ControlButton::with_child(
+                    self.child
+                        .clone()
+                        .unwrap_or_else(|| SizedBox::shrink().into()),
+                )
+            }
+            .style(style.clone())
+            .enabled(self.enabled)
+            .focusable_when_disabled(self.focusable_when_disabled)
+            .loading(self.loading);
 
         if let Some(callback) = self.on_click.clone() {
             button = button.on_click(move || callback());

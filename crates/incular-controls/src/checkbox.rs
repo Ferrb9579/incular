@@ -3,10 +3,17 @@
 use crate::{Checkbox, ControlTheme};
 use incular_core::Color;
 use incular_widgets::{Border, BorderRadius, Widget};
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 use typed_builder::TypedBuilder;
 
 pub use incular_semantics::CheckedState;
+
+#[derive(Clone)]
+struct CheckboxGroupScope {
+    values: Rc<std::cell::RefCell<Vec<String>>>,
+    enabled: bool,
+    revision: Rc<Cell<u64>>,
+}
 
 /// Compound checkbox root. `child` is optional; when omitted the default
 /// polished Incular indicator and optional label are composed for the caller.
@@ -175,9 +182,26 @@ impl Root {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        let mut checkbox = Checkbox::new(self.state.is_checked())
-            .indeterminate(self.state == CheckedState::Indeterminate)
-            .enabled(self.enabled)
+        self.build_with_group(theme, None)
+    }
+
+    fn build_with_group(&self, theme: &ControlTheme, group: Option<CheckboxGroupScope>) -> Widget {
+        let grouped_state = group.as_ref().and_then(|group| {
+            self.label.as_ref().map(|label| {
+                if group.values.borrow().iter().any(|value| value == label) {
+                    CheckedState::Checked
+                } else if self.state == CheckedState::Indeterminate {
+                    CheckedState::Indeterminate
+                } else {
+                    CheckedState::Unchecked
+                }
+            })
+        });
+        let state = grouped_state.unwrap_or(self.state);
+        let effective_enabled = self.enabled && group.as_ref().is_none_or(|group| group.enabled);
+        let mut checkbox = Checkbox::new(state.is_checked())
+            .indeterminate(state == CheckedState::Indeterminate)
+            .enabled(effective_enabled)
             .read_only(self.read_only)
             .required(self.required);
         if let Some(color) = self.active_color {
@@ -201,7 +225,27 @@ impl Root {
         if let Some(label) = &self.label {
             checkbox = checkbox.label(label.clone());
         }
-        if let Some(callback) = self.on_change.clone() {
+        let callback = self.on_change.clone();
+        if let Some(group) = group
+            && let Some(value) = self.label.clone()
+        {
+            checkbox = checkbox.on_changed(move |next| {
+                let next: CheckedState = next.into();
+                let mut values = group.values.borrow_mut();
+                if next.is_checked() {
+                    if !values.iter().any(|current| current == &value) {
+                        values.push(value.clone());
+                    }
+                } else {
+                    values.retain(|current| current != &value);
+                }
+                drop(values);
+                group.revision.set(group.revision.get().wrapping_add(1));
+                if let Some(callback) = callback.as_ref() {
+                    callback(next);
+                }
+            });
+        } else if let Some(callback) = callback {
             checkbox = checkbox.on_changed(move |next| callback(next.into()));
         }
         if let Some(child) = self.child.clone() {
@@ -214,9 +258,22 @@ impl Root {
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
+        let initialized = Rc::new(Cell::new(false));
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
-            value.build(&theme)
+            let group = context.depend_on::<CheckboxGroupScope>();
+            if !initialized.get() {
+                if value.state.is_checked()
+                    && let (Some(group), Some(label)) = (group.as_ref(), value.label.as_ref())
+                {
+                    let mut values = group.values.borrow_mut();
+                    if !values.iter().any(|current| current == label) {
+                        values.push(label.clone());
+                    }
+                }
+                initialized.set(true);
+            }
+            value.build_with_group(&theme, group)
         }))
     }
 }
@@ -275,6 +332,8 @@ pub struct Group {
     enabled: bool,
     #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(skip))]
+    controller: crate::CompositeController,
 }
 impl Default for Group {
     fn default() -> Self {
@@ -307,11 +366,28 @@ impl Group {
     pub fn selected(&self) -> Vec<String> {
         self.values.borrow().clone()
     }
+    #[must_use]
+    pub fn navigation(&self) -> crate::CompositeController {
+        self.controller.clone()
+    }
 }
 impl From<Group> for Widget {
     fn from(value: Group) -> Self {
-        value
+        let child = value
             .child
-            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+            .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into());
+        let revision = Rc::new(Cell::new(0_u64));
+        let scope = CheckboxGroupScope {
+            values: value.values,
+            enabled: value.enabled,
+            revision: revision.clone(),
+        };
+        let controller = value.controller;
+        Widget::stateful_layout_builder(revision, move |_, _| {
+            Widget::environment_scope(
+                controller.clone(),
+                Widget::environment_scope(scope.clone(), child.clone()),
+            )
+        })
     }
 }
