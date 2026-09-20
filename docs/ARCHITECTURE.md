@@ -1,143 +1,113 @@
-# Architecture contract
+# Incular architecture
 
-This is the normative ownership and dependency contract for the pre-1.0
-consolidation campaign. `API_DESIGN.md` defines API behavior; `AGENTS.md` and
-crate READMEs summarize this contract. Historical plans and parity inventories
-are evidence, not competing architecture rules. Changes to a boundary must
-update its decision, manifest, migration note, and tests together.
+This is the single human-readable architecture contract. Public API behavior is
+defined in `../API_DESIGN.md`; the machine-checked crate graph and API classes
+live in `../specs/architecture.json`.
 
 ## Dependency direction
 
-An arrow means “uses”. Re-exporting a value does not transfer its ownership.
-
 ```text
 application -> incular facade -> runtime + widgets + optional controls/material
-material -> controls -> widgets -> domain mechanisms
-navigation -> widgets (route composition remains here until Stage G)
-native OS adapters -> desktop -> runtime + WGPU + platform
+material -> controls -> widgets -> domain crates
 runtime -> widgets + accessibility + platform
-WGPU -> rendering + image/assets + platform surface values
+native OS crates -> desktop -> runtime + wgpu + platform
+wgpu -> rendering + image/assets + platform
 accessibility -> semantics -> core
 text -> rendering + assets + config -> core
 layout -> config -> core
-rendering -> image/assets/core; image -> config/core
-animation/gestures -> core; scroll -> config/core
-DevTools transport -> runtime + protocol; desktop -> DevTools transport
+animation / gestures / scroll -> core/config
+devtools -> runtime + protocol
 ```
 
-`specs/architecture.json` records every workspace package's owner, API class,
-support evidence, and current allowed direct normal/build dependencies across
-all target conditions and optional features.
-Tests compare Cargo metadata against that allow-list, reject cycles, and
-restrict WGPU, Winit and AccessKit dependencies to their boundary crates.
-Dev dependencies are excluded so integration tests can compose layers.
-Removing an edge is allowed; adding one requires an explicit contract change.
-This is a reviewed boundary, not a generated acceptance of whatever Cargo says.
+Rules:
 
-Stage E moved Winit translation and raw access into desktop. The platform
-crate must remain free of Winit dependencies. Stage G will consolidate
-navigation state without adding `widgets -> navigation` while the reverse edge
-exists. Extract widget-independent route values into core only if needed; keep
-route composition above widgets. WGPU must never depend on desktop. No new crate
-is justified solely by file length.
+- Re-exporting a type does not transfer ownership.
+- `platform` stays free of Winit; Winit/raw-window translation belongs to
+  `desktop`.
+- `wgpu` never depends on `desktop`.
+- Material stays optional and does not own input, focus, editing, scrolling, or
+  semantics.
+- Do not add a crate just to shorten files or bypass a dependency boundary.
+- Adding a dependency edge requires updating `specs/architecture.json` and its
+  architecture tests.
 
-## Ownership and support
+## Ownership
 
-The complete package matrix is in `specs/architecture.json`; framework crates,
-the DevTools tool, and the root harness each point to their checked README
-evidence. Support describes implemented responsibility, not feature completeness
-or validation on every OS.
+- **core/config/layout** — identities, geometry, reactive primitives, shared
+  configuration values, and pure layout algorithms.
+- **assets/image/text** — font bytes, raster decoding/cache, shaping, metrics,
+  editing values, and text layout.
+- **rendering/wgpu** — display lists/compositor policy and GPU execution/resources.
+  `incular-painting` is only a compatibility re-export.
+- **semantics/accessibility** — platform-neutral semantics first; native/mobile
+  projection second.
+- **widgets** — retained neutral UI primitives and tree behavior.
+- **controls/material** — presentation and composition over existing behavioral
+  owners; custom visuals must not create a second interaction engine.
+- **runtime** — scheduling, application/window coordination, tasks, and retained
+  service ownership.
+- **platform/desktop/native** — portable contracts, shared desktop host, then
+  OS-specific implementation.
+- **devtools** — bounded diagnostics/tooling bridges; never an application-state
+  owner.
 
-- **Core/config/layout:** core owns geometry, identity and lower-level reactive
-  values. Config owns constraints, alignment, insets and shared policies. Layout
-  re-exports those same values and owns algorithms over measured sizes. Widgets
-  own retained child measurement and layout execution.
-- **Assets/image/text:** assets owns font handles and bytes today. Image owns
-  raster identities, decoding and CPU caches. Text owns font selection, shaping,
-  metrics and editing values. No generic all-resource loader is promised by assets.
-- **Rendering/painting/WGPU:** rendering owns canvas commands and compositor
-  layers. Painting is a re-export shim with no implementation. WGPU owns device
-  resources and command execution; native surfaces retain their window owner.
-- **Semantics/accessibility:** semantics owns platform-neutral nodes, roles,
-  actions and checked state. Accessibility projects them to AccessKit/mobile
-  bridges. Native adapters own screen-reader integration and host lifecycle.
-- **Widgets/controls/material:** widgets own neutral retained primitives.
-  Controls are themed Incular controls with replaceable visual slots, not a
-  headless library. Material composes them and neutral primitives. Interaction,
-  editing and semantics must have one behavioral owner per control.
-- **Runtime/platform/desktop/native:** runtime schedules UI work. Platform owns
-  portable native contracts. Desktop owns Winit translation and host coordination.
-  OS crates implement native services. Android/iOS currently provide semantic
-  adapters, not complete standalone application hosts.
+## Non-negotiable design rules
+
+1. **One reactive dependency engine.** Runtime schedules work; widgets identify
+   consumers. Do not create parallel signal/invalidation systems.
+2. **One desktop host.** Single- and multi-window entry points use the same event
+   loop, input path, rendering path, and teardown rules.
+3. **Portable native contracts.** Public/runtime APIs use Incular types; Winit,
+   raw handles, AppKit/Win32/X11/Wayland details stay at backend boundaries.
+4. **One native-request lifecycle.** Admission, completion, cancellation,
+   shutdown, stale-generation handling, and unsupported results are typed and
+   observable.
+5. **One behavioral owner.** Replacing presentation must not replace focus,
+   activation, editing, scrolling, selection, or semantic ownership.
+6. **One invalidation vocabulary.** Build/layout/paint/composite/semantics/hit-test
+   work is driven by one authoritative property-change contract.
+7. **Caches have real owners and bounds.** A local cache drop must not claim a
+   shared GPU resource was freed. Lifetime, budget, eviction, and in-flight use
+   belong to the actual owner.
+8. **Rust semantics beat superficial Flutter parity.** Flutter is a reference
+   vocabulary, not Incular's dependency graph or a requirement to reproduce Dart
+   lifecycle/API structure.
 
 ## API classes
 
-Every exported type, function and generated builder inherits its crate's
-`default_api_class` in the matrix, with the longest matching public-path override
-in `api_overrides` taking precedence. This covers new exports, enum variants and
-associated members without treating missing inventory entries as permission.
-Re-exports inherit the defining API's class; facade and prelude paths never
-promote a bridge to an application API. An explicit alias override may narrow
-support but cannot broaden the original contract.
+- **application** — supported app-facing composition, values, and controllers.
+- **backend** — renderer/platform/native integration; lifetime/thread/identity
+  invariants must be explicit.
+- **bridge** — cross-crate implementation transport; no application compatibility
+  promise.
 
-| Class | Consumers and obligation |
-| --- | --- |
-| application | Supported application composition, values and controllers; public changes require a migration note and behavioral coverage. |
-| backend | Renderer, platform, custom rendering and diagnostic integrations; document thread, identity, lifetime and completion invariants. |
-| bridge | Cross-crate implementation transport; coordinate all workspace consumers when changed. It has no application compatibility promise. |
+Re-exports keep the defining API's class. `#[doc(hidden)] pub` is still public
+Rust API; use `pub(crate)` when external visibility is unnecessary.
 
-`#[doc(hidden)] pub` remains callable Rust API. Hiding rustdoc is not access
-control. Keep bridges narrow, prefer `pub(crate)` when consumers permit it, and
-do not use them in new application examples. Existing exceptions and duplicate
-paths are tracked in [API migration inventory](API_MIGRATIONS.md).
+## Mutation and lifetime rules
 
-## Mutation outcome and ownership contract
+- Builders/public value fields configure values; they do not mutate an already
+  mounted tree.
+- Signals/controllers mutate their authoritative owner and define equality,
+  notification order, and reentrancy.
+- Registrations/tasks are owned by a scope or returned token and clean up on
+  drop/unmount/shutdown as documented.
+- Native async operations distinguish queued, applied, unsupported, cancelled,
+  stopped, stale, and failed outcomes. Do not collapse them into one boolean.
+- Never hold mutable domain state across user callbacks; revalidate state after
+  reentrant callbacks before committing an outer operation.
+- Backend/frame/cache failures are typed runtime failures; invariant violations
+  are programmer errors with a stated invariant.
 
-Every public mutation, including generated setters and public fields, falls
-under one of these contracts. Type-specific rustdoc must state deviations;
-known incomplete implementations are listed in the migration inventory rather
-than described as already corrected.
+## Compatibility and support
 
-| Mutation family | Owner and observable outcome | Failure, lifetime and cancellation |
-| --- | --- | --- |
-| Descriptor builder / public value field | Caller owns a local value. Returning `Self` configures the next description; it does not schedule a frame or mutate an already mounted tree. | Document normalization. Validated values must funnel through checked construction; existing writable invariant fields migrate in G. |
-| Signal / controller `set`, `update`, edit, focus | Retained owner holds state; a successful write updates that state and its defined observers. Unit return means completion of a synchronous state change, not native success. | UI-thread affinity unless explicitly Send/Sync. Define equality, reentrancy and notification order; unify subscription cleanup in C/G. |
-| Registration / listener / task | Scope or returned token owns registration and cleanup. Numeric manual listener IDs are legacy explicit ownership, requiring removal by that owner. | Specify unmount/drop behavior. Task cancellation must resolve or drop its owned completion; no silent orphan. Migration C/D. |
-| Native request / async operation | Typed request and result belong to the originating application/window generation. Completion is distinct from queue admission. | Unsupported, cancelled, stopped, stale and backend failures have typed outcomes; document whether dropping the future cancels native work. Shared lifecycle and domain cancellation rules are defined in [Native requests](NATIVE_REQUESTS.md). |
-| Route / collection operation | Owning navigator or collection serializes mutation; returned Option/enum identifies applied, absent or blocked work. | Revalidate after external callbacks. Stage A defines reentrant guarded navigation. Never hold mutable state across user callbacks. |
-| Backend tree / frame / cache mutation | Host owns thread, device and tree lifetime. Invalidation identifies affected phases; resource release follows the actual cache owner. | Return typed runtime failures. Invariant assertions are programmer errors with a stated invariant. H completes reclamation and device failure policy. |
+- Keep only one implementation per concept; aliases/re-exports may exist when
+  they preserve identical semantics.
+- Unsupported platform behavior must be explicit rather than silently faked.
+- Android/iOS support remains limited to the implemented adapters unless a full
+  host exists.
+- `incular-macros` is intentionally empty until a concrete macro requirement
+  exists.
 
-Do not add a success boolean that conflates “queued”, “applied”, “unsupported”
-and “failed”. A boolean is appropriate for a genuinely binary observation or
-policy, such as enabled state. Do not replace every boolean with an enum.
-
-## Compatibility
-
-Flutter is a pinned reference inventory, not Incular's dependency graph or a
-promise to implement every Dart member. Existing implemented behavior remains
-protected by tests. Signals, explicit contexts, owned values and futures are
-intentional Rust decisions. Keep Material out of the base prelude.
-
-Every audited member has an explicit status: implemented, rustified, merged,
-internal, deferred, or deliberately omitted. Non-implemented rows need a reason;
-deferred rows need an owner and prerequisite; changed implemented claims need a
-decision and evidence. Unreviewed rows cannot be labeled implemented to satisfy
-a percentage gate. Existing manifests retain their documented status spellings.
-The member manifest gate accepts these outcomes and rejects missing/unknown
-states. Stage I revalidates the historical claims against behavior.
-
-New Widgets root names may be in the pinned graph or have a reviewed Incular
-extension entry in `specs/widgets_api_extensions.json`. Such entries require
-an owner, reason and real test evidence. The neutral/style and private retained
-taxonomy guards still apply. Namespace admission is not evidence of behavior.
-The initial ledger records 163 existing names in 19 responsibility families.
-The previous string-based guard skipped these exports; the replacement parses
-Rust visibility, grouped imports and aliases before comparing the inventory.
-
-## Decisions
-
-The eight accepted decisions and their implementation/removal conditions are
-recorded in [Architecture decisions](ARCHITECTURE_DECISIONS.md).
-
-The desktop host implementation and native ownership boundaries are documented
-in [Desktop host ownership](DESKTOP_HOST.md).
+Historical plans, audits, migration notes, and completion reports belong in Git
+history, not in the active documentation set.

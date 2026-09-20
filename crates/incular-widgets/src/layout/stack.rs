@@ -8,9 +8,8 @@ use crate::{Widget, WidgetKind};
 /// Overlays children in paint order with alignment, sizing fit, and clipping.
 ///
 /// Alignment factors are absolute (left/right, not start/end), so the
-/// stack needs no text direction. The removed `text_direction` option
-/// never influenced layout; see `docs/API_MIGRATIONS.md` for the
-/// migration to absolute alignments or a directional wrapper.
+/// stack needs no text direction. Use absolute alignment or resolve a
+/// directional alignment before constructing the stack.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Stack {
     #[builder(default, setter(into))]

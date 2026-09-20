@@ -2,9 +2,8 @@
 
 ## Crate responsibilities
 
-Follow [the architecture contract](docs/ARCHITECTURE.md), its API classes and
-[accepted decisions](docs/ARCHITECTURE_DECISIONS.md). Historical parity plans do
-not override these boundaries. The tested dependency allow-list and complete
+Follow [the architecture contract](docs/ARCHITECTURE.md) and its API classes.
+Historical parity plans do not override these boundaries. The tested dependency allow-list and complete
 support matrix are in `specs/architecture.json`.
 
 - `incular`: Feature-controlled public facade and application preludes.

@@ -136,8 +136,7 @@ dependency, API-class and mutation-outcome policy. All 30 crate READMEs carry
 support rows from `specs/architecture.json`. Re-exports inherit their original
 owner and API class; `doc(hidden)` does not enforce Rust privacy.
 
-[Accepted decisions](docs/ARCHITECTURE_DECISIONS.md) define the staged target;
-[API migration inventory](docs/API_MIGRATIONS.md) names existing exceptions and
-removal conditions. New public APIs must document state ownership, observable
+The architecture contract also contains the accepted ownership/lifetime rules.
+New public APIs must document state ownership, observable
 outcome, invalidation, failures and cancellation according to their mutation
 family. Existing incomplete contracts remain tracked debt until implemented.

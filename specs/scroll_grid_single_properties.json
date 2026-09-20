@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "family": "ScrollGridSingle",
-  "scope": "Second scrolling group: single-child scrolling, grids, and animated lists (SingleChildScrollView, GridView with SliverGridDelegate, AnimatedList, AnimatedGrid, animated collection controller). Viewport clipping attaches unconditionally, so the removed per-view clip overrides are recorded in docs/API_MIGRATIONS.md, not here. Animated scroll positions stay internal; only structure controllers attach externally. Pages, sliver-only animated/reorderable lists, two-dimensional views, scrollbars, and physics internals belong to later groups. Single- versus multiple-viewport attachment stays a W5 gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "scope": "Single-child scrolling, grids, and animated lists. Viewport clipping follows the shared viewport contract; animated scroll positions stay internal while structure controllers attach externally. This ledger covers only this family.",
   "allowed_phases": [
     "layout",
     "paint",

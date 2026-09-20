@@ -8,8 +8,8 @@
 | API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
 | Support | Curated behavior; internal bridge is not an application API. |
 
-Visibility preservation options, offstage measurement, retained focus, and
-animation muting are specified in [Visibility behavior](../../docs/VISIBILITY.md).
+Visibility preservation, offstage measurement, retained focus, and animation
+muting are part of the retained widget contract and are covered by widget tests.
 
 ## Frame recursion diagnostics
 

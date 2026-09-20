@@ -166,9 +166,6 @@ application default but resolve through the owning `BuildContext`.
 
 ## Derived values and asynchronous reactive work
 
-See [reactive state and ownership](../../docs/REACTIVITY.md) for the shared
-engine, controller observation, disposal, and migration contracts.
-
 `Memo<T>` is the opt-in graph path for an expensive or shared derived value. It
 is created like a `Signal`, without a `BuildContext`, and attaches lazily when
 its `get` method is first read by a builder. Its computation tracks signals and

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "family": "ScrollViewportLists",
-  "scope": "Initial scrolling group: viewport configuration and ordinary list scrolling (Scrollable, Viewport, CustomScrollView, ListView, SliverList, restored ScrollController attachment). Offset ownership stays with ScrollController in incular-scroll; retained layout stays in Widgets. Grids, pages, animated lists, two-dimensional views, scrollbars, and physics internals belong to later groups. Removed dead options are recorded in docs/API_MIGRATIONS.md, not here: Scrollable::axis_direction never reached layout, and ListView/CustomScrollView clip overrides never reached paint (viewport clipping is unconditional). Viewport pins cache_extent to zero and exposes no reverse by design; CustomScrollView covers both. Single- versus multiple-viewport controller attachment is unenforced and stays a W5 attachment-policy gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "scope": "Viewport configuration and ordinary list scrolling. ScrollController owns offset state; Widgets owns retained layout. Viewport clipping follows the shared viewport contract. This ledger covers only this family.",
   "allowed_phases": [
     "layout",
     "paint",

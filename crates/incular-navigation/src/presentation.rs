@@ -61,8 +61,7 @@ pub enum RoutePresentation {
     /// A modal presentation that isolates background input.
     ///
     /// Focus containment was removed: the `focus_trap` flag promised modal
-    /// focus trapping that no traversal or dispatch path implemented (see
-    /// `docs/API_MIGRATIONS.md`). Modal routes still block background input
+    /// focus trapping that no traversal or dispatch path implemented. Modal routes still block background input
     /// through the barrier; constraining traversal to the modal subtree is
     /// future work with no accepted no-op standing in for it.
     Modal { barrier: ModalBarrier },

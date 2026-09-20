@@ -31,8 +31,8 @@ focused changes with clear tests are especially valuable.
    policy changes, also run `cargo deny check -W unmaintained` and
    `cargo machete --with-metadata`.
 
-   See [`docs/QUALITY.md`](docs/QUALITY.md) for the supported toolchain/MSRV,
-   unsafe policy, dependency policy, and validation matrix.
+   Repository validation and ownership rules are summarized in
+   [`AGENTS.md`](AGENTS.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Keep renderer-independent APIs out of `incular-wgpu`, keep platform-specific
 code in its platform crate, and avoid dependency cycles. Prefer explicit error
