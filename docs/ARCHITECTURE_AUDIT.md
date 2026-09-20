@@ -4,7 +4,7 @@ Date: 2026-09-05. Baseline: `0ba7058`. Working tree was clean before this audit.
 
 This is a repository-wide architecture review with targeted source tracing, not a claim that every function is correct. All workspace manifests and the fourteen campaign plans were inventoried; the implementation paths cited below were inspected. Findings marked **confirmed** follow directly from source. Items marked **audit** require a reproducer, measurement, or native-platform verification before being treated as defects. No production implementation was changed.
 
-The implementation plan is [plan-14.md](../plan-14.md).
+The remediation plan that followed this audit has been completed and removed; this file remains a historical baseline.
 
 ## Assessment
 
@@ -202,7 +202,7 @@ Validation is recorded after the audit and plan are written. Native interactive 
 - `cargo check --workspace`: passed.
 - `cargo test-constrained`: passed; 1,038 passed, 0 failed, 0 ignored across 233 harness summaries, including doctests. This count does not establish live-native coverage; tests can gate native work internally.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
-- `git diff --check`: passed for tracked changes; the only additions are this audit and `plan-14.md`.
+- `git diff --check`: passed for tracked changes; the only additions were this audit and the now-completed remediation plan.
 
 No interactive native smoke tests, macOS/Linux-host builds, mobile-target builds, MSRV run, benchmark run, Miri, dependency advisory scan, or separate warning-denied rustdoc build were performed. The Windows workspace baseline passing does not invalidate the source-level findings above.
 

@@ -1,7 +1,7 @@
 # Whole-codebase audit — current baseline
 
 Baseline: `42befb7`, 2026-09-06. Implementation is unchanged by this audit.
-Execution plan: [plan-15.md](../plan-15.md). Full file inventory:
+The execution plan that followed this audit has been completed and removed. Full file inventory:
 [CODEBASE_INVENTORY.json](CODEBASE_INVENTORY.json).
 
 ## Scope and evidence
@@ -24,7 +24,7 @@ reproduced by running new tests in this planning pass.
 
 ## Preserve completed work
 
-Plan 14 A–E and its first F slice are committed. Preserve owned GPU surface
+The earlier architecture-consolidation work and its first retained-primitives slice were committed. Preserve owned GPU surface
 targets; complete retained visibility policy; explicit clipboard failure; shared
 native request admission/completion; checkbox mixed semantics; guarded navigator
 pop callbacks; one lower-level dependency engine; scoped subscriptions; one
@@ -193,7 +193,7 @@ This is a source risk requiring tests, not a claim that every callback panics.
 Paths below are relative to `crates/` unless prefixed `tools/`. Entry points and
 hotspots were reviewed by targeted reads; the inventory records all remaining
 files for implementation-time option/ownership tracing. W identifiers refer to
-plan 15. A preserve disposition deliberately avoids gratuitous rewrites.
+the completed remediation campaign. A preserve disposition deliberately avoids gratuitous rewrites.
 
 | Crate | Evidence / scope | Disposition and verification |
 | --- | --- | --- |
@@ -242,7 +242,7 @@ plan 15. A preserve disposition deliberately avoids gratuitous rewrites.
 | Plans 04–06 | Pointer chords/capture/cancel, popup ownership/placement/focus/semantics across native surfaces |
 | Plans 07–09 | Menu generations/shortcut once-only dispatch; typed transfer negotiation; asynchronous dialogs and parent-close cancellation |
 | Plans 10–13 | Native environment/reduced motion, activation/deep-link once-only delivery, shell-resource lifetime and normalized advanced pointer metadata |
-| Plan 14 | Keep committed A–E/F-first-slice fixes; use plan 15 as the expanded remaining-work schedule |
+| Historical architecture plan | Keep the committed architecture fixes; the expanded remediation schedule is complete and removed |
 
 ## Validation evidence and limits
 
@@ -250,7 +250,7 @@ Previous implementation validation at this unchanged code baseline passed both
 workspace configurations (1,112 tests each), strict all-target/all-feature
 Clippy, formatting and warning-denied rustdoc. This audit does not relabel those
 as newly run tests. Only documentation/inventory changes are planned here.
-Current-pass checks and their results are recorded in plan 15. No native Linux,
+Current-pass checks and their results are preserved in the completion reports and repository history. No native Linux,
 macOS, Android or iOS behavior was exercised in this audit; no MSRV or new
 advisory scan is claimed. A green existing suite is not proof against the newly
 identified uncovered behavior.

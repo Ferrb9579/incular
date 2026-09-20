@@ -54,7 +54,7 @@ reentry, but lack notification-time read/mutate/unsubscribe tests and actual
 DevTools request/session lifetime tests. Token-format tests are not transport
 correctness tests. Add behavioral regressions, not source-spelling assertions.
 
-Plan 15 W3/W5/W7 remains the authority for unfinished property ledgers,
+The later remediation campaign became the authority for the property-ledger,
 scroll/animation attachment and presentation-owner work. Wide descriptor-to-phase
 fan-out remains a maintainability risk; this pass establishes no new geometry
 or scroll performance defect. Preserve operation-count contracts and investigate
@@ -66,9 +66,7 @@ deletion or ABI policy is justified by this audit alone.
 
 ## Ordered execution
 
-Plans 17, 18, 20 and 21 specialize remaining W6/W9 work without replacing plan 15.
-Each plan is independently complete only after reproduction, migration, focused
-tests, ordinary workspace validation, diff review and its own commit.
+The follow-up focused plans were incorporated into the completed remediation campaign.
 
 Baseline validation: `cargo fmt --all -- --check` and `cargo check --workspace`
 passed on Windows. Further validation belongs to each plan's completion record.
@@ -80,7 +78,7 @@ expanded highlight tests now pass. The default and all-feature workspace runs
 each report 1,429 passed, zero failed and zero ignored. Formatting, workspace
 check, strict Clippy and warning-denied rustdoc also pass on Windows.
 
-Plans 17, 18, 20 and 21 are recorded, not implemented by this slice. Q02-Q06 remain source
-findings awaiting their focused reproductions/fixes; Q07 remains native lifetime
-work. This completion does not close plan 15 W6/W9 or certify
+At the time of this audit, Q02-Q06 still awaited focused reproductions/fixes and Q07
+remained native lifetime work. Those follow-up items were later incorporated into
+the completed remediation campaign; this historical audit itself does not certify
 open-source readiness across all hosts and feature/MSRV combinations.
