@@ -3,7 +3,10 @@ use std::path::Path;
 
 #[test]
 fn test_code_is_kept_under_tests_directories() {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("incular crate lives under <repo>/crates/incular");
     let mut violations = Vec::new();
 
     for root in ["crates", "tools", "examples"] {

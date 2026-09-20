@@ -7,11 +7,8 @@
 //! on a particular renderer or widget representation.
 
 mod algorithms;
-mod alignment;
-mod constraints;
 mod descriptors;
 mod geometry;
-mod insets;
 
 pub use algorithms::{
     AlignmentChild, BaselineChild, FlexChild, StackChild, StackPosition, TableChild, WrapChild,
@@ -20,19 +17,17 @@ pub use algorithms::{
     layout_table, layout_unconstrained_box, layout_wrap, positioned_axis_size,
     round_intrinsic_step,
 };
-pub use alignment::{
-    Alignment, AlignmentDirectional, Axis, AxisDirection, CrossAxisAlignment, FlexFit,
-    MainAxisAlignment, MainAxisSize, TextDirection, VerticalDirection, WrapAlignment,
-    WrapCrossAlignment,
-};
-pub use constraints::{ConstraintError, Constraints};
 pub use descriptors::{
     Align, AspectRatio, Baseline, BaselineType, Center, Clip, Column, ConstrainedBox, Flex,
     FractionallySizedBox, LayoutOptions, Offstage, Padding, Positioned, Row, SizedBox, Stack,
     StackFit, Table, UnconstrainedBox, Visibility, Wrap,
 };
 pub use geometry::{ChildLayout, LayoutResult};
-pub use insets::EdgeInsets;
+pub use incular_config::{
+    Alignment, AlignmentDirectional, Axis, AxisDirection, ConstraintError, Constraints,
+    CrossAxisAlignment, EdgeInsets, FlexFit, MainAxisAlignment, MainAxisSize, TextDirection,
+    VerticalDirection, WrapAlignment, WrapCrossAlignment,
+};
 
 // Re-exporting the small geometry values makes the layout API convenient while
 // retaining `incular-core` as their canonical owner.

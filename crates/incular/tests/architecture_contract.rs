@@ -1,9 +1,22 @@
 //! Validate the reviewed architecture against Cargo's complete target graph.
 use serde_json::Value;
-use std::{collections::BTreeMap, fs, path::Path, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("incular crate lives under <repo>/crates/incular")
+        .to_path_buf()
+}
 
 fn contract() -> Value {
-    serde_json::from_str(include_str!("../specs/architecture.json")).unwrap()
+    serde_json::from_str(include_str!("../../../specs/architecture.json")).unwrap()
 }
 
 fn check_edges(policy: &Value, metadata: &Value) -> Result<(), String> {
@@ -78,7 +91,7 @@ fn cargo_dependencies_respect_reviewed_boundaries() {
             "1",
             "--offline",
         ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .current_dir(repository_root())
         .output()
         .unwrap();
     assert!(
@@ -92,7 +105,7 @@ fn cargo_dependencies_respect_reviewed_boundaries() {
 
 #[test]
 fn every_workspace_package_has_one_documented_owner_api_class_and_evidence() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = repository_root();
     let policy = contract();
     assert_eq!(policy["schema_version"], 2);
     let rows = policy["packages"].as_array().unwrap();
@@ -104,7 +117,7 @@ fn every_workspace_package_has_one_documented_owner_api_class_and_evidence() {
             "1",
             "--offline",
         ])
-        .current_dir(root)
+        .current_dir(&root)
         .output()
         .unwrap();
     assert!(
@@ -222,13 +235,7 @@ fn boundary_guard_rejects_reverse_optional_native_and_cyclic_edges() {
 }
 
 #[test]
-fn painting_stays_a_pure_type_identical_reexport() {
-    let source = include_str!("../crates/incular-painting/src/lib.rs");
-    let code = source
-        .lines()
-        .filter(|line| !line.trim().starts_with("//") && !line.trim().is_empty())
-        .collect::<Vec<_>>();
-    assert_eq!(code, ["pub use incular_rendering::*;"]);
+fn painting_facade_is_type_identical_to_rendering() {
     fn canonical(value: incular::painting::DisplayList) -> incular::rendering::DisplayList {
         value
     }
@@ -249,7 +256,7 @@ fn portable_runtime_and_widgets_do_not_pull_in_winit() {
                 "--prefix",
                 "none",
             ])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .current_dir(repository_root())
             .output()
             .unwrap();
         assert!(

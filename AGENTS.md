@@ -23,10 +23,8 @@ support matrix are in `specs/architecture.json`.
 - `incular-layout`: Layout algorithms over measured sizes; config values are exact re-exports.
 - `incular-linux`: Linux desktop entry and native services over the shared desktop host.
 - `incular-macos`: macOS desktop entry and native services over the shared desktop host.
-- `incular-macros`: Reserved procedural-macro boundary for future framework composition helpers.
 - `incular-material`: Material presentation composed from controls and neutral widgets.
 - `incular-navigation`: Application route stacks, routing, restoration and route composition.
-- `incular-painting`: Pure compatibility re-export of incular-rendering.
 - `incular-platform`: Portable native IDs, events, capabilities, commands, metrics and errors.
 - `incular-rendering`: Renderer-neutral commands, paths, canvas and retained compositor layers.
 - `incular-runtime`: Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination.
@@ -37,7 +35,6 @@ support matrix are in `specs/architecture.json`.
 - `incular-widgets`: Neutral widget composition and retained build/layout/paint/input/semantics.
 - `incular-windows`: Windows desktop entry and native services over the shared desktop host.
 - `incular-devtools-ui`: Standalone desktop DevTools application over the public facade and diagnostics protocol.
-- `incular-workspace-tests`: Repository integration-test harness and architecture/parity policy owner.
 
 ## Structure rules
 

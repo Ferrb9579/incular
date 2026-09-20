@@ -260,10 +260,8 @@
         "incular-layout",
         "incular-linux",
         "incular-macos",
-        "incular-macros",
         "incular-material",
         "incular-navigation",
-        "incular-painting",
         "incular-platform",
         "incular-rendering",
         "incular-runtime",
@@ -474,15 +472,6 @@
       "evidence": "crates/incular-macos/README.md"
     },
     {
-      "name": "incular-macros",
-      "default_api_class": "application",
-      "owner": "Reserved procedural-macro boundary for future framework composition helpers.",
-      "support": "Scaffolded only; this crate intentionally exports no procedural macros yet.",
-      "allowed_dependencies": [],
-      "path": "crates/incular-macros",
-      "evidence": "crates/incular-macros/README.md"
-    },
-    {
       "name": "incular-material",
       "default_api_class": "application",
       "owner": "Material presentation composed from controls and neutral widgets.",
@@ -511,17 +500,6 @@
       ],
       "path": "crates/incular-navigation",
       "evidence": "crates/incular-navigation/README.md"
-    },
-    {
-      "name": "incular-painting",
-      "default_api_class": "backend",
-      "owner": "Pure compatibility re-export of incular-rendering.",
-      "support": "Transition shim; removal condition B08 / Stage J.",
-      "allowed_dependencies": [
-        "incular-rendering"
-      ],
-      "path": "crates/incular-painting",
-      "evidence": "crates/incular-painting/README.md"
     },
     {
       "name": "incular-platform",
@@ -670,15 +648,6 @@
         "incular",
         "incular-devtools-protocol"
       ]
-    },
-    {
-      "name": "incular-workspace-tests",
-      "path": ".",
-      "evidence": "README.md",
-      "default_api_class": "bridge",
-      "owner": "Repository integration-test harness and architecture/parity policy owner.",
-      "support": "Internal workspace harness; not published and not part of the framework API.",
-      "allowed_dependencies": []
     }
   ]
 }

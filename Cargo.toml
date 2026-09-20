@@ -2,24 +2,6 @@
 members = ["crates/*", "tools/*"]
 resolver = "3"
 
-[package]
-name = "incular-workspace-tests"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-description = "Integration-test harness for the Incular workspace"
-publish = false
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-autoexamples = false
-
-[lints]
-workspace = true
-
-[lib]
-path = "src/lib.rs"
-
 [profile.dev]
 incremental = false
 
@@ -31,11 +13,6 @@ incremental = false
 
 [profile.bench]
 incremental = false
-
-[dev-dependencies]
-incular = { path = "crates/incular", version = "0.1.0", default-features = false, features = ["material"] }
-serde_json = { workspace = true }
-syn = { version = "2.0", features = ["full"] }
 
 [workspace.package]
 version = "0.1.0"
@@ -67,13 +44,11 @@ incular-gestures = { path = "crates/incular-gestures", version = "0.1.0" }
 incular-layout = { path = "crates/incular-layout", version = "0.1.0" }
 incular-navigation = { path = "crates/incular-navigation", version = "0.1.0" }
 incular-scroll = { path = "crates/incular-scroll", version = "0.1.0" }
-incular-macros = { path = "crates/incular-macros", version = "0.1.0" }
 incular-material = { path = "crates/incular-material", version = "0.1.0" }
 incular-ios = { path = "crates/incular-ios", version = "0.1.0" }
 incular-desktop = { path = "crates/incular-desktop", version = "0.1.0" }
 incular-linux = { path = "crates/incular-linux", version = "0.1.0" }
 incular-macos = { path = "crates/incular-macos", version = "0.1.0" }
-incular-painting = { path = "crates/incular-painting", version = "0.1.0" }
 incular-rendering = { path = "crates/incular-rendering", version = "0.1.0" }
 incular-platform = { path = "crates/incular-platform", version = "0.1.0" }
 incular-runtime = { path = "crates/incular-runtime", version = "0.1.0" }

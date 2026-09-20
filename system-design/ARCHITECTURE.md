@@ -98,9 +98,10 @@ Rust API; prefer `pub(crate)` when external visibility is unnecessary.
   when semantics and ownership are identical.
 - Unsupported platform behavior must be explicit; never fabricate success.
 - Material remains optional.
-- `incular-painting` is a compatibility re-export of rendering, not a second
-  paint system.
-- `incular-macros` remains empty until a concrete macro requirement exists.
+- `incular::painting` is an application-facing alias of `incular-rendering`; it
+  does not require a separate compatibility crate.
+- Do not reserve empty crates for hypothetical future features. Add a crate only
+  when a concrete ownership boundary exists.
 
 Any new dependency edge must update `../specs/architecture.json` and pass the
 architecture contract tests.

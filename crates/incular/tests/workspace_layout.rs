@@ -2,7 +2,10 @@ use std::path::Path;
 
 #[test]
 fn canonical_examples_are_grouped_in_their_own_directories() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("incular crate lives under <repo>/crates/incular");
     assert!(root.join("examples/counter/main.rs").is_file());
     assert!(
         root.join("examples/counter/tests/example_tests.rs")

@@ -13,11 +13,10 @@ pub use incular_core as core;
 pub use incular_gestures as gestures;
 pub use incular_image as image;
 pub use incular_layout as layout;
-pub use incular_macros as macros;
 #[cfg(feature = "material")]
 pub use incular_material as material;
 pub use incular_navigation as navigation;
-pub use incular_painting as painting;
+pub use incular_rendering as painting;
 pub use incular_rendering as rendering;
 pub use incular_runtime as runtime;
 pub use incular_semantics as semantics;

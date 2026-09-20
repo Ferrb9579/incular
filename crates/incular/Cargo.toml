@@ -287,8 +287,6 @@ incular-gestures = { workspace = true }
 incular-layout = { workspace = true }
 incular-navigation = { workspace = true }
 incular-scroll = { workspace = true }
-incular-macros = { workspace = true }
-incular-painting = { workspace = true }
 incular-rendering = { workspace = true }
 incular-platform = { workspace = true, optional = true }
 incular-runtime = { workspace = true }

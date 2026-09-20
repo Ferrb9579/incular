@@ -1957,10 +1957,8 @@ dependencies = [
  "incular-layout",
  "incular-linux",
  "incular-macos",
- "incular-macros",
  "incular-material",
  "incular-navigation",
- "incular-painting",
  "incular-platform",
  "incular-rendering",
  "incular-runtime",
@@ -2180,10 +2178,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "incular-macros"
-version = "0.1.0"
-
-[[package]]
 name = "incular-material"
 version = "0.1.0"
 dependencies = [
@@ -2208,13 +2202,6 @@ dependencies = [
  "serde",
  "serde_json",
  "typed-builder",
-]
-
-[[package]]
-name = "incular-painting"
-version = "0.1.0"
-dependencies = [
- "incular-rendering",
 ]
 
 [[package]]
@@ -2361,15 +2348,6 @@ dependencies = [
  "windows 0.58.0",
  "windows-sys 0.52.0",
  "winit",
-]
-
-[[package]]
-name = "incular-workspace-tests"
-version = "0.1.0"
-dependencies = [
- "incular",
- "serde_json",
- "syn 2.0.119",
 ]
 
 [[package]]

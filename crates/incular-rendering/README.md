@@ -19,9 +19,8 @@ uses Kurbo affine composition/inversion while retaining Incular's `f32`
 `Offset` and `Rect` values at the public layout boundary.
 
 Backends such as `incular-wgpu` consume these values and remain responsible for
-physical DPI conversion, resource allocation, and submission. The legacy
-`incular-painting` crate re-exports this API so existing applications retain a
-stable import path while new integrations should depend on this crate directly.
+physical DPI conversion, resource allocation, and submission. The public facade
+also exposes this crate as `incular::painting` for application-facing naming.
 
 Display lists can also carry balanced `SurfacePartitionId` markers. They are
 renderer-neutral no-ops during ordinary in-view rendering, but a multi-surface
