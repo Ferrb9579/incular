@@ -3,12 +3,9 @@
 Start with the [architecture contract](ARCHITECTURE.md),
 [accepted decisions](ARCHITECTURE_DECISIONS.md),
 [API migration inventory](API_MIGRATIONS.md), and [quality policy](QUALITY.md).
-The [original audit](ARCHITECTURE_AUDIT.md) and later quality audits are historical baselines.
-W7's executed result is in the [completion report](W7_COMPLETION_REPORT.md), with public migration notes in
-[W7 API migrations](W7_API_MIGRATIONS.md).
-
-W9's executed result is in the [W9 completion report](W9_COMPLETION_REPORT.md),
-with externally observable changes in [W9 API migrations](W9_API_MIGRATIONS.md).
+Historical audits, workstream plans, and completion reports were removed after
+their durable contracts and migration notes were consolidated into the current
+documentation and Git history.
 
 The phase notes below describe existing implementation, including migration
 seams; they do not override the architecture contract.

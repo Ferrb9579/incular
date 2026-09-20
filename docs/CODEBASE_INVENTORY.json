@@ -1,7 +1,7 @@
 {
   "baseline": "42befb7",
   "date": "2026-09-06",
-  "scope": "Complete file inventory; indexed does not mean every line or option has been behaviorally verified. Source review evidence is in WHOLE_CODEBASE_AUDIT.md.",
+  "scope": "Complete file inventory; indexed does not mean every line or option has been behaviorally verified. Historical review evidence is retained in Git history; current contracts live in docs/.",
   "crates_and_tools": [
     {
       "root": "crates/incular",
