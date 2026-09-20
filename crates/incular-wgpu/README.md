@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Owned native surfaces, GPU resources and execution of rendering commands. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Available WGPU backend; shared reclamation and device recovery improve in H. |
 
 `SharedGpuContext` owns an application's one `wgpu` instance, adapter, device,

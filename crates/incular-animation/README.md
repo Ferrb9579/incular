@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Curves, interpolation, tweens and animation physics. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Available; interruption contracts consolidate in G. |
 
 Renderer- and platform-independent animation primitives, including durations,

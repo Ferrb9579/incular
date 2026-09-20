@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Material presentation composed from controls and neutral widgets. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Curated subset; parity manifests record omissions. |
 
 Material-style components for Incular.
@@ -70,16 +70,6 @@ Use `incular_material::prelude` for the common application surface or
 vocabulary in one place. The module re-exports dialogs, menus, drawers,
 popups, sliders, tabs, progress, scroll areas, toggles, toolbars, and feedback
 alongside the Flutter-named text and button components.
-
-## Flutter 3.47.1 parity audit
-
-The pinned export graph and evidence live in
-`specs/flutter_material_3471_parity.jsonl`. Task 25's generated P0 projection
-is `specs/P0_MATERIAL_3471.jsonl`, with counts in
-`specs/P0_MATERIAL_3471_SUMMARY.json`; regenerate both with
-`python3 tools/generate_material_p0.py`. The generated status fields keep
-deferred platform, localization, and renderer-specific behavior explicit
-instead of presenting a type-only port as complete.
 
 For a visual smoke test of the public API run under the repository's low-memory
 serial build policy:

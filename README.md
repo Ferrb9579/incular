@@ -29,7 +29,7 @@ Material components, runtime scheduling, text, scrolling, accessibility,
 platform integration, and the `wgpu` backend. Each crate README documents its
 ownership boundary and supported surface.
 
-The [architecture contract](docs/ARCHITECTURE.md) defines the current direction.
+The [architecture contract](system-design/ARCHITECTURE.md) defines the current direction.
 Flutter manifests are compatibility inventories; Incular's Rust ownership and
 behavior contracts determine implementation boundaries.
 

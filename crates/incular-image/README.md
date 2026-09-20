@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Raster image identities, decoding and CPU image caches. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Available; CPU cache budgets, eviction, and release are implemented. Shared GPU eviction stays in W2. |
 
 Renderer-neutral raster image resources for Incular. This crate owns immutable

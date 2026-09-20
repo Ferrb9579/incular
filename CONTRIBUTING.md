@@ -32,7 +32,7 @@ focused changes with clear tests are especially valuable.
    `cargo machete --with-metadata`.
 
    Repository validation and ownership rules are summarized in
-   [`AGENTS.md`](AGENTS.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+   [`AGENTS.md`](AGENTS.md) and [`system-design/ARCHITECTURE.md`](system-design/ARCHITECTURE.md).
 
 Keep renderer-independent APIs out of `incular-wgpu`, keep platform-specific
 code in its platform crate, and avoid dependency cycles. Prefer explicit error

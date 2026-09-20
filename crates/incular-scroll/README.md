@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Scroll controllers, physics, metrics, extent indexing and geometry. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Available; lifecycle and interruption contracts consolidate in G. |
 
 Reusable, widget-independent scroll state for Incular.

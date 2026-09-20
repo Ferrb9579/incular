@@ -2,7 +2,7 @@
 
 ## Crate responsibilities
 
-Follow [the architecture contract](docs/ARCHITECTURE.md) and its API classes.
+Follow [the architecture contract](system-design/ARCHITECTURE.md) and its API classes.
 Historical parity plans do not override these boundaries. The tested dependency allow-list and complete
 support matrix are in `specs/architecture.json`.
 

@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Font identities and shared font bytes. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Partial resource foundation; no general image/font/shader loader. |
 
 Font handles and future non-raster resource foundations for Incular. Raster

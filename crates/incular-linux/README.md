@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Linux desktop entry and native services over the shared desktop host. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Desktop adapter; Linux runtime behavior requires Linux validation. |
 
 Linux facade over the shared Winit desktop shell. X11 exposes desktop-global

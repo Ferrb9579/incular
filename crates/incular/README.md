@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Feature-controlled public facade and application preludes. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Re-exports inherit original API classes; platform features are target-specific. |
 
 The public facade crate for Incular applications. It will re-export the stable

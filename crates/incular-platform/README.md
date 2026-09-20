@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Portable native IDs, events, capabilities, commands, metrics and errors. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Portable contracts; Winit conversion and raw access belong to desktop. |
 
 Owns portable native events and the logical/physical DPI boundary. Winit

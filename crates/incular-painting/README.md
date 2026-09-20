@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Pure compatibility re-export of incular-rendering. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
 | Support | Transition shim; removal condition B08 / Stage J. |
 
 This crate only re-exports `incular-rendering`; it owns no commands, layers,
