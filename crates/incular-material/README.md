@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Material presentation composed from controls and neutral widgets. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Curated subset; parity manifests record omissions. |
 
 Material-style components for Incular.

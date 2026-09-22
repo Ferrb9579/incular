@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / Rust ${{ matrix.rust }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        rust: [stable, '1.89.0']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12'
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libxkbcommon-dev libwayland-dev libudev-dev libdbus-1-dev
+      - name: Install Rust
+        run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt --component clippy
+      - name: Select Rust
+        run: rustup override set ${{ matrix.rust }}
+      - name: Build all workspace libraries and applications
+        run: cargo build --workspace --all-features --locked
+      - name: Check isolated facade features
+        run: python scripts/check-features.py
+      - name: Check formatting
+        if: matrix.rust == 'stable'
+        run: cargo fmt --all -- --check
+      - name: Lint library and application builds
+        if: matrix.rust == 'stable'
+        run: cargo clippy --workspace --lib --bins --all-features --locked -- -D warnings
+      - name: Build documentation
+        if: matrix.rust == 'stable'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+# Tests and native GUI scenarios are run locally before release, never by this workflow.

@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Pointer recognition, gesture arbitration, keyboard and focus mechanisms. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available; shared observation contracts consolidate in C/G. |
 
 Platform-neutral pointer recognizers and interaction state for Incular.

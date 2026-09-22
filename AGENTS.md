@@ -39,7 +39,7 @@ support matrix are in `specs/architecture.json`.
 ## Structure rules
 
 - Framework crates live under `crates/*`; tools live under `tools/*`; the root
-  package is the integration-test harness.
+  is a virtual workspace. Workspace integration tests live in `crates/incular/tests/`.
 - Each crate should contain `Cargo.toml`, `README.md`, and `src/lib.rs`.
 - Keep built-in widgets in `incular-widgets`; do not create a separate crate for them.
 - Keep platform-specific APIs in their matching native crate.
@@ -47,7 +47,7 @@ support matrix are in `specs/architecture.json`.
 - Keep renderer-independent APIs separate from `incular-wgpu`.
 - Avoid introducing dependency cycles between crates.
 - All test code must live in a `tests/` directory. Use `crates/<crate>/tests/`
-  for crate tests, the repository-root `tests/` for workspace integration
+  for crate tests, `crates/incular/tests/` for workspace integration
   tests, and `examples/<example>/tests/` for example tests. Do not add
   `#[cfg(test)]` modules, test helpers, or test-only implementations under
   `src/` or directly beside an example's `main.rs`.

@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Android semantic adapter for a native host. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Partial; activity, input, surface and system UI require host wiring. |
 
 Android platform integration for Incular. `AndroidAccessibilityAdapter` exposes

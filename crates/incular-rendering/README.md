@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Renderer-neutral commands, paths, canvas and retained compositor layers. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available; backend resources belong to WGPU. |
 
 `incular-rendering` owns Incular's renderer-neutral presentation boundary:

@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Neutral widget composition and retained build/layout/paint/input/semantics. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Curated behavior; internal bridge is not an application API. |
 
 Visibility preservation, offstage measurement, retained focus, and animation

@@ -62,8 +62,8 @@ one of these invariant or explicit-contract categories.
 ## Test placement
 
 All test code belongs in a `tests/` directory. Put crate tests in
-`crates/<crate>/tests/`, workspace integration tests in the repository-root
-`tests/`, and example tests in `examples/<example>/tests/`. Production `src/`
+`crates/<crate>/tests/`, workspace integration tests in
+`crates/incular/tests/`, and example tests in `examples/<example>/tests/`. Production `src/`
 files and example entry-point directories must not contain inline test modules,
 test helpers, or test-only implementations.
 

@@ -1,79 +1,100 @@
 # Incular
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Ferrb9579/incular#license)
+Incular is an experimental native Rust GUI framework with declarative widgets,
+reactive state, retained layout/rendering, optional Controls and Material layers,
+and a shared Winit/WGPU desktop host. It is intended for early adopters willing
+to work with an evolving API. It is not a Flutter binding and does not target web.
 
-Incular is an experimental Rust GUI framework inspired by Flutter and built
-around `wgpu`. It is currently a research-quality project: APIs and behavior
-may change before the first stable release.
+## First application
 
-## Quick start
+Requires Rust **1.89 or newer**, a desktop window system, and a compatible GPU
+driver. See [platform setup](docs/platforms.md) for native prerequisites and limits.
+The initial version is being prepared for publication; until it is published,
+use the repository checkout instructions below.
+
+After `0.1.0` is published, add:
 
 ```toml
 [dependencies]
 incular = "0.1"
 ```
 
-The default feature set includes the desktop runner, Controls, and Material
-components. A minimal example is available at
-`examples/counter/main.rs`:
+Put this in `src/main.rs`, then run `cargo run`:
+
+```rust,no_run
+use incular::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = Application::new(|_cx| {
+        Container::builder()
+            .padding(EdgeInsets::all(24.0))
+            .alignment(Alignment::CENTER)
+            .child(Text::new("Hello, Incular!"))
+            .build()
+            .into()
+    })?;
+    incular::run(app)?;
+    Ok(())
+}
+```
+
+The same self-contained [hello example](crates/incular/examples/hello.rs) is
+included in the facade crate's archive.
+
+## Try the checkout
 
 ```text
+git clone https://github.com/Ferrb9579/incular.git
+cd incular
+cargo run -p incular --example hello
 cargo run -p incular --example counter
 ```
 
-## Workspace architecture
+The larger [example galleries](examples/README.md) use repository-local simulation
+helpers and require a checkout. They are not part of the registry archive.
 
-The repository is a layered Cargo workspace. The public `incular` facade sits
-above focused crates for core types, layout, rendering, widgets, controls,
-Material components, runtime scheduling, text, scrolling, accessibility,
-platform integration, and the `wgpu` backend. Each crate README documents its
-ownership boundary and supported surface.
+## Features
 
-The [architecture contract](system-design/ARCHITECTURE.md) defines the current direction.
-Flutter manifests are compatibility inventories; Incular's Rust ownership and
-behavior contracts determine implementation boundaries.
+| Feature | Purpose | Default |
+| --- | --- | --- |
+| `desktop` | Native runner and WGPU backend | Yes |
+| `controls` | Incular controls and visual slots | Yes |
+| `material` | Material presentation; enables `controls` | Yes |
+| `devtools` | Diagnostics transport and runtime instrumentation | No |
 
-| Contract | Status |
-| --- | --- |
-| Ownership | Repository integration-test harness and architecture/parity policy owner. |
-| API class | bridge; the root package exists to validate framework packages and is not an application dependency. |
-| Support | Internal workspace harness; not published and not part of the framework API. |
+Use `default-features = false` to select features explicitly. This selects the
+neutral API surface; it does not promise `no_std` or a dependency-free build.
+Import neutral types from `incular::prelude`, Controls from
+`incular::controls_prelude`, and Material from `incular::material_prelude`.
 
-Run the full validation suite before submitting a change:
+## Support and learning
 
-```text
-cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test-constrained
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-```
+Windows, Linux, and macOS share the desktop host. Native runtime evidence varies
+by platform; [the support matrix](docs/platforms.md) distinguishes implemented
+adapters from verified scenarios. Android/iOS crates provide semantic adapters
+for a host, not complete mobile application runners. Desktop accessibility uses
+AccessKit; platform/screen-reader behavior needs native validation.
 
-`cargo test-constrained` caps compilation at four jobs and runs the stock test
-harness with one test thread. Use it for full-workspace test runs; focused
-crate or test-target commands can continue to use `cargo test -p ...`.
+- [Application guide](docs/guide.md)
+- [DevTools and diagnostics privacy](docs/devtools.md)
+- [Local testing](docs/testing.md)
+- [API documentation](https://docs.rs/incular) (available after publication)
+- [Roadmap](ROADMAP.md), [changelog](CHANGELOG.md), and [release procedure](docs/releasing.md)
 
-Windows PowerShell uses `$env:RUSTDOCFLAGS='-D warnings'` for the final command.
+## Workspace and contribution
 
-## Project status
+The root is a **virtual workspace**, not a package. Framework crates live under
+`crates/`, the DevTools application under `tools/`, and workspace integration
+tests under `crates/incular/tests/`. Crate-specific tests remain in each crate's
+`tests/` directory. The [architecture contract](system-design/ARCHITECTURE.md)
+defines ownership and application/backend/bridge API classes.
 
-The Linux desktop path is the primary native verification target. Windows and
-macOS share the platform runner contract, while Android and iOS integration
-are still being developed. The platform table below summarizes the current
-implementation coverage and known limits.
-
-| Capability | Linux | Windows | macOS | Android | iOS |
-| --- | --- | --- | --- | --- | --- |
-| Shared winit/wgpu runner source | Implemented | Source parity | Source parity | Planned | Planned |
-| Native runtime verification | Not run here | Verified | Not run here | Planned | Planned |
-| Accessibility OS adapter | Planned | Planned | Planned | Planned | Planned |
-
-## Contributing
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Bug
-reports and focused implementation contributions are welcome, especially when
-they include a regression test or an example simulation.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [the code of conduct](CODE_OF_CONDUCT.md),
+and [SECURITY.md](SECURITY.md). GitHub Actions performs build checks; tests and
+native GUI scenarios are run locally before release.
 
 ## License
 
-Incular is licensed under the [Apache License 2.0](LICENSE-APACHE).
+The existing project license is [Apache-2.0](LICENSE). Dependency licenses are
+separate; [the pending licensing decision](docs/licensing.md) records the options
+to resolve before publishing. No relicensing is implied by this preparation work.

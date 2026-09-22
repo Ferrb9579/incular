@@ -1,7 +1,4 @@
-//! Public facade for the Incular GUI framework.
-//!
-//! The facade will provide a convenient application-facing API while the
-//! framework remains organized internally into focused crates.
+#![doc = include_str!("../README.md")]
 
 pub use incular_accessibility as accessibility;
 pub use incular_animation as animation;
@@ -288,10 +285,14 @@ pub use incular_windows as windows;
 pub fn run(application: incular_runtime::Application) -> Result<(), incular_linux::RunError> {
     incular_linux::run_application(application)
 }
+/// Runs the native Windows event loop on the calling main thread.
+/// Returns typed backend errors.
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 pub fn run(application: incular_runtime::Application) -> Result<(), incular_windows::RunError> {
     incular_windows::run_application(application)
 }
+/// Runs the native macOS event loop on the calling main thread.
+/// Returns typed backend errors.
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 pub fn run(application: incular_runtime::Application) -> Result<(), incular_macos::RunError> {
     incular_macos::run_application(application)

@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Platform-neutral semantic nodes, roles, labels, state and actions. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available; screen-reader projection belongs to accessibility. |
 
 Renderer- and platform-neutral semantic values and the retained semantic tree

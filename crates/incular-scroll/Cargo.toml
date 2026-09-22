@@ -9,6 +9,11 @@ publish = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/incular-scroll"
+keywords = ["gui", "ui", "incular"]
+categories = ["gui"]
+# Repository tests and galleries are validated from the workspace, not shipped.
+include = ["src/**", "README.md", "LICENSE"]
 [lints]
 workspace = true
 
@@ -26,3 +31,8 @@ criterion = { workspace = true }
 [[bench]]
 name = "variable_list"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "x86_64-unknown-linux-gnu"
+targets = []

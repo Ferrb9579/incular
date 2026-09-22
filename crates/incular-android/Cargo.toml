@@ -9,6 +9,11 @@ publish = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/incular-android"
+keywords = ["gui", "ui", "incular"]
+categories = ["gui"]
+# Repository tests and galleries are validated from the workspace, not shipped.
+include = ["src/**", "README.md", "LICENSE"]
 [lints]
 workspace = true
 
@@ -17,3 +22,8 @@ path = "src/lib.rs"
 
 [dependencies]
 incular-accessibility = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "aarch64-linux-android"
+targets = []

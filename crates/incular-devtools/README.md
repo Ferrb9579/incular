@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Opt-in diagnostics transport and runtime command bridge. |
-| API class | bridge; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | bridge; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Implementation integration; not application widget vocabulary. |
 
 The target-side DevTools agent for Incular applications.

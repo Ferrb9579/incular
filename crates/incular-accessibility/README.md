@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | AccessKit and mobile semantic projections and action translation. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available projections; host integration is platform-specific. |
 
 `incular-semantics::SemanticsTree` is Incular's canonical, retained and

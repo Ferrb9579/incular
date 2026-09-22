@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Layout algorithms over measured sizes; config values are exact re-exports. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available; retained measurement belongs to widgets. |
 
 Renderer-independent algorithms operate on measured child sizes. Constraints,

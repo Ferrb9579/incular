@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Shared Winit host, WGPU frame coordination and native service integration. |
-| API class | backend; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | backend; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Desktop host; one application event loop for both entry APIs. |
 
 Native clipboard initialization failures are preserved as `ClipboardError` on

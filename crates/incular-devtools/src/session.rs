@@ -9,9 +9,26 @@ use incular_devtools_protocol::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 
 const INCOMING_REQUEST_LIMIT: usize = 64 * 1024;
 const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[allow(
+    clippy::result_large_err,
+    reason = "Tungstenite's handshake callback requires an unboxed HTTP error response"
+)]
+fn accept_native_upgrade(request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+    if request.headers().contains_key("origin") {
+        let mut rejection = ErrorResponse::new(Some(
+            "browser-origin DevTools connections are not supported".into(),
+        ));
+        *rejection.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+        Err(rejection)
+    } else {
+        Ok(response)
+    }
+}
 
 /// Configuration used when starting a target-side DevTools session.
 pub struct SessionConfig {
@@ -167,10 +184,19 @@ pub(crate) async fn serve(args: ServeArgs) {
             max_frame_size: Some(INCOMING_REQUEST_LIMIT),
             ..Default::default()
         };
-        let Ok(websocket) =
-            tokio_tungstenite::accept_async_with_config(stream, Some(websocket_config)).await
-        else {
-            continue;
+        // The HTTP upgrade precedes the authenticated Hello. A silent TCP peer
+        // must not occupy the single-client server forever or prevent shutdown.
+        let upgrade = tokio_tungstenite::accept_hdr_async_with_config(
+            stream,
+            accept_native_upgrade,
+            Some(websocket_config),
+        );
+        let websocket = tokio::select! {
+            _ = shutdown_notify.notified() => break,
+            result = tokio::time::timeout(SEND_TIMEOUT, upgrade) => match result {
+                Ok(Ok(websocket)) => websocket,
+                _ => continue,
+            },
         };
         let _ = run_session(websocket, &mut state).await;
         state.session_cleanup_pending.store(true, Ordering::Release);

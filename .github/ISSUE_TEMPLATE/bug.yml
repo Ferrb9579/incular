@@ -1,0 +1,20 @@
+name: Bug report
+description: Report an Incular behavior or build failure (no private security details).
+body:
+  - type: markdown
+    attributes:
+      value: For vulnerabilities use SECURITY.md. Review logs and crash dumps for private data before attaching them.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Incular version/commit, rustc -Vv, OS, architecture, GPU/driver, X11 or Wayland, features.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Code and exact commands, expected behavior, actual behavior, and relevant sanitized errors.
+    validations:
+      required: true

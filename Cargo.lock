@@ -2080,6 +2080,7 @@ dependencies = [
  "incular-devtools-protocol",
  "incular-runtime",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
 ]

@@ -7,6 +7,7 @@
 use incular_devtools_protocol::DiscoveryRecord;
 use std::{
     io,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -85,17 +86,14 @@ pub fn register_session(entry: DiscoveryFileEntry) -> io::Result<DiscoveryRegist
         ));
     }
 
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::write(&temporary, &json)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))?;
-    }
-    if let Err(error) = std::fs::rename(&temporary, &path) {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error);
-    }
+    // tempfile creates an unpredictable, exclusive file with mode 0600 on Unix
+    // before any credentials are written. On Windows it inherits the per-user
+    // data directory's ACL. Never follow a predictable temporary-file symlink.
+    // Keeping the file in this directory allows an atomic rename on persist.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(&json)?;
+    temporary.flush()?;
+    temporary.persist(&path).map_err(|error| error.error)?;
 
     Ok(DiscoveryRegistration {
         path,

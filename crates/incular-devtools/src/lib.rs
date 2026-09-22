@@ -168,7 +168,9 @@ impl AgentHandle {
     /// Signals the agent to stop. Discovery ownership is released on drop.
     pub fn stop(&self) {
         if !self.shutdown.swap(true, Ordering::AcqRel) {
-            self.shutdown_notify.notify_waiters();
+            // Exactly one accept/session task waits on this notification.
+            // Retain a permit if stop races the transition into its next await.
+            self.shutdown_notify.notify_one();
         }
     }
 

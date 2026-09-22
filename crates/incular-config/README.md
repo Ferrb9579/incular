@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Shared constraints, alignment, insets, localization and application policies. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available; writable invariant fields migrate in G. |
 
 Renderer-independent configuration values shared across Incular layers.

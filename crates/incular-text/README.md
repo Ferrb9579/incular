@@ -5,7 +5,7 @@
 | Contract | Status |
 | --- | --- |
 | Ownership | Font selection, shaping, metrics, text layout and editing values. |
-| API class | application; re-exports and path overrides follow the [architecture contract](../../system-design/ARCHITECTURE.md). |
+| API class | application; re-exports and path overrides follow the [architecture contract](https://github.com/Ferrb9579/incular/blob/master/system-design/ARCHITECTURE.md). |
 | Support | Available; controller observation consolidates in C/G. |
 
 Renderer-independent font selection, OpenType shaping, Unicode line breaking,

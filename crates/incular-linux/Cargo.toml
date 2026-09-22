@@ -9,6 +9,11 @@ publish = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/incular-linux"
+keywords = ["gui", "ui", "incular"]
+categories = ["gui"]
+# Repository tests and galleries are validated from the workspace, not shipped.
+include = ["src/**", "README.md", "LICENSE"]
 [lints]
 workspace = true
 
@@ -41,3 +46,8 @@ devtools = ["incular-desktop/devtools"]
 name = "application_shell"
 path = "tests/application_shell.rs"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+default-target = "x86_64-unknown-linux-gnu"
+targets = []
