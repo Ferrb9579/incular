@@ -1,0 +1,9 @@
+{
+  "name": "incular-electron-reference-build",
+  "private": true,
+  "devDependencies": {
+    "electron": "44.2.0",
+    "@electron/packager": "20.3.0",
+    "esbuild": "0.25.12"
+  }
+}

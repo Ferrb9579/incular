@@ -89,7 +89,7 @@ impl WgpuRenderer {
         &mut self,
         target: &OffscreenTarget,
         frame_view: &wgpu::TextureView,
-    ) -> u32 {
+    ) -> Result<u32, RendererError> {
         self.ensure_composite_capacity(1);
         let instance = composite_instance(
             Offset::ZERO,
@@ -126,7 +126,7 @@ impl WgpuRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.straight_alpha_present_pipeline);
+        pass.set_pipeline(self.straight_alpha_present_pipeline.get()?);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.set_vertex_buffer(0, self.mesh.slice(..));
         pass.set_vertex_buffer(
@@ -138,7 +138,7 @@ impl WgpuRenderer {
         drop(pass);
         self.queue.submit(Some(encoder.finish()));
         self.counters.surface_present_conversion_passes += 1;
-        1
+        Ok(1)
     }
 
     pub(super) fn ensure_destination_targets(&mut self, width: u32, height: u32) {
@@ -279,7 +279,7 @@ impl WgpuRenderer {
         targets: &mut DestinationTargets,
         label: &'static str,
         clear: wgpu::Color,
-    ) -> (bool, u32, u32, u32) {
+    ) -> Result<(bool, u32, u32, u32), RendererError> {
         let mut current_first = true;
         let mut first_pass = true;
         let mut segment_start = 0_usize;
@@ -324,7 +324,7 @@ impl WgpuRenderer {
                 clear,
                 None,
                 !first_pass,
-            );
+            )?;
             self.queue.submit(Some(encoder.finish()));
             draw_calls += draws;
             text_draw_calls += text;
@@ -368,7 +368,7 @@ impl WgpuRenderer {
                 wgpu::Color::TRANSPARENT,
                 Some(&current_view),
                 true,
-            );
+            )?;
             self.queue.submit(Some(encoder.finish()));
             draw_calls += draws;
             text_draw_calls += text;
@@ -403,12 +403,12 @@ impl WgpuRenderer {
             clear,
             None,
             !first_pass,
-        );
+        )?;
         self.queue.submit(Some(encoder.finish()));
         draw_calls += draws;
         text_draw_calls += text;
         passes += 1;
-        (current_first, draw_calls, text_draw_calls, passes)
+        Ok((current_first, draw_calls, text_draw_calls, passes))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -423,7 +423,7 @@ impl WgpuRenderer {
         parent_width: u32,
         parent_height: u32,
         scale: f32,
-    ) -> u32 {
+    ) -> Result<u32, RendererError> {
         self.ensure_composite_capacity(1);
         let instance = composite_instance(
             target_origin,
@@ -470,7 +470,7 @@ impl WgpuRenderer {
             multiview_mask: None,
         });
         pass.set_stencil_reference(0);
-        pass.set_pipeline(&self.composite_pipeline);
+        pass.set_pipeline(self.composite_pipeline.get()?);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.set_vertex_buffer(0, self.mesh.slice(..));
         pass.set_vertex_buffer(
@@ -481,14 +481,22 @@ impl WgpuRenderer {
         pass.draw(0..6, 0..1);
         drop(pass);
         self.queue.submit(Some(encoder.finish()));
-        1
+        Ok(1)
     }
     pub fn render(
         &mut self,
         list: &DisplayList,
         scale_factor: f64,
     ) -> Result<FrameOutcome, RendererError> {
-        let outcome = self.render_composited(list, scale_factor)?;
+        let result = self.render_composited(list, scale_factor);
+        // A failed/skipped frame may already have admitted shared glyph masks.
+        // Make their uploads observable to other windows and release CPU staging.
+        self.shared.flush_glyph_uploads();
+        if result.is_err() {
+            self.frame_pinned_glyph_pages.clear();
+            self.shared.release_glyph_frame_protection();
+        }
+        let outcome = result?;
         match &outcome {
             FrameOutcome::Presented(stats) => {
                 debug_assert!(stats.presented);
@@ -623,7 +631,10 @@ impl WgpuRenderer {
         self.prepare_image_bind_groups(&batches);
         let prepare_us = us_since(prepare_started);
         let encode_started = std::time::Instant::now();
-        self.profiler_next_pass = self.gpu_timing_supported();
+        #[cfg(feature = "gpu-profiling")]
+        {
+            self.profiler_next_pass = self.gpu_timing_supported();
+        }
         let (frame, reconfigure_after_present) = match self.acquire_surface_texture()? {
             SurfaceAcquisition::Ready {
                 frame,
@@ -667,7 +678,7 @@ impl WgpuRenderer {
                 .destination_targets
                 .take()
                 .expect("destination targets after ensure");
-            let (current_first, draws, text, passes) = self.render_destination_batches(
+            let rendered = self.render_destination_batches(
                 &batches,
                 scale,
                 target_width,
@@ -676,6 +687,13 @@ impl WgpuRenderer {
                 "incular destination composition segment",
                 self.scene_background_clear(),
             );
+            let (current_first, draws, text, passes) = match rendered {
+                Ok(result) => result,
+                Err(error) => {
+                    self.destination_targets = Some(targets);
+                    return Err(error);
+                }
+            };
             self.counters.full_frame_intermediate_passes += 1;
             self.counters.offscreen_render_passes += u64::from(passes);
             let final_target = if current_first {
@@ -683,6 +701,7 @@ impl WgpuRenderer {
             } else {
                 targets.second.clone()
             };
+            self.destination_targets = Some(targets);
             let present_draw = self.present_composition_target(
                 &final_target,
                 &scene_view,
@@ -693,8 +712,7 @@ impl WgpuRenderer {
                 self.config.width,
                 self.config.height,
                 scale,
-            );
-            self.destination_targets = Some(targets);
+            )?;
             (draws + present_draw, text)
         } else {
             let mut encoder = self
@@ -713,12 +731,12 @@ impl WgpuRenderer {
                 self.scene_background_clear(),
                 None,
                 false,
-            );
+            )?;
             self.queue.submit(Some(encoder.finish()));
             result
         };
         if let Some(target) = presentation_target.as_ref() {
-            draw_calls += self.present_straight_alpha_target(target, &view);
+            draw_calls += self.present_straight_alpha_target(target, &view)?;
         }
         if self.capture_requested {
             self.last_capture = Some(self.capture_surface_texture(&frame.texture));
@@ -728,6 +746,7 @@ impl WgpuRenderer {
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.config);
         }
+        #[cfg(feature = "gpu-profiling")]
         if self.gpu_timing_supported() {
             // wgpu-profiler drops the newest pending frame when its bounded
             // queue is full; mirror that bookkeeping for the frame ids kept

@@ -1,0 +1,41 @@
+{
+  "description": {
+    "physicalPixelBounds": [
+      1160,
+      485,
+      1608,
+      608
+    ],
+    "after": {
+      "foregroundUnionPixels": 9254,
+      "meanAbsoluteRgbError": 66.70956703407535,
+      "allPixelMeanAbsoluteRgbError": 11.527789876113047
+    }
+  },
+  "row_titles": {
+    "physicalPixelBounds": [
+      282,
+      227,
+      1092,
+      270
+    ],
+    "after": {
+      "foregroundUnionPixels": 3124,
+      "meanAbsoluteRgbError": 61.91431924882629,
+      "allPixelMeanAbsoluteRgbError": 5.561699684180304
+    }
+  },
+  "toolbar_heading": {
+    "physicalPixelBounds": [
+      280,
+      28,
+      900,
+      74
+    ],
+    "after": {
+      "foregroundUnionPixels": 2480,
+      "meanAbsoluteRgbError": 33.56693548387097,
+      "allPixelMeanAbsoluteRgbError": 2.949579242636746
+    }
+  }
+}

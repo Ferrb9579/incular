@@ -468,6 +468,8 @@ fn place(
         font: run.font.id(),
         glyph: run.glyphs[0].id,
         physical_size: GlyphRasterRequest::new(run.font_size, 1.0).physical_size,
+        fractional_size: 0,
+        phase: [0, 0],
     };
     let raster = atlas
         .lookup_or_rasterize(run, run.glyphs[0].id, 1.0, protected)

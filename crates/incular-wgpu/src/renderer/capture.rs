@@ -4,6 +4,7 @@ impl WgpuRenderer {
     /// Drives wgpu-profiler's asynchronous query mappings without blocking.
     /// The profiler owns the query/readback buffers and returns the oldest
     /// completed scope tree when the GPU has finished it.
+    #[cfg(feature = "gpu-profiling")]
     pub(super) fn pump_gpu_profiler(&mut self) {
         let _ = self.device.poll(wgpu::PollType::Poll);
         let Some(results) = self
@@ -154,9 +155,11 @@ impl WgpuRenderer {
 
     #[must_use]
     pub fn gpu_timing_supported(&self) -> bool {
-        self.device
-            .features()
-            .contains(wgpu::Features::TIMESTAMP_QUERY)
+        cfg!(feature = "gpu-profiling")
+            && self
+                .device
+                .features()
+                .contains(wgpu::Features::TIMESTAMP_QUERY)
     }
 
     /// Latest asynchronously-resolved GPU timing, when supported.

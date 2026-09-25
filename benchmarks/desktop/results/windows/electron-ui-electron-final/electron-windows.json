@@ -1,0 +1,529 @@
+{
+  "framework": "Electron",
+  "version": "44.2.0",
+  "measuredAt": "2026-09-25T02:39:54Z",
+  "workload": {
+    "id": "issue-tracker-v1",
+    "width": 1100,
+    "height": 720,
+    "records": 1000,
+    "pageSize": 100,
+    "readyTitle": "Issue tracker \u2014 ready",
+    "datasetSha256": "86dad8e3deb19239384b164f42eeca81d5aaaac0d017ad0fc55c7d6d64f0e546"
+  },
+  "idlePolicy": {
+    "minimumWaitMs": 30000,
+    "stableWindowMs": 15000,
+    "maximumWaitMs": 180000,
+    "intervalMs": 1000,
+    "samplesPerRun": 10,
+    "maximumCpuPercent": 1,
+    "maximumMemorySpreadBytes": 1000000,
+    "maximumMemorySpreadRatio": 0.01
+  },
+  "metric": "Windows private working set, summed over browser and all descendants",
+  "notes": "CPU is aggregate percent of one core. Summed total working sets double-count shared pages; private resident does not. GPU/OS-compositor memory outside the process tree is excluded.",
+  "executableSha256": "239b62ac05140de06bcd072e68016fe5a33cb7cd4e015baa30bc494e778815fd",
+  "bundleBytes": 386139182,
+  "runs": [
+    {
+      "run": 1,
+      "idleQualified": true,
+      "samples": [
+        {
+          "elapsedSeconds": 48.1340098,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327835648,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 49.1765707,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327835648,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 50.2216187,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327835648,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 51.2617245,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327835648,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 53.3247082,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327843840,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 54.386793600000004,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327843840,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 55.4592598,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327843840,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 56.5182556,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327843840,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 57.5725347,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327843840,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 58.6229322,
+          "privateWorkingSetBytes": 104398848,
+          "workingSetBytes": 327843840,
+          "privateCommitBytes": 179449856,
+          "processIds": [
+            11548,
+            32936,
+            35988,
+            37732
+          ],
+          "cpuSeconds": 0.578125,
+          "cpuPercent": 0.0
+        }
+      ],
+      "idleDetectedAtSeconds": 47.083933,
+      "visibleClientRectsDpiVirtualized": [
+        [
+          1099,
+          720
+        ]
+      ],
+      "medians": {
+        "privateWorkingSetBytes": 104398848.0,
+        "workingSetBytes": 327843840.0,
+        "privateCommitBytes": 179449856.0,
+        "cpuPercent": 0.0
+      }
+    },
+    {
+      "run": 2,
+      "idleQualified": true,
+      "samples": [
+        {
+          "elapsedSeconds": 93.19256569999999,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 94.23894960000001,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 95.2838299,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 96.33092189999999,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 97.38440890000001,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 98.43560930000001,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 99.47843169999999,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 100.5298238,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 101.571868,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 102.6139934,
+          "privateWorkingSetBytes": 104308736,
+          "workingSetBytes": 348606464,
+          "privateCommitBytes": 196976640,
+          "processIds": [
+            16016,
+            26476,
+            32620,
+            35552
+          ],
+          "cpuSeconds": 0.796875,
+          "cpuPercent": 0.0
+        }
+      ],
+      "idleDetectedAtSeconds": 92.14754980000001,
+      "visibleClientRectsDpiVirtualized": [
+        [
+          1099,
+          720
+        ]
+      ],
+      "medians": {
+        "privateWorkingSetBytes": 104308736.0,
+        "workingSetBytes": 348606464.0,
+        "privateCommitBytes": 196976640.0,
+        "cpuPercent": 0.0
+      }
+    },
+    {
+      "run": 3,
+      "idleQualified": true,
+      "samples": [
+        {
+          "elapsedSeconds": 47.073818500000016,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 48.12314069999999,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 49.1638251,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 50.2122847,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 51.250793000000016,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 52.30137540000001,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 53.34480550000001,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 54.38897840000001,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203608064,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 55.433506600000015,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203612160,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        },
+        {
+          "elapsedSeconds": 56.4754538,
+          "privateWorkingSetBytes": 105988096,
+          "workingSetBytes": 353685504,
+          "privateCommitBytes": 203612160,
+          "processIds": [
+            25056,
+            25944,
+            27264,
+            34140
+          ],
+          "cpuSeconds": 0.640625,
+          "cpuPercent": 0.0
+        }
+      ],
+      "idleDetectedAtSeconds": 46.03384249999999,
+      "visibleClientRectsDpiVirtualized": [
+        [
+          1099,
+          720
+        ]
+      ],
+      "medians": {
+        "privateWorkingSetBytes": 105988096.0,
+        "workingSetBytes": 353685504.0,
+        "privateCommitBytes": 203608064.0,
+        "cpuPercent": 0.0
+      }
+    }
+  ],
+  "summary": {
+    "privateWorkingSetBytes": {
+      "median": 104398848.0,
+      "min": 104308736.0,
+      "max": 105988096.0
+    },
+    "workingSetBytes": {
+      "median": 348606464.0,
+      "min": 327843840.0,
+      "max": 353685504.0
+    },
+    "privateCommitBytes": {
+      "median": 196976640.0,
+      "min": 179449856.0,
+      "max": 203608064.0
+    },
+    "cpuPercent": {
+      "median": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  }
+}

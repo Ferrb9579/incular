@@ -1,0 +1,11 @@
+{
+  "cpu": "AMD Ryzen 9 8940HX with Radeon Graphics        ",
+  "gpu": [
+    "AMD Radeon(TM) 610M"
+  ],
+  "memoryBytes": 49086705664,
+  "os": {
+    "Caption": "Microsoft Windows 11 Home Single Language",
+    "Version": "10.0.26200"
+  }
+}

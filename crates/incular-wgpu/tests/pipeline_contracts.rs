@@ -155,6 +155,8 @@ fn public_glyph_pipeline_contract_keeps_cache_identity_and_dpi_variants() {
                 font: run.font.id(),
                 glyph,
                 physical_size: GlyphRasterRequest::new(run.font_size, 2.).physical_size,
+                fractional_size: 0,
+                phase: [0, 0],
             })
             .is_some()
     );
@@ -170,6 +172,8 @@ fn public_resource_identity_contract_separates_images_and_glyph_sizes() {
         font: FontId(2),
         glyph: 65,
         physical_size: 16,
+        fractional_size: 0,
+        phase: [0, 0],
     };
     let one_x = registry.glyph_identity(glyph);
     let two_x = registry.glyph_identity(GlyphCacheKey {

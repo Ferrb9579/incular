@@ -431,49 +431,12 @@ impl WgpuRenderer {
             .bind_groups
             .get(&sampling)
     }
-    pub(super) fn upload_glyph(&mut self, entry: AtlasEntry, bitmap: &[u8]) {
+    pub(super) fn upload_glyph(&mut self, entry: AtlasEntry, _bitmap: &[u8]) {
+        // The shared atlas stages fresh masks atomically with cache admission.
+        // Windows only retain bindings; encode_batches flushes shared uploads.
         self.ensure_atlas_page(entry.page, entry.generation);
-        let page = self
-            .atlas_pages
-            .get(entry.page)
-            .expect("atlas page just ensured");
-        let padded_width = usize::from(entry.width + ATLAS_PADDING * 2);
-        let padded_height = usize::from(entry.height + ATLAS_PADDING * 2);
-        // A freshly allocated texture has undefined contents. Explicitly write
-        // the allocation, including its transparent border, before enabling
-        // linear filtering so adjacent glyphs can never bleed into this mask.
-        let mut padded = vec![0_u8; padded_width * padded_height];
-        for row in 0..usize::from(entry.height) {
-            let source_start = row * usize::from(entry.width);
-            let destination_start =
-                (row + usize::from(ATLAS_PADDING)) * padded_width + usize::from(ATLAS_PADDING);
-            padded[destination_start..destination_start + usize::from(entry.width)]
-                .copy_from_slice(&bitmap[source_start..source_start + usize::from(entry.width)]);
-        }
-        self.counters.texture_upload_bytes += padded.len() as u64;
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &page.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: u32::from(entry.x - ATLAS_PADDING),
-                    y: u32::from(entry.y - ATLAS_PADDING),
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &padded,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_width as u32),
-                rows_per_image: Some(padded_height as u32),
-            },
-            wgpu::Extent3d {
-                width: padded_width as u32,
-                height: padded_height as u32,
-                depth_or_array_layers: 1,
-            },
-        );
+        self.counters.texture_upload_bytes += u64::from(entry.width + ATLAS_PADDING * 2)
+            * u64::from(entry.height + ATLAS_PADDING * 2);
     }
     pub(super) fn ensure_atlas_page(&mut self, page: u16, generation: u64) {
         // A generation mismatch replaces the slot: the shared page was
@@ -501,7 +464,7 @@ impl WgpuRenderer {
                 ],
             });
             self.atlas_pages.ensure(page, generation, || GpuAtlasPage {
-                texture,
+                _texture: texture,
                 bind_group,
             });
             self.counters.atlas_texture_recreations += 1;

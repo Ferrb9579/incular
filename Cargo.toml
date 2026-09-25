@@ -8,6 +8,14 @@ incremental = false
 [profile.release]
 incremental = false
 
+# Opt-in application distribution profile; preserve release throughput defaults.
+[profile.dist]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
 [profile.test]
 incremental = false
 
@@ -60,7 +68,7 @@ incular-devtools = { path = "crates/incular-devtools", version = "0.1.0" }
 incular-devtools-ui = { path = "tools/incular-devtools", version = "0.1.0" }
 incular-windows = { path = "crates/incular-windows", version = "0.1.0" }
 
-wgpu = "30"
+wgpu = { version = "=30.0.0", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "gles", "vulkan", "naga-ir"] }
 wgpu-profiler = "0.28"
 # Test/dev-only: WGSL front end for the renderer pipeline-contract tests.
 naga = { version = "30", default-features = false, features = ["wgsl-in"] }
@@ -101,6 +109,7 @@ native-dialog = { version = "0.9.7", features = ["async"] }
 ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "file_chooser", "raw_handle", "wayland", "settings"] }
 url = "2.5"
 fontdue = "0.9"
+ab_glyph = "0.2.32"
 palette = "0.7.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 lyon_tessellation = "1.0"
@@ -140,3 +149,8 @@ objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSDockTile", 
 inherits = "release"
 debug = true
 incremental = false
+
+# Paired patches preparse renderer and internal validation shaders; keep versions pinned.
+[patch.crates-io]
+wgpu = { path = "vendor/wgpu" }
+wgpu-core = { path = "vendor/wgpu-core" }

@@ -10,31 +10,34 @@ pub struct WgpuRenderer {
     pub(super) window_gpu: WindowGpuState,
     pub(super) device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
+    #[cfg(feature = "gpu-profiling")]
     pub(super) gpu_profiler: GpuProfiler,
     /// Armed by `render_composited`; consumed by the next top-level pass.
+    #[cfg(feature = "gpu-profiling")]
     pub(super) profiler_next_pass: bool,
     /// Renderer frame ids waiting for `wgpu-profiler`'s asynchronous mapping.
+    #[cfg(feature = "gpu-profiling")]
     pub(super) profiler_frames: VecDeque<u64>,
     pub(super) latest_gpu_timing: Option<GpuFrameTimings>,
     pub(super) capture_requested: bool,
     pub(super) last_capture: Option<Result<CapturedFrame, String>>,
     pub(super) capture_supported: bool,
-    pub(super) rectangle_pipeline: wgpu::RenderPipeline,
-    pub(super) text_pipeline: wgpu::RenderPipeline,
-    pub(super) image_pipeline: wgpu::RenderPipeline,
-    pub(super) rounded_rect_pipeline: wgpu::RenderPipeline,
-    pub(super) path_pipeline: wgpu::RenderPipeline,
-    pub(super) composite_pipeline: wgpu::RenderPipeline,
-    pub(super) straight_alpha_present_pipeline: wgpu::RenderPipeline,
-    pub(super) fixed_blend_pipelines: Vec<wgpu::RenderPipeline>,
-    pub(super) blur_pipeline: wgpu::RenderPipeline,
-    pub(super) resample_pipeline: wgpu::RenderPipeline,
-    pub(super) color_matrix_pipeline: wgpu::RenderPipeline,
-    pub(super) blend_pipeline: wgpu::RenderPipeline,
-    pub(super) stencil_rrect_increment_pipeline: wgpu::RenderPipeline,
-    pub(super) stencil_rrect_decrement_pipeline: wgpu::RenderPipeline,
-    pub(super) stencil_path_increment_pipeline: wgpu::RenderPipeline,
-    pub(super) stencil_path_decrement_pipeline: wgpu::RenderPipeline,
+    pub(super) rectangle_pipeline: DeferredPipeline,
+    pub(super) text_pipeline: DeferredPipeline,
+    pub(super) image_pipeline: DeferredPipeline,
+    pub(super) rounded_rect_pipeline: DeferredPipeline,
+    pub(super) path_pipeline: DeferredPipeline,
+    pub(super) composite_pipeline: DeferredPipeline,
+    pub(super) straight_alpha_present_pipeline: DeferredPipeline,
+    pub(super) fixed_blend_pipelines: Vec<DeferredPipeline>,
+    pub(super) blur_pipeline: DeferredPipeline,
+    pub(super) resample_pipeline: DeferredPipeline,
+    pub(super) color_matrix_pipeline: DeferredPipeline,
+    pub(super) blend_pipeline: DeferredPipeline,
+    pub(super) stencil_rrect_increment_pipeline: DeferredPipeline,
+    pub(super) stencil_rrect_decrement_pipeline: DeferredPipeline,
+    pub(super) stencil_path_increment_pipeline: DeferredPipeline,
+    pub(super) stencil_path_decrement_pipeline: DeferredPipeline,
     pub(super) mesh: wgpu::Buffer,
     pub(super) instances: wgpu::Buffer,
     pub(super) instance_capacity: usize,
@@ -153,6 +156,9 @@ impl WgpuRenderer {
         let alpha_plan = SurfaceAlphaPlan::select(transparency_mode, &capabilities.alpha_modes)
             .map_err(RendererError::SurfaceAlpha)?;
         config.alpha_mode = alpha_plan.composite_mode();
+        // Retained windows submit only on change. Keeping one frame queued
+        // avoids an extra full-size swapchain image on native backends.
+        config.desired_maximum_frame_latency = 1;
         // Surface readback is optional in wgpu. Request it only when the
         // adapter advertises COPY_SRC; the renderer reports capture as
         // unavailable on surfaces that cannot be copied safely.
@@ -179,9 +185,9 @@ impl WgpuRenderer {
             );
         }
         // Device-level resources (layouts, samplers, unit quad, gradient LUT,
-        // and every pipeline) are created once per target format and shared by
-        // all windows using that format. A contract regression fails
-        // initialization with a labeled error instead of panicking on draw.
+        // and deferred pipelines) are shared by all windows on a target format.
+        // Pipelines compile on first use; validation failures propagate as
+        // labeled renderer errors rather than uncaptured-error panics.
         let shared_pipelines =
             create_shared_pipeline_resources(&device, &queue, config.format).await?;
         let (stencil_texture, stencil_view) =
@@ -243,6 +249,7 @@ impl WgpuRenderer {
             blend_sampler,
         } = shared_pipelines.clone();
         shared.register_pipeline_resources(format, shared_pipelines);
+        #[cfg(feature = "gpu-profiling")]
         let gpu_profiler = create_gpu_profiler(&device)?;
         Ok(Self {
             shared,
@@ -259,8 +266,11 @@ impl WgpuRenderer {
             },
             device,
             queue,
+            #[cfg(feature = "gpu-profiling")]
             gpu_profiler,
+            #[cfg(feature = "gpu-profiling")]
             profiler_next_pass: false,
+            #[cfg(feature = "gpu-profiling")]
             profiler_frames: VecDeque::new(),
             latest_gpu_timing: None,
             capture_requested: false,
@@ -331,16 +341,7 @@ impl WgpuRenderer {
             atlas_pages: RendererGlyphPages::new(),
             frame_pinned_glyph_pages: HashSet::new(),
             counters: GpuCounters {
-                rectangle_pipeline_creations: 1,
-                text_pipeline_creations: 1,
-                image_pipeline_creations: 1,
-                path_pipeline_creations: 1,
-                composite_pipeline_creations: 1,
-                surface_present_pipeline_creations: 1,
-                // Blur/resample share one stable pipeline family; these are
-                // retained as explicit diagnostics for effect setup.
                 stencil_texture_creations: 1,
-                stencil_pipeline_creations: 4,
                 ..GpuCounters::default()
             },
         })
@@ -390,6 +391,7 @@ impl WgpuRenderer {
                     | wgpu::TextureFormat::Bgra8Unorm
                     | wgpu::TextureFormat::Bgra8UnormSrgb
             );
+        #[cfg(feature = "gpu-profiling")]
         let gpu_profiler = create_gpu_profiler(&device)?;
         Ok(Self {
             shared,
@@ -406,8 +408,11 @@ impl WgpuRenderer {
             },
             device: device.clone(),
             queue,
+            #[cfg(feature = "gpu-profiling")]
             gpu_profiler,
+            #[cfg(feature = "gpu-profiling")]
             profiler_next_pass: false,
+            #[cfg(feature = "gpu-profiling")]
             profiler_frames: VecDeque::new(),
             latest_gpu_timing: None,
             capture_requested: false,
@@ -479,7 +484,6 @@ impl WgpuRenderer {
             frame_pinned_glyph_pages: HashSet::new(),
             counters: GpuCounters {
                 stencil_texture_creations: 1,
-                stencil_pipeline_creations: 0,
                 ..GpuCounters::default()
             },
         })
@@ -496,6 +500,35 @@ impl WgpuRenderer {
     }
     pub(super) fn counters_snapshot(&self) -> GpuCounters {
         let mut counters = self.counters;
+        // Pipeline counts belong to this format's shared device resources.
+        // Deferred contracts do not count until compilation succeeds.
+        counters.rectangle_pipeline_creations = u64::from(self.rectangle_pipeline.is_created())
+            + u64::from(self.rounded_rect_pipeline.is_created());
+        counters.text_pipeline_creations = u64::from(self.text_pipeline.is_created());
+        counters.image_pipeline_creations = u64::from(self.image_pipeline.is_created());
+        counters.path_pipeline_creations = u64::from(self.path_pipeline.is_created());
+        counters.surface_present_pipeline_creations =
+            u64::from(self.straight_alpha_present_pipeline.is_created());
+        counters.composite_pipeline_creations = [
+            &self.composite_pipeline,
+            &self.blur_pipeline,
+            &self.resample_pipeline,
+            &self.color_matrix_pipeline,
+            &self.blend_pipeline,
+        ]
+        .into_iter()
+        .chain(self.fixed_blend_pipelines.iter())
+        .filter(|pipeline| pipeline.is_created())
+        .count() as u64;
+        counters.stencil_pipeline_creations = [
+            &self.stencil_rrect_increment_pipeline,
+            &self.stencil_rrect_decrement_pipeline,
+            &self.stencil_path_increment_pipeline,
+            &self.stencil_path_decrement_pipeline,
+        ]
+        .into_iter()
+        .filter(|pipeline| pipeline.is_created())
+        .count() as u64;
         counters.local_image_entries = self.image_cache.len() as u64;
         counters.local_gradient_entries = self.gradient_cache.len() as u64;
         counters.local_glyph_page_bindings = self.atlas_pages.len() as u64;

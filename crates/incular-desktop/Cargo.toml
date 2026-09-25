@@ -46,6 +46,7 @@ serde_json = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+wgpu = { workspace = true, features = ["wgsl"] }
 tempfile = { workspace = true }
 # Live GPU churn regression builds raw image handles; dev-dependencies are
 # excluded from the reviewed dependency boundary so integration tests may
@@ -60,7 +61,7 @@ ashpd = { workspace = true }
 
 [features]
 default = []
-devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-runtime/devtools", "incular-widgets/devtools"]
+devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-runtime/devtools", "incular-widgets/devtools", "incular-wgpu/gpu-profiling"]
 
 [[test]]
 name = "in_place_resize"
@@ -90,6 +91,11 @@ harness = false
 [[test]]
 name = "image_tint_execution"
 path = "tests/image_tint_execution.rs"
+harness = false
+
+[[test]]
+name = "wgpu_idle_probe"
+path = "tests/wgpu_idle_probe.rs"
 harness = false
 
 [package.metadata.docs.rs]

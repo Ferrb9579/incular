@@ -10,8 +10,8 @@
 #[allow(unused_imports)]
 mod prelude {
     pub(crate) use crate::WindowSurfaceTarget;
+    pub(crate) use crate::glyph_rasterizer::RasterFont as Font;
     pub(crate) use bytemuck::{Pod, Zeroable};
-    pub(crate) use fontdue::{Font, FontSettings};
     pub(crate) use incular_assets::FontId;
     pub(crate) use incular_config::TransparencyMode;
     pub(crate) use incular_core::{Color, Offset, Rect, Size, Transform};
@@ -35,14 +35,21 @@ mod prelude {
     pub(crate) use std::sync::{Arc, Mutex};
     pub(crate) use std::time::{Duration, Instant};
     pub(crate) use wgpu::util::DeviceExt;
+    #[cfg(feature = "gpu-profiling")]
     pub(crate) use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 }
 
 mod batching;
+mod built_in_shaders;
 mod compositor;
 mod constants;
+mod deferred_pipeline;
 mod diagnostics;
+mod driver_workarounds;
 mod geometry;
+mod glyph_position;
+mod glyph_rasterizer;
+mod glyph_uploads;
 mod glyphs;
 mod pipelines;
 mod render_passes;
@@ -77,6 +84,8 @@ pub use surface::{
 
 pub(crate) use compositor::*;
 pub(crate) use constants::*;
+pub(crate) use deferred_pipeline::DeferredPipeline;
+#[cfg(feature = "gpu-profiling")]
 pub(crate) use diagnostics::{create_gpu_profiler, query_duration_us};
 pub(crate) use pipelines::*;
 pub(crate) use render_passes::*;

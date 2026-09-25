@@ -1,0 +1,5 @@
+SCHEDULER SchedulerCounters { signal_reads: 7, signal_writes: 2, dependents_enqueued: 0, runtime_wakes: 0, redraw_requests: 6, frames_started: 3, frames_presented: 3, frames_skipped: 0 }
+SCHEDULER SchedulerCounters { signal_reads: 7, signal_writes: 2, dependents_enqueued: 0, runtime_wakes: 0, redraw_requests: 6, frames_started: 3, frames_presented: 3, frames_skipped: 0 }
+SCHEDULER SchedulerCounters { signal_reads: 7, signal_writes: 2, dependents_enqueued: 0, runtime_wakes: 0, redraw_requests: 6, frames_started: 3, frames_presented: 3, frames_skipped: 0 }
+SCHEDULER SchedulerCounters { signal_reads: 7, signal_writes: 2, dependents_enqueued: 0, runtime_wakes: 0, redraw_requests: 6, frames_started: 3, frames_presented: 3, frames_skipped: 0 }
+GPU GpuResourceSummary { shared_image_entries: 0, shared_image_evictions: 0, shared_gradient_entries: 0, shared_gradient_evictions: 0, glyph_live_pages: 1, glyph_page_evictions: 0, glyphs_rasterized: 525, local_image_entries: 0, local_gradient_entries: 0, local_glyph_pages: 1 }

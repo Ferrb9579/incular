@@ -1,0 +1,5 @@
+__pycache__/
+results/**/ready-*.txt
+results/**/capture-ready.txt
+results/**/*.ppm
+results/**/*.ready

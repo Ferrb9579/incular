@@ -1,0 +1,15 @@
+{
+  "files": [
+    {
+      "path": "target\\desktop-benchmark\\batched-bundle\\issue_tracker.exe",
+      "bytes": 16609280,
+      "sha256": "7f0ded35aeb5e028f1613dce1ca3be127607ade3fa7f2fcab896ebc0dbc824c9"
+    },
+    {
+      "path": "target\\desktop-benchmark\\batched-bundle\\vcruntime140.dll",
+      "bytes": 178616,
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    }
+  ],
+  "totalBytes": 16787896
+}

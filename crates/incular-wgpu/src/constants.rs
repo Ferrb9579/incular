@@ -7,9 +7,9 @@ pub(crate) const OVERSIZE_PAGE_AREA_DIVISOR: u32 = 4;
 /// re-rasterize on demand.
 pub(crate) const DEFAULT_MAX_GLYPH_ATLAS_PAGES: usize = 8;
 /// Default device-owned retention for parsed rasterizer fonts. Counts
-/// entries, not bytes: fontdue exposes no reliable parsed-object memory
-/// measure, and source-file length is not a proxy for parsed size, so
-/// this limit bounds object count only. Eviction drops the parsed object
+/// entries, not bytes. Each object retains font bytes and parsed tables;
+/// glyph outlines are decoded transiently on atlas misses. The limit
+/// bounds object count only. Eviction drops the parsed object
 /// without invalidating glyph placements, atlas pages, source handles,
 /// or submitted work; the next miss re-parses from retained source bytes.
 pub(crate) const DEFAULT_MAX_PARSED_FONTS: usize = 8;

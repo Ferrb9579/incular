@@ -402,11 +402,15 @@ fn raster_cache_reuses_color_independent_glyphs_but_not_dpi_size() {
             font: run.font.id(),
             glyph,
             physical_size: one_x.physical_size,
+            fractional_size: 0,
+            phase: [0, 0],
         },
         GlyphCacheKey {
             font: run.font.id(),
             glyph,
             physical_size: two_x.physical_size,
+            fractional_size: 0,
+            phase: [0, 0],
         }
     );
     assert!(
@@ -415,6 +419,8 @@ fn raster_cache_reuses_color_independent_glyphs_but_not_dpi_size() {
                 font: run.font.id(),
                 glyph,
                 physical_size: two_x.physical_size,
+                fractional_size: 0,
+                phase: [0, 0],
             })
             .is_some()
     );
@@ -570,7 +576,7 @@ fn unsupported_gigantic_requests_are_rejected_without_rasterizing() {
 }
 
 #[test]
-fn fractional_gpu_placement_reuses_one_fontdue_mask() {
+fn repeated_integral_placement_reuses_one_coverage_mask() {
     let mut text = TextEngine::new();
     let layout = text.layout("H", &TextStyle::default(), None, TextAlign::Start);
     let run = &layout.lines[0].runs[0];
@@ -581,7 +587,7 @@ fn fractional_gpu_placement_reuses_one_fontdue_mask() {
         .unwrap()
         .entry;
     let cold = atlas.counters();
-    for _x in [0., 0.25, 0.5, 0.75] {
+    for _ in 0..4 {
         assert_eq!(
             atlas
                 .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
@@ -626,6 +632,8 @@ fn glyph_cache_keeps_font_ids_separate() {
                 font: run.font.id(),
                 glyph,
                 physical_size,
+                fractional_size: 0,
+                phase: [0, 0],
             })
             .is_some()
     );
@@ -635,6 +643,8 @@ fn glyph_cache_keeps_font_ids_separate() {
                 font: alternate.font.id(),
                 glyph,
                 physical_size,
+                fractional_size: 0,
+                phase: [0, 0],
             })
             .is_some()
     );
@@ -777,6 +787,8 @@ fn shared_resource_registry_reuses_image_and_matching_glyph_identity() {
         font: FontId(4),
         glyph: 73,
         physical_size: 16,
+        fractional_size: 0,
+        phase: [0, 0],
     };
     let same_one_x = resources.glyph_identity(one_x);
     assert_eq!(resources.glyph_identity(one_x), same_one_x);

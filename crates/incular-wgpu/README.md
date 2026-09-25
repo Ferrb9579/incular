@@ -9,7 +9,7 @@
 | Support | Available WGPU backend; shared reclamation and device recovery improve in H. |
 
 `SharedGpuContext` owns an application's one `wgpu` instance, adapter, device,
-queue, immutable target-format pipeline bundles, shared image/gradient
+queue, shared target-format pipeline bundles, shared image/gradient
 textures, and glyph atlas storage. Each `WgpuRenderer` owns one `WindowGpuState`: its native
 surface/configuration, physical presentation state, stencil attachment,
 dynamic instance buffers, and retained compositor/effect caches. This lets
@@ -17,6 +17,49 @@ multiple desktop windows share one GPU device without leaking Winit types
 through Incular's public API.
 
 `WgpuRenderer::new` remains the single-window convenience constructor.
+The shared device requests a manual memory allocator policy starting at 4 MiB
+blocks and growing to 64 MiB (the same upper bound as `MemoryUsage`):
+smaller allocation blocks suit retained UI resources while caches and resources
+continue to grow with demand. This is a driver-dependent hint, not a memory cap.
+
+Backend selection honors `WGPU_BACKEND` (for example `vulkan`, `dx12`, or `gl`).
+Without an explicit override, Windows tries DX12 first to avoid loading unused
+graphics backends, retrying the broader set if DX12 cannot meet the surface
+contract or finds only a CPU adapter. The device reserves 65,536 live non-sampler
+bindings instead of WGPU's million-entry default DX12 heap. This shared-device
+capacity is finite; exceptionally large applications can require a larger limit.
+Normal surfaces request one queued frame to reduce swapchain allocation.
+
+The reproduced Radeon 610M driver (DX12 `32.0.21036.11002`, Vulkan
+`25.10.36.11`) needs a one-time, 256-presentation bootstrap on a temporary 1×1
+surface to stop its idle worker spinning. Only this known Windows GPU/driver
+combination incurs the startup work. No continuous redraw is installed, and
+temporary resources are released before normal rendering. See the
+[hardware investigation](../../benchmarks/desktop/AMD-HARDWARE.md) for the
+reproducer, startup tradeoff, applicability and measured remaining memory gap.
+
+Pipelines compile and validate on first use, once per shared target format.
+Unused effects and blend variants therefore do not allocate shader/pipeline
+objects. First use can incur compilation latency; validation errors are labeled
+`RendererError::PipelineCreation` values and are cached along with successes.
+Pipeline diagnostics count compiled objects, not the number of descriptors.
+
+GPU timestamp queries are opt-in through the `gpu-profiling` feature, enabled
+automatically by desktop `devtools`. The profiler dependency, renderer state and
+query execution code are compiled only with this feature. Ordinary applications
+avoid the profiler as well as query pools and timing readback buffers; GPU timing
+is unavailable when disabled.
+
+`WGPU_ADAPTER_NAME` selects a case-insensitive substring of an adapter name.
+The adapter must support the surface and requested transparency; an unmatched
+override returns `RendererError::AdapterNameNotFound` rather than silently
+using a different device. An empty override preserves automatic selection.
+On Windows, `WGPU_BACKEND=dx12` plus
+`WGPU_ADAPTER_NAME=Microsoft Basic Render Driver` explicitly selects WARP,
+the OS software renderer. It bypasses the AMD driver and reduces idle resident
+memory on the benchmark host, but rendering uses CPU time and is not a hardware
+performance fix. See the [same-machine comparison](../../benchmarks/desktop/AMD-HARDWARE.md).
+
 Multi-window platform code creates one `SharedGpuContext` from the first
 window's owned `WindowSurfaceTarget`, then calls
 `SharedGpuContext::create_renderer` (or `WgpuRenderer::new_with_shared`) for
@@ -66,27 +109,48 @@ the common-format path every frame.
 Text shaping remains in `incular-text`. Layout positions, advances, line
 metrics, and font sizes are logical pixels. This crate turns each logical font
 size into a DPI-specific physical raster request (`logical_size × scale`,
-rounded to a physical raster size), keys grayscale masks by font ID, glyph ID,
-and physical size, then stores them in retained page-growing
+quantized to 1/64 physical pixel), keys grayscale masks by font ID, glyph ID,
+physical size and quarter-pixel origin, then stores them in retained page-growing
 `R8Unorm` atlas textures.
 Changing a window from 1x to 2x therefore requests new 2x masks without
-reshaping the logical paragraph; movement and scroll offsets are deliberately
-not cache-key inputs.
+reshaping the logical paragraph. Integer device-pixel movement reuses masks;
+fractional movement selects one of at most 16 phase variants per size and glyph.
 
 ## Glyph rasterization
 
-Production masks are generated solely by `fontdue` 0.9: a simple,
-platform-independent rasterizer whose stable grayscale masks are visually
-verified in Incular's current atlas pipeline. A `Fontdue` object is parsed once
-per `FontId`; glyph-cache misses reuse that parsed object. The cache identity is
-exactly `(FontId, glyph ID, rounded physical raster size)`. There is no backend
-switch, hinting policy, supersampling, downsampling, or fractional-raster phase.
-Fractional layout and compositor placement remain normal GPU quad placement, so
-they never create extra masks. `GlyphAtlas::debug_glyph` reports the real
-logical size, scale, physical raster size, bitmap dimensions, bearing, and atlas
-allocation.
+Production masks are generated by `ab_glyph` 0.2.32. Font tables are parsed once
+per `FontId`; outlines are decoded only for requested glyphs on atlas misses.
+This avoids retaining every flattened outline in a font, which made the former
+`fontdue` rasterizer expensive for sparse UI text. The bounded font cache owns
+a source-byte copy and table parser; transient outlines are released after each
+mask is generated. Pixel-per-em conversion preserves the shaping engine's scale,
+and bitmap allocation is capped before allocation. The cache identity is
+`(FontId, glyph ID, physical ppem in 1/64 pixels, quarter-pixel X/Y phase)`.
+Translation-only text rasterizes the device-space phase into the coverage mask,
+then places the quad on integer physical pixels to avoid a second bilinear blur.
+Rotated, skewed and scaled compositor transforms retain affine sampling. The
+phase variants share the existing bounded atlas/page and parsed-font budgets;
+only requested variants are created. This does not add an idle redraw loop.
+`GlyphAtlas::debug_glyph` reports the zero-phase mask's whole and fractional
+physical size, bitmap dimensions, bearing and atlas allocation.
 
-Text fallback does not change the atlas topology. Each font-specific logical run carries its own stable `FontId` (font bytes plus OpenType collection face index). Fontdue receives that collection index through `FontSettings`, so a shaped TTC/OTC face is rasterized as the same face. Mixed-script paragraphs safely share R8 atlas pages: warm Latin masks remain warm while a fallback run uploads only its own glyphs. Color glyph tables are a future non-R8 boundary and are not interpreted as alpha masks.
+This is grayscale, unhinted outline rendering. It does not yet reproduce
+Chromium's Windows DirectWrite hinting, LCD masks or Skia gamma/contrast policy.
+See [the font comparison](../../benchmarks/desktop/FONT-RENDERING.md).
+
+Fresh masks are staged atomically with shared atlas admission. Sparse glyph
+rectangles share a mapped upload buffer (at most 4 MiB pending), instead of
+allocating staging storage for each glyph. The buffer is submitted before a
+window draws; failed frames also flush admitted masks so another window can
+safely reuse them. Copies include the zero-coverage border and never overwrite
+neighboring allocations. CPU staging is released after submission.
+
+Per-pass instance data is packed by vertex stream, preserving its original
+within-stream order. At most six nonempty stream writes replace the former
+per-batch writes. Draw batches remain in painter order; this is upload batching,
+not draw sorting. [Memory evidence](../../benchmarks/desktop/GPU-UPLOADS.md).
+
+Text fallback does not change the atlas topology. Each font-specific logical run carries its own stable `FontId` (font bytes plus OpenType collection face index). The table parser receives that same collection index, so a shaped TTC/OTC face is rasterized as the same face. Mixed-script paragraphs safely share R8 atlas pages: warm Latin masks remain warm while a fallback run uploads only its own glyphs. Color glyph tables are a future non-R8 boundary and are not interpreted as alpha masks.
 
 Glyph page budgets count resident pages separately from stable slot indices.
 `WgpuRenderer::set_glyph_page_budget` retires unprotected excess immediately;
@@ -326,3 +390,5 @@ thread (the main thread for Metal).
 shared GPU context does not keep the first window alive afterward. Each
 renderer owns its own target. Unsupported surface configuration returns
 `RendererError::SurfaceConfigurationUnsupported` instead of panicking.
+
+Built-in WGSL shaders are parsed at build time and embedded as Naga modules. Runtime validation and native backend compilation remain enabled. This workspace also patches WGPU 30 internal validation shaders to avoid shipping its source parser; see [shader precompilation](../../benchmarks/desktop/SHADER-PRECOMPILATION.md) for maintenance and downstream packaging requirements.

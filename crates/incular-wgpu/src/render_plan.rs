@@ -567,6 +567,22 @@ pub(crate) fn border_instance(
         * scale;
     result
 }
+/// Device-space origin for untransformed text. Quantize before flooring so a
+/// phase near the next pixel carries into that pixel, including negative origins.
+pub(crate) fn glyph_device_origin(
+    run: &GlyphRun,
+    offset: Offset,
+    surface: GlyphSurface,
+) -> Option<Offset> {
+    crate::glyph_position::device_origin(
+        Offset::new(run.origin.x + offset.x, run.origin.y - offset.y),
+        surface.transform,
+        surface.scale,
+    )
+}
+
+pub(crate) use crate::glyph_position::phase as glyph_phase;
+
 pub(crate) fn glyph_instance(
     run: &GlyphRun,
     offset: Offset,
@@ -574,7 +590,24 @@ pub(crate) fn glyph_instance(
     color: Color,
     surface: GlyphSurface,
 ) -> GpuGlyphInstance {
-    // Fontdue's ymin is the bitmap's bottom relative to the baseline; the
+    if let Some(origin) = glyph_device_origin(run, offset, surface) {
+        // The phase was rasterized into the mask. Integer quad coordinates
+        // sample texel centers exactly instead of blurring the mask a second time.
+        return GpuGlyphInstance {
+            rect: [
+                origin.x.floor() + f32::from(entry.bearing_x),
+                origin.y.floor() - f32::from(entry.bearing_y) - f32::from(entry.height),
+                f32::from(entry.width),
+                f32::from(entry.height),
+            ],
+            affine: [1., 0., 0., 1.],
+            translation: [0.; 4],
+            surface: [surface.width, surface.height, 0., 0.],
+            uv: entry.uv_rect(),
+            color: color.to_linear_rgba(),
+        };
+    }
+    // The atlas bearing is the bitmap's bottom relative to the baseline; the
     // Parley-to-Incular bridge preserves the renderer's Y-down glyph-offset
     // convention.
     let x = run.origin.x + offset.x + f32::from(entry.bearing_x) / surface.scale;

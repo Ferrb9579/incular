@@ -1,0 +1,11 @@
+{
+  "test": {
+    "exitCode": 0,
+    "seconds": 442.17,
+    "command": [
+      "cargo",
+      "test-constrained"
+    ],
+    "note": "Full workspace suite passed. A subsequent lint-only chunks_exact(4) to as_chunks::<4>().0.iter() change in unsupported_effect_execution is revalidated by the native-recovery-default and native-vulkan steps."
+  }
+}

@@ -253,6 +253,8 @@ fn atlas_hits_survive_font_eviction_and_new_glyphs_reparse() {
             font: FontId(401),
             glyph,
             physical_size,
+            fractional_size: 0,
+            phase: [0, 0],
         });
     }
     assert_eq!(registry.glyph_count(), 2);

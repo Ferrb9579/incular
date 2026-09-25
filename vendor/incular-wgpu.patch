@@ -1,0 +1,262 @@
+--- a/wgpu/Cargo.toml
++++ b/wgpu/Cargo.toml
+@@ -192,7 +192,7 @@
+ version = "1.1"
+ 
+ [dependencies.wgpu-core]
+-version = "30.0.0"
++version = "=30.0.0"
+ optional = true
+ 
+ [dependencies.wgpu-types]
+@@ -238,7 +238,7 @@
+ default-features = false
+ 
+ [target.'cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))'.dependencies.wgpu-core]
+-version = "30.0.0"
++version = "=30.0.0"
+ optional = true
+ 
+ [target.'cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))'.dependencies.wgpu-hal]
+@@ -249,10 +249,9 @@
+ version = "1.14"
+ 
+ [target.'cfg(not(target_arch = "wasm32"))'.dependencies.wgpu-core]
+-version = "30.0.0"
++version = "=30.0.0"
+ features = [
+     "renderdoc",
+-    "wgsl",
+     "portable-atomic",
+ ]
+ 
+@@ -266,7 +265,7 @@
+ version = "1.14"
+ 
+ [target.'cfg(target_os = "emscripten")'.dependencies.wgpu-core]
+-version = "30.0.0"
++version = "=30.0.0"
+ 
+ [target.'cfg(target_os = "emscripten")'.dependencies.wgpu-hal]
+ version = "30.0.0"
+--- a/wgpu-core/build.rs
++++ b/wgpu-core/build.rs
+@@ -1,4 +1,7 @@
++mod incular_shader_build;
++
+ fn main() {
++    incular_shader_build::build();
+     cfg_aliases::cfg_aliases! {
+         windows_linux_android: { any(windows, target_os = "linux", target_os = "android", target_os = "freebsd") },
+         send_sync: { all(
+--- a/wgpu-core/Cargo.toml
++++ b/wgpu-core/Cargo.toml
+@@ -151,6 +151,7 @@
+ 
+ [dependencies.naga]
+ version = "30.0.0"
++features = ["deserialize"]
+ 
+ [dependencies.naga-types]
+ version = "30.0.0"
+@@ -235,3 +236,18 @@
+ level = "warn"
+ priority = 0
+ check-cfg = ["cfg(wgpu_validate_locks)"]
++
++[dependencies.postcard]
++version = "1"
++default-features = false
++features = ["alloc"]
++
++[build-dependencies.naga]
++version = "30.0.0"
++default-features = false
++features = ["wgsl-in", "serialize"]
++
++[build-dependencies.postcard]
++version = "1"
++default-features = false
++features = ["alloc"]
+--- a/wgpu-core/incular_shader_build.rs
++++ b/wgpu-core/incular_shader_build.rs
+@@ -0,0 +1,21 @@
++use std::{env, fs, path::PathBuf};
++
++pub fn build() {
++    println!("cargo:rerun-if-changed=src/indirect_validation");
++    println!("cargo:rerun-if-changed=src/timestamp_normalization");
++    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
++    let sources = [
++        ("draw", fs::read_to_string("src/indirect_validation/validate_draw.wgsl").unwrap()),
++        ("dispatch", fs::read_to_string("src/indirect_validation/dispatch_validation.wgsl").unwrap()),
++        ("timestamp", format!("{}\n{}",
++            fs::read_to_string("src/timestamp_normalization/common.wgsl").unwrap(),
++            fs::read_to_string("src/timestamp_normalization/timestamp_normalization.wgsl").unwrap())),
++    ];
++    for (name, source) in sources {
++        let module = naga::front::wgsl::parse_str(&source)
++            .unwrap_or_else(|error| panic!("{name}: {}", error.emit_to_string(&source)));
++        // These modules use device-dependent capabilities. Their original
++        // runtime validator remains authoritative, before HAL compilation.
++        fs::write(output.join(format!("{name}.naga")), postcard::to_allocvec(&module).unwrap()).unwrap();
++    }
++}
+--- a/wgpu-core/src/device/resource.rs
++++ b/wgpu-core/src/device/resource.rs
+@@ -1,3 +1,6 @@
++#[cfg(feature = "wgsl")]
++use crate::device::features_to_naga_capabilities;
++
+ use alloc::{
+     borrow::Cow,
+     boxed::Box,
+@@ -32,7 +35,7 @@
+     },
+     command, conv,
+     device::{
+-        bgl, create_validator, features_to_naga_capabilities, life::WaitIdleError, map_buffer,
++        bgl, create_validator, life::WaitIdleError, map_buffer,
+         AttachmentData, DeviceLostInvocation, HostMap, MissingDownlevelFlags, MissingFeatures,
+         RenderPassContext,
+     },
+--- a/wgpu-core/src/incular_built_in_shaders.rs
++++ b/wgpu-core/src/incular_built_in_shaders.rs
+@@ -0,0 +1,25 @@
++//! Incular's build-time parsing of WGPU's internal validation shaders.
++//! Runtime validation and backend compilation are unchanged.
++
++fn decode(bytes: &[u8]) -> naga::Module {
++    postcard::from_bytes(bytes).expect("embedded WGPU validation shader")
++}
++
++pub(crate) fn draw() -> naga::Module {
++    decode(include_bytes!(concat!(env!("OUT_DIR"), "/draw.naga")))
++}
++
++pub(crate) fn timestamp() -> naga::Module {
++    decode(include_bytes!(concat!(env!("OUT_DIR"), "/timestamp.naga")))
++}
++
++pub(crate) fn dispatch(limit: u32) -> naga::Module {
++    let mut module = decode(include_bytes!(concat!(env!("OUT_DIR"), "/dispatch.naga")));
++    let function = &mut module.entry_points[0].function;
++    let handle = *function.named_expressions.iter()
++        .find(|(_, name)| name.as_str() == "max_compute_workgroups_per_dimension")
++        .expect("named dispatch validation limit").0;
++    assert!(matches!(function.expressions[handle], naga::Expression::Literal(naga::Literal::U32(u32::MAX))));
++    function.expressions[handle] = naga::Expression::Literal(naga::Literal::U32(limit));
++    module
++}
+--- a/wgpu-core/src/indirect_validation/dispatch.rs
++++ b/wgpu-core/src/indirect_validation/dispatch.rs
+@@ -80,17 +80,7 @@
+         // SAFETY: The value we are passing to `new_unchecked` is not zero, so this is safe.
+         const DST_BUFFER_SIZE: NonZeroU64 = NonZeroU64::new(SRC_BUFFER_SIZE.get() * 2).unwrap();
+ 
+-        #[cfg(feature = "wgsl")]
+-        let module = naga::front::wgsl::parse_str(&src).map_err(|inner| {
+-            CreateShaderModuleError::Parsing(naga::error::ShaderError {
+-                source: src.clone(),
+-                label: None,
+-                inner: Box::new(inner),
+-            })
+-        })?;
+-        #[cfg(not(feature = "wgsl"))]
+-        #[allow(clippy::diverging_sub_expression)]
+-        let module = panic!("Indirect validation requires the wgsl feature flag to be enabled!");
++        let module = crate::incular_built_in_shaders::dispatch(max_compute_workgroups_per_dimension);
+ 
+         let info = crate::device::create_validator(
+             wgt::Features::IMMEDIATES,
+--- a/wgpu-core/src/indirect_validation/dispatch_validation.wgsl
++++ b/wgpu-core/src/indirect_validation/dispatch_validation.wgsl
+@@ -0,0 +1,25 @@
++
++            @group(0) @binding(0)
++            var<storage, read_write> dst: array<u32, 6>;
++            @group(1) @binding(0)
++            var<storage, read> src: array<u32>;
++            struct OffsetPc {
++                inner: u32,
++            }
++            var<immediate> offset: OffsetPc;
++
++            @compute @workgroup_size(1)
++            fn main() {
++                let src = vec3(src[offset.inner], src[offset.inner + 1], src[offset.inner + 2]);
++                let max_compute_workgroups_per_dimension = 4294967295u;
++                if (
++                    src.x > max_compute_workgroups_per_dimension ||
++                    src.y > max_compute_workgroups_per_dimension ||
++                    src.z > max_compute_workgroups_per_dimension
++                ) {
++                    dst = array(0u, 0u, 0u, 0u, 0u, 0u);
++                } else {
++                    dst = array(src.x, src.y, src.z, src.x, src.y, src.z);
++                }
++            }
++        --- a/wgpu-core/src/indirect_validation/draw.rs
++++ b/wgpu-core/src/indirect_validation/draw.rs
+@@ -525,17 +525,7 @@
+ ) -> Result<Box<dyn hal::DynShaderModule>, CreateIndirectValidationPipelineError> {
+     let src = include_str!("./validate_draw.wgsl");
+ 
+-    #[cfg(feature = "wgsl")]
+-    let module = naga::front::wgsl::parse_str(src).map_err(|inner| {
+-        CreateShaderModuleError::Parsing(naga::error::ShaderError {
+-            source: src.to_string(),
+-            label: None,
+-            inner: Box::new(inner),
+-        })
+-    })?;
+-    #[cfg(not(feature = "wgsl"))]
+-    #[allow(clippy::diverging_sub_expression)]
+-    let module = panic!("Indirect validation requires the wgsl feature flag to be enabled!");
++    let module = crate::incular_built_in_shaders::draw();
+ 
+     let info = crate::device::create_validator(
+         wgt::Features::IMMEDIATES,
+--- a/wgpu-core/src/lib.rs
++++ b/wgpu-core/src/lib.rs
+@@ -80,6 +80,7 @@
+ pub mod id;
+ pub mod identity;
+ mod indirect_validation;
++mod incular_built_in_shaders;
+ mod init_tracker;
+ pub mod instance;
+ pub mod limits;
+--- a/wgpu-core/src/lock/ranked.rs
++++ b/wgpu-core/src/lock/ranked.rs
+@@ -80,7 +80,7 @@
+ /// For details, see [the module documentation][self].
+ pub struct MutexGuard<'a, T> {
+     inner: parking_lot::MutexGuard<'a, T>,
+-    #[cfg_attr(not(miri), expect(unused))] // but `Drop` has important side effects
++    #[cfg_attr(not(miri), allow(unused))] // but `Drop` has important side effects
+     saved: LockStateGuard,
+ }
+ 
+--- a/wgpu-core/src/timestamp_normalization/mod.rs
++++ b/wgpu-core/src/timestamp_normalization/mod.rs
+@@ -137,18 +137,7 @@
+ 
+             let preprocessed_src = alloc::format!("{common_src}\n{src}");
+ 
+-            #[cfg(feature = "wgsl")]
+-            let module = naga::front::wgsl::parse_str(&preprocessed_src).map_err(|inner| {
+-                TimestampNormalizerInitError::ParseWgsl(naga::error::ShaderError {
+-                    source: preprocessed_src.clone(),
+-                    label: None,
+-                    inner: Box::new(inner),
+-                })
+-            })?;
+-            #[cfg(not(feature = "wgsl"))]
+-            #[allow(clippy::diverging_sub_expression)]
+-            let module =
+-                panic!("Timestamp normalization requires the wgsl feature flag to be enabled!");
++            let module = crate::incular_built_in_shaders::timestamp();
+ 
+             let info = crate::device::create_validator(
+                 wgt::Features::IMMEDIATES,

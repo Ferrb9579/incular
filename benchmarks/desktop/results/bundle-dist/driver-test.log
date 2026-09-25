@@ -1,0 +1,8 @@
+   Compiling incular-wgpu v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-wgpu)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.64s
+     Running tests\driver_workarounds.rs (target\debug\deps\driver_workarounds-b85c19bc8e1a0dce.exe)
+
+running 1 test
+test bootstrap_is_limited_to_reproduced_native_driver_versions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

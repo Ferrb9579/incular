@@ -321,3 +321,8 @@ targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
 name = "hello"
 path = "examples/hello.rs"
 required-features = ["desktop"]
+
+[[example]]
+name = "issue_tracker"
+path = "../../examples/issue_tracker/main.rs"
+required-features = ["desktop", "controls"]

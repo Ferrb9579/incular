@@ -30,7 +30,7 @@ use incular_desktop::run_application;
 use incular_platform::WindowOptions;
 use incular_rendering::Brush;
 use incular_runtime::{Application, Signal, Simulation, SimulationError};
-use incular_widgets::{BackdropFilter, Column, ShaderMask, Widget};
+use incular_widgets::{BackdropFilter, Column, DecoratedBox, ShaderMask, Text, TextStyle, Widget};
 
 const WIN_W: f32 = 160.0;
 const WIN_H: f32 = 120.0;
@@ -88,7 +88,16 @@ fn unsupported_effect_execution() {
                 Phase::Plain => Widget::box_(Size::new(64., 64.), Color::WHITE),
             };
             let advance = phase_for_window.clone();
-            Column::new([
+            DecoratedBox::new(Column::new([
+                // Admit glyphs before the deliberately failing effect. Their
+                // shared uploads must survive the failed frame and later hits.
+                Text::new("GPU")
+                    .style(TextStyle {
+                        size: 20.,
+                        color: Color::WHITE,
+                        ..TextStyle::default()
+                    })
+                    .into(),
                 content,
                 incular_widgets::internal::ActionSurface::new("Next")
                     .size(Size::new(96., 24.))
@@ -100,7 +109,9 @@ fn unsupported_effect_execution() {
                         });
                     })
                     .into(),
-            ])
+            ]))
+            .size(Size::new(WIN_W, WIN_H))
+            .background(Color::BLACK)
             .into()
         })
         .expect("open effect window");
@@ -124,6 +135,10 @@ fn unsupported_effect_execution() {
                 // Phase 1: the mask fails typed with no presentation.
                 eprintln!("effect: waiting for mask frame");
                 expect_unsupported(&sim, "shader masks are not executed")?;
+                assert!(
+                    sim.query_gpu_resources()?.glyphs_rasterized >= 3,
+                    "glyphs must be admitted before the effect fails"
+                );
                 eprintln!("effect: mask frame failed typed");
                 sim.click("Next")?;
                 // Phase 2: the backdrop filter fails typed the same way.
@@ -139,6 +154,17 @@ fn unsupported_effect_execution() {
                 assert!(
                     shot.width() > 0 && shot.height() > 0,
                     "plain content must present with dimensions"
+                );
+                let text_rows = (shot.height() as f32 * 20. / WIN_H) as usize;
+                let bright = shot.pixels()[..text_rows * shot.width() as usize * 4]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|pixel| pixel[0] > 180 && pixel[1] > 180 && pixel[2] > 180)
+                    .count();
+                assert!(
+                    bright > 10,
+                    "glyphs cached by a failed frame must draw on recovery"
                 );
                 eprintln!("effect: plain frame presented");
                 handle.close().expect("close bridge remains active");

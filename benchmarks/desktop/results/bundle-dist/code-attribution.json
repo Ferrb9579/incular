@@ -1,0 +1,30 @@
+{
+  "note": "Pre-shader-IR dist build. Approximate adjacent-symbol text bytes, deduplicated by address; LTO/aliases prevent exact crate attribution. Excludes read-only data and DLLs.",
+  "objects": {
+    "naga": 1166556,
+    "wgpu_core": 1042604,
+    "wgpu_hal": 846487,
+    "incular_widgets": 820142,
+    "incular_runtime": 468850,
+    "incular_desktop": 450624,
+    "harfrust": 315943,
+    "incular_wgpu": 260397,
+    "a87daceb1e6c7c0a": 168856,
+    "incular_text": 167176,
+    "accesskit_windows": 112902,
+    "winit": 111809,
+    "wgpu": 100291,
+    "incular_windows": 94130,
+    "accesskit_consumer": 84891,
+    "tokio": 81152,
+    "std": 80512,
+    "read_fonts": 75220,
+    "ttf_parser": 71912,
+    "fontique": 69636,
+    "lyon_tessellation": 66819,
+    "ash": 63316,
+    "muda": 62404,
+    "incular_rendering": 59880,
+    "core": 58665
+  }
+}

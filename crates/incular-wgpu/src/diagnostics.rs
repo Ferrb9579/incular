@@ -2,7 +2,8 @@ use super::prelude::*;
 use crate::surface::SurfaceAlphaError;
 
 impl GpuCounters {
-    /// Total render pipelines created across every family.
+    /// Compiled pipelines across every family of this shared target format.
+    /// Other windows using the same format observe the same shared counts.
     #[must_use]
     pub const fn total_pipeline_creations(&self) -> u64 {
         self.text_pipeline_creations
@@ -36,7 +37,7 @@ pub struct GpuCounters {
     pub large_glyph_rasters: u64,
     pub huge_glyph_rasters: u64,
     pub oversize_glyph_rasters: u64,
-    /// Parsed Fontdue objects created on a `FontId` cache miss.
+    /// Parsed font-table objects created on a `FontId` cache miss.
     pub font_parser_cache_misses: u64,
     pub font_parser_cache_hits: u64,
     /// Retained parsed fonts dropped by entry-limit eviction. Placements,
@@ -251,6 +252,7 @@ pub struct GpuFrameTimings {
     pub main_pass_us: f64,
 }
 
+#[cfg(feature = "gpu-profiling")]
 pub(crate) fn create_gpu_profiler(device: &wgpu::Device) -> Result<GpuProfiler, RendererError> {
     GpuProfiler::new(
         device,
@@ -266,6 +268,7 @@ pub(crate) fn create_gpu_profiler(device: &wgpu::Device) -> Result<GpuProfiler, 
     .map_err(|error| RendererError::GpuProfiler(error.to_string()))
 }
 
+#[cfg(feature = "gpu-profiling")]
 pub(crate) fn query_duration_us(results: &[GpuTimerQueryResult], label: &str) -> Option<f64> {
     results.iter().find_map(|result| {
         if result.label == label {
@@ -281,7 +284,11 @@ pub(crate) fn query_duration_us(results: &[GpuTimerQueryResult], label: &str) ->
 #[derive(Debug)]
 pub enum RendererError {
     Adapter(wgpu::RequestAdapterError),
+    /// An explicit adapter override could not satisfy this window's contract.
+    AdapterNameNotFound(String),
     Device(wgpu::RequestDeviceError),
+    /// A bounded native driver initialization workaround failed.
+    DriverInitialization(String),
     Surface(wgpu::CreateSurfaceError),
     SurfaceAlpha(SurfaceAlphaError),
     /// The shared adapter cannot configure presentation for this surface.
@@ -338,7 +345,14 @@ impl std::fmt::Display for RendererError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Adapter(e) => write!(f, "unable to acquire GPU adapter: {e}"),
+            Self::AdapterNameNotFound(name) => write!(
+                f,
+                "no adapter matching WGPU_ADAPTER_NAME={name:?} supports the requested surface and transparency"
+            ),
             Self::Device(e) => write!(f, "unable to acquire GPU device: {e}"),
+            Self::DriverInitialization(error) => {
+                write!(f, "GPU driver initialization failed: {error}")
+            }
             Self::Surface(e) => write!(f, "unable to create GPU surface: {e}"),
             Self::SurfaceConfigurationUnsupported => {
                 write!(f, "GPU adapter cannot configure the requested surface")

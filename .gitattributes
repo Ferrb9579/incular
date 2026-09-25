@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# Preserve upstream formatting and literal unified-diff context in vendored sources.
+vendor/** -whitespace

@@ -1,0 +1,43 @@
+   Compiling wgpu-core v30.0.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\vendor\wgpu-core)
+   Compiling wgpu v30.0.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\vendor\wgpu)
+   Compiling incular-wgpu v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-wgpu)
+   Compiling incular-desktop v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-desktop)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.98s
+     Running tests\image_tint_execution.rs (target\debug\deps\image_tint_execution-b69d84780ab74aae.exe)
+tint: opaque white flattens to red -> [255, 0, 0, 255]
+tint: opaque black flattens to red (not modulate-black) -> [255, 0, 0, 255]
+tint: opaque green flattens to red -> [255, 0, 0, 255]
+tint: transparent source shows the background -> [0, 0, 255, 255]
+tint: half-transparent white composites over blue -> [188, 0, 187, 255]
+tint: half-transparent red tint composites over white -> [255, 187, 187, 255]
+     Running tests\in_place_resize.rs (target\debug\deps\in_place_resize-6ae9c1b607ac51e7.exe)
+     Running tests\two_window_resource_churn.rs (target\debug\deps\two_window_resource_churn-68b0abc25a51fdac.exe)
+churn: waiting for initial frames
+churn: initial frames presented
+churn: image/gradient pressure after 24 epochs (images 33 evicted, gradients 33 evicted)
+churn: glyph pressure done (8 pages live, 4 retired, rasterized 94 -> 134)
+churn: A redraw requested
+churn: A settled after resume
+churn: A resume capture done
+churn: A resume identical=true
+churn: A close requested
+churn: B settled after A closed
+churn: B survivor capture done
+churn: closing windows
+churn: closes sent, sending report
+churn: worker done
+churn: event loop returned
+     Running tests\unsupported_effect_execution.rs (target\debug\deps\unsupported_effect_execution-b9946a9942e0af86.exe)
+effect: waiting for mask frame
+Incular renderer error: shader masks are not executed by this backend; remove the mask or await backend support
+Incular renderer error: shader masks are not executed by this backend; remove the mask or await backend support
+effect: mask frame failed typed
+effect: waiting for backdrop frame
+Incular renderer error: enabled backdrop filters are not executed by this backend; disable the filter or await backend support
+Incular renderer error: enabled backdrop filters are not executed by this backend; disable the filter or await backend support
+effect: backdrop frame failed typed
+effect: waiting for plain frame
+effect: plain frame presented
+effect: closing window
+effect: worker done
+effect: event loop returned

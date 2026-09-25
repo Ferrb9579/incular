@@ -49,108 +49,70 @@ impl WgpuRenderer {
         width: u32,
         height: u32,
     ) {
-        let mut rectangle_offset = 0_u64;
-        let mut glyph_offset = 0_u64;
-        let mut image_offset = 0_u64;
-        let mut rounded_offset = 0_u64;
-        let mut path_offset = 0_u64;
-        let mut composite_offset = 0_u64;
+        // Draw order stays in `batches`. Pack each vertex stream in that same
+        // order, then make one queue write per stream instead of one allocation
+        // per draw batch. Temporary CPU storage is released before returning.
+        let mut streams: [Vec<u8>; 6] = std::array::from_fn(|_| Vec::new());
         for batch in batches {
             match batch {
-                DrawBatch::Rectangles { clip, instances }
-                    if *clip != ClipState::Empty && !instances.is_empty() =>
-                {
-                    let gpu: Vec<_> = instances
-                        .iter()
-                        .map(|instance| {
-                            logical_instance(*instance, width as f32, height as f32, scale)
-                        })
-                        .collect();
-                    self.write_counted(
-                        self.instances.clone(),
-                        rectangle_offset,
-                        bytemuck::cast_slice(&gpu),
-                    );
-                    rectangle_offset += (gpu.len() * std::mem::size_of::<GpuInstance>()) as u64;
+                DrawBatch::Rectangles { clip, instances } if *clip != ClipState::Empty => {
+                    for instance in instances {
+                        streams[0].extend_from_slice(bytemuck::bytes_of(&logical_instance(
+                            *instance,
+                            width as f32,
+                            height as f32,
+                            scale,
+                        )));
+                    }
                 }
                 DrawBatch::Glyphs {
                     clip, instances, ..
-                } if *clip != ClipState::Empty && !instances.is_empty() => {
-                    self.write_counted(
-                        self.glyph_instances.clone(),
-                        glyph_offset,
-                        bytemuck::cast_slice(instances),
-                    );
-                    glyph_offset +=
-                        (instances.len() * std::mem::size_of::<GpuGlyphInstance>()) as u64;
+                } if *clip != ClipState::Empty => {
+                    streams[1].extend_from_slice(bytemuck::cast_slice(instances));
                 }
                 DrawBatch::Images {
                     clip, instances, ..
-                } if *clip != ClipState::Empty && !instances.is_empty() => {
-                    self.write_counted(
-                        self.image_instances.clone(),
-                        image_offset,
-                        bytemuck::cast_slice(instances),
-                    );
-                    image_offset +=
-                        (instances.len() * std::mem::size_of::<GpuImageInstance>()) as u64;
+                } if *clip != ClipState::Empty => {
+                    streams[2].extend_from_slice(bytemuck::cast_slice(instances));
                 }
                 DrawBatch::RoundedRects {
                     clip, instances, ..
-                } if *clip != ClipState::Empty && !instances.is_empty() => {
-                    self.write_counted(
-                        self.rounded_rect_instances.clone(),
-                        rounded_offset,
-                        bytemuck::cast_slice(instances),
-                    );
-                    rounded_offset +=
-                        (instances.len() * std::mem::size_of::<GpuRRectInstance>()) as u64;
-                }
-                DrawBatch::Path { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.write_counted(
-                        self.path_instances.clone(),
-                        path_offset,
-                        bytemuck::bytes_of(instance),
-                    );
-                    path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
+                } if *clip != ClipState::Empty => {
+                    streams[3].extend_from_slice(bytemuck::cast_slice(instances));
                 }
                 DrawBatch::StencilRRect { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.write_counted(
-                        self.rounded_rect_instances.clone(),
-                        rounded_offset,
-                        bytemuck::bytes_of(instance),
-                    );
-                    rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
+                    streams[3].extend_from_slice(bytemuck::bytes_of(instance));
                 }
-                DrawBatch::StencilPath { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.write_counted(
-                        self.path_instances.clone(),
-                        path_offset,
-                        bytemuck::bytes_of(instance),
-                    );
-                    path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
+                DrawBatch::Path { clip, instance, .. }
+                | DrawBatch::StencilPath { clip, instance, .. }
+                    if *clip != ClipState::Empty =>
+                {
+                    streams[4].extend_from_slice(bytemuck::bytes_of(instance));
                 }
-                DrawBatch::Offscreen { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.write_counted(
-                        self.composite_instances.clone(),
-                        composite_offset,
-                        bytemuck::bytes_of(instance),
-                    );
-                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
-                }
-                DrawBatch::Filtered { clip, instance, .. }
+                DrawBatch::Offscreen { clip, instance, .. }
+                | DrawBatch::Filtered { clip, instance, .. }
                 | DrawBatch::Shadow { clip, instance, .. }
                 | DrawBatch::Blend { clip, instance, .. }
                     if *clip != ClipState::Empty =>
                 {
-                    self.write_counted(
-                        self.composite_instances.clone(),
-                        composite_offset,
-                        bytemuck::bytes_of(instance),
-                    );
-                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    streams[5].extend_from_slice(bytemuck::bytes_of(instance));
                 }
                 _ => {}
+            }
+        }
+        for (buffer, data) in [
+            self.instances.clone(),
+            self.glyph_instances.clone(),
+            self.image_instances.clone(),
+            self.rounded_rect_instances.clone(),
+            self.path_instances.clone(),
+            self.composite_instances.clone(),
+        ]
+        .into_iter()
+        .zip(streams)
+        {
+            if !data.is_empty() {
+                self.write_counted(buffer, 0, &data);
             }
         }
     }
@@ -167,7 +129,43 @@ impl WgpuRenderer {
         clear: wgpu::Color,
         destination_view: Option<&wgpu::TextureView>,
         load_existing: bool,
-    ) -> (u32, u32) {
+    ) -> Result<(u32, u32), RendererError> {
+        // All windows share this upload batch. Submit it before any draw (or
+        // pipeline error), so cached masks cannot be observed before their copy.
+        self.shared.flush_glyph_uploads();
+        // Fail before opening a profiler query/render pass. Successful lookups
+        // below are then cache hits, and a failed contract leaves no open query.
+        for batch in batches {
+            let pipeline = match batch {
+                DrawBatch::Rectangles { .. } => &self.rectangle_pipeline,
+                DrawBatch::Glyphs { .. } => &self.text_pipeline,
+                DrawBatch::Images { .. } => &self.image_pipeline,
+                DrawBatch::RoundedRects { .. } => &self.rounded_rect_pipeline,
+                DrawBatch::Path { .. } => &self.path_pipeline,
+                DrawBatch::StencilRRect {
+                    increment: true, ..
+                } => &self.stencil_rrect_increment_pipeline,
+                DrawBatch::StencilRRect { .. } => &self.stencil_rrect_decrement_pipeline,
+                DrawBatch::StencilPath {
+                    increment: true, ..
+                } => &self.stencil_path_increment_pipeline,
+                DrawBatch::StencilPath { .. } => &self.stencil_path_decrement_pipeline,
+                DrawBatch::Offscreen { .. }
+                | DrawBatch::Filtered { .. }
+                | DrawBatch::Shadow { .. } => &self.composite_pipeline,
+                DrawBatch::Blend { mode, .. } if mode.requires_destination_read() => {
+                    &self.blend_pipeline
+                }
+                DrawBatch::Blend { mode, .. } => {
+                    let Some(pipeline) = self.fixed_blend_pipelines.get(mode.code() as usize)
+                    else {
+                        continue;
+                    };
+                    pipeline
+                }
+            };
+            pipeline.get()?;
+        }
         let mut draw_calls = 0_u32;
         let mut text_draw_calls = 0_u32;
         let mut rectangle_offset = 0_u64;
@@ -179,6 +177,7 @@ impl WgpuRenderer {
         // wgpu-profiler samples only the top-level compositor pass. Offscreen
         // effect passes remain attributable through their renderer counters
         // instead of consuming profiler scopes for every intermediate target.
+        #[cfg(feature = "gpu-profiling")]
         let profiler_query = if self.profiler_next_pass {
             self.profiler_next_pass = false;
             Some(
@@ -188,6 +187,9 @@ impl WgpuRenderer {
         } else {
             None
         };
+        #[cfg(not(feature = "gpu-profiling"))]
+        let timestamp_writes = None;
+        #[cfg(feature = "gpu-profiling")]
         let timestamp_writes = profiler_query
             .as_ref()
             .and_then(wgpu_profiler::GpuProfilerQuery::render_pass_timestamp_writes);
@@ -278,7 +280,7 @@ impl WgpuRenderer {
                     let start = rectangle_offset;
                     rectangle_offset +=
                         (instances.len() * std::mem::size_of::<GpuInstance>()) as u64;
-                    pass.set_pipeline(&self.rectangle_pipeline);
+                    pass.set_pipeline(self.rectangle_pipeline.get()?);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(1, self.instances.slice(start..rectangle_offset));
                     pass.draw(0..6, 0..instances.len() as u32);
@@ -293,7 +295,7 @@ impl WgpuRenderer {
                     let Some(atlas_page) = self.atlas_pages.get(*page) else {
                         continue;
                     };
-                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_pipeline(self.text_pipeline.get()?);
                     pass.set_bind_group(0, &atlas_page.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(1, self.glyph_instances.slice(start..glyph_offset));
@@ -313,7 +315,7 @@ impl WgpuRenderer {
                     let Some(bind_group) = self.image_bind_group(*image, *sampling) else {
                         continue;
                     };
-                    pass.set_pipeline(&self.image_pipeline);
+                    pass.set_pipeline(self.image_pipeline.get()?);
                     pass.set_bind_group(0, bind_group, &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(1, self.image_instances.slice(start..image_offset));
@@ -329,7 +331,7 @@ impl WgpuRenderer {
                     let start = rounded_offset;
                     rounded_offset +=
                         (instances.len() * std::mem::size_of::<GpuRRectInstance>()) as u64;
-                    pass.set_pipeline(&self.rounded_rect_pipeline);
+                    pass.set_pipeline(self.rounded_rect_pipeline.get()?);
                     pass.set_bind_group(0, self.gradient_bind_group(*gradient), &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(
@@ -351,7 +353,7 @@ impl WgpuRenderer {
                     let Some(mesh) = self.gpu_path_cache.get(key) else {
                         continue;
                     };
-                    pass.set_pipeline(&self.path_pipeline);
+                    pass.set_pipeline(self.path_pipeline.get()?);
                     pass.set_bind_group(0, gradient_bind_group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_vertex_buffer(1, self.path_instances.slice(start..path_offset));
@@ -365,9 +367,9 @@ impl WgpuRenderer {
                     let start = rounded_offset;
                     rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
                     pass.set_pipeline(if *increment {
-                        &self.stencil_rrect_increment_pipeline
+                        self.stencil_rrect_increment_pipeline.get()?
                     } else {
-                        &self.stencil_rrect_decrement_pipeline
+                        self.stencil_rrect_decrement_pipeline.get()?
                     });
                     pass.set_bind_group(0, self.gradient_bind_group(None), &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
@@ -386,9 +388,9 @@ impl WgpuRenderer {
                         continue;
                     };
                     pass.set_pipeline(if *increment {
-                        &self.stencil_path_increment_pipeline
+                        self.stencil_path_increment_pipeline.get()?
                     } else {
-                        &self.stencil_path_decrement_pipeline
+                        self.stencil_path_decrement_pipeline.get()?
                     });
                     pass.set_bind_group(0, self.gradient_bind_group(None), &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
@@ -411,7 +413,7 @@ impl WgpuRenderer {
                     let Some(entry) = self.offscreen_cache.get(layer) else {
                         continue;
                     };
-                    pass.set_pipeline(&self.composite_pipeline);
+                    pass.set_pipeline(self.composite_pipeline.get()?);
                     pass.set_bind_group(0, &entry.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(
@@ -438,7 +440,7 @@ impl WgpuRenderer {
                     let Some(entry) = self.effect_cache.get(layer) else {
                         continue;
                     };
-                    pass.set_pipeline(&self.composite_pipeline);
+                    pass.set_pipeline(self.composite_pipeline.get()?);
                     pass.set_bind_group(0, &entry.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(
@@ -464,7 +466,7 @@ impl WgpuRenderer {
                     } else {
                         continue;
                     }
-                    pass.set_pipeline(&self.composite_pipeline);
+                    pass.set_pipeline(self.composite_pipeline.get()?);
                     if let Some(entry) = self.effect_cache.get(layer) {
                         pass.set_bind_group(0, &entry.bind_group, &[]);
                     } else if let Some(entry) = self.offscreen_cache.get(layer) {
@@ -501,7 +503,7 @@ impl WgpuRenderer {
                         else {
                             continue;
                         };
-                        pass.set_pipeline(pipeline);
+                        pass.set_pipeline(pipeline.get()?);
                         pass.set_bind_group(0, &source.bind_group, &[]);
                         pass.set_vertex_buffer(0, self.mesh.slice(..));
                         pass.set_vertex_buffer(
@@ -539,7 +541,7 @@ impl WgpuRenderer {
                             },
                         ],
                     });
-                    pass.set_pipeline(&self.blend_pipeline);
+                    pass.set_pipeline(self.blend_pipeline.get()?);
                     pass.set_bind_group(0, &bind_group, &[]);
                     pass.set_vertex_buffer(0, self.mesh.slice(..));
                     pass.set_vertex_buffer(
@@ -560,10 +562,11 @@ impl WgpuRenderer {
             }
         }
         drop(pass);
+        #[cfg(feature = "gpu-profiling")]
         if let Some(query) = profiler_query {
             self.gpu_profiler.end_query(encoder, query);
             self.gpu_profiler.resolve_queries(encoder);
         }
-        (draw_calls, text_draw_calls)
+        Ok((draw_calls, text_draw_calls))
     }
 }

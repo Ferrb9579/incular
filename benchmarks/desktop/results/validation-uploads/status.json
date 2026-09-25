@@ -1,0 +1,161 @@
+{
+  "fmt": {
+    "exitCode": 0,
+    "seconds": 3.23,
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ]
+  },
+  "check": {
+    "exitCode": 0,
+    "seconds": 0.52,
+    "command": [
+      "cargo",
+      "check",
+      "--workspace"
+    ]
+  },
+  "test": {
+    "exitCode": 0,
+    "seconds": 442.17,
+    "command": [
+      "cargo",
+      "test-constrained"
+    ]
+  },
+  "clippy": {
+    "exitCode": 0,
+    "seconds": 2.0,
+    "command": [
+      "cargo",
+      "clippy",
+      "--workspace",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "-D",
+      "warnings"
+    ]
+  },
+  "native-recovery-default": {
+    "exitCode": 0,
+    "seconds": 8.73,
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "incular-desktop",
+      "--test",
+      "unsupported_effect_execution"
+    ]
+  },
+  "native-vulkan": {
+    "exitCode": 0,
+    "seconds": 4.78,
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "incular-desktop",
+      "--test",
+      "unsupported_effect_execution",
+      "--test",
+      "two_window_resource_churn",
+      "--test",
+      "in_place_resize",
+      "--test",
+      "image_tint_execution"
+    ]
+  },
+  "gpu-upload-vulkan": {
+    "exitCode": 0,
+    "seconds": 6.53,
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "incular-wgpu",
+      "--test",
+      "glyph_uploads"
+    ]
+  },
+  "build": {
+    "exitCode": 0,
+    "seconds": 0.53,
+    "command": [
+      "cargo",
+      "build",
+      "--release",
+      "-p",
+      "incular",
+      "--example",
+      "issue_tracker",
+      "--no-default-features",
+      "--features",
+      "desktop,controls"
+    ]
+  },
+  "scheduler-profile": {
+    "exitCode": 0,
+    "seconds": 8.89,
+    "command": [
+      "target/release/examples/issue_tracker.exe"
+    ]
+  },
+  "benchmark-default": {
+    "exitCode": 0,
+    "seconds": 137.75,
+    "command": [
+      "python",
+      "benchmarks/desktop/run-windows.py",
+      "--executable",
+      "target\\desktop-benchmark\\batched-bundle\\issue_tracker.exe",
+      "--output",
+      "benchmarks/desktop/results/windows/electron-ui-batched"
+    ]
+  },
+  "benchmark-electron": {
+    "exitCode": 0,
+    "seconds": 220.77,
+    "command": [
+      "python",
+      "benchmarks/desktop/run-electron-windows.py",
+      "--executable",
+      "target/desktop-benchmark/electron-package/Benchmark Electron-win32-x64/Benchmark Electron.exe",
+      "--output",
+      "benchmarks/desktop/results/windows/electron-ui-electron-final"
+    ]
+  },
+  "benchmark-after-smoke": {
+    "exitCode": 0,
+    "seconds": 127.62,
+    "command": [
+      "python",
+      "benchmarks/desktop/run-windows.py",
+      "--executable",
+      "target\\desktop-benchmark\\batched-bundle\\issue_tracker.exe",
+      "--after-smoke",
+      "--output",
+      "benchmarks/desktop/results/windows/electron-ui-batched-after-smoke"
+    ]
+  },
+  "vulkan-probe": {
+    "exitCode": 0,
+    "seconds": 14.91,
+    "command": [
+      "python",
+      "benchmarks/desktop/probe-backends.py",
+      "--executable",
+      "target\\desktop-benchmark\\batched-bundle\\issue_tracker.exe",
+      "--ready",
+      "--backends",
+      "vulkan",
+      "--output",
+      "benchmarks/desktop/results/windows/electron-ui-batched/vulkan-probe.json"
+    ]
+  }
+}

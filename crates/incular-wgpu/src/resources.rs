@@ -685,6 +685,7 @@ impl SharedImageMaintenance {
 pub struct SharedGpuDiagnostics {
     pub device_generation: u64,
     pub pipeline_variants: usize,
+    /// Successfully compiled pipelines; unused deferred descriptors are excluded.
     pub pipeline_count: usize,
     pub shared_image_resources: usize,
     pub shared_glyph_resources: usize,
@@ -833,9 +834,9 @@ pub(crate) struct SharedGpuContextInner {
     ///   or frame.
     /// - Each entry holds the closed `pipeline_contracts()` registry (11
     ///   fixed classes + 11 Porter-Duff blends + 4 clip-mask directions =
-    ///   26 contracts), each built exactly once per format.
-    /// - Renderers clone the wgpu handles (internally reference-counted
-    ///   handles to the same GPU objects, never duplicate allocations),
+    ///   26 contracts), each compiled at most once on first use per format.
+    /// - Renderers clone shared deferred entries and wgpu resource handles
+    ///   (reference-counted ownership, never duplicate GPU allocations),
     ///   so dropping shared-cache ownership cannot invalidate an active
     ///   renderer or submitted work; dropping every renderer and the
     ///   context releases everything. No removal path exists.
@@ -871,6 +872,7 @@ pub(crate) struct SharedGpuResources {
     pub(crate) gradient_generation: u64,
     pub(crate) glyph_atlas: GlyphAtlas,
     pub(crate) glyph_pages: Vec<Option<SharedGpuAtlasPage>>,
+    glyph_uploads: crate::glyph_uploads::GlyphUploads,
     /// Atlas eviction revision at the last shared texture-slot prune, so
     /// resolves without intervening retirements skip the scan.
     pub(crate) glyph_prune_revision: u64,
@@ -976,63 +978,139 @@ impl SharedGpuContext {
         target: WindowSurfaceTarget,
         transparency_mode: TransparencyMode,
     ) -> Result<Self, RendererError> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        // Avoid loading every vendor's Vulkan/OpenGL runtime for an ordinary
+        // Windows window. Explicit backend/adapter choices keep WGPU's behavior.
+        // Retry the broader set only when DX12 cannot meet the surface contract.
+        if cfg!(target_os = "windows")
+            && std::env::var_os("WGPU_BACKEND").is_none()
+            && std::env::var_os("WGPU_ADAPTER_NAME").is_none()
+        {
+            match Self::new_with_backends(
+                target.clone(),
+                transparency_mode,
+                Some(wgpu::Backends::DX12),
+            )
+            .await
+            {
+                Err(
+                    RendererError::Adapter(_)
+                    | RendererError::Surface(_)
+                    | RendererError::SurfaceAlpha(_)
+                    | RendererError::SurfaceConfigurationUnsupported,
+                ) => {}
+                Ok(shared)
+                    if shared.inner.adapter.get_info().device_type == wgpu::DeviceType::Cpu => {}
+                result => return result,
+            }
+        }
+        Self::new_with_backends(target, transparency_mode, None).await
+    }
+
+    async fn new_with_backends(
+        target: WindowSurfaceTarget,
+        transparency_mode: TransparencyMode,
+        backends: Option<wgpu::Backends>,
+    ) -> Result<Self, RendererError> {
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        if let Some(backends) = backends {
+            descriptor.backends = backends;
+        }
+        let instance = wgpu::Instance::new(descriptor);
         let surface = target
             .create_surface(&instance)
             .map_err(RendererError::Surface)?;
         let power_preference = wgpu::PowerPreference::from_env().unwrap_or_default();
-        let preferred_adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                power_preference,
-                ..Default::default()
-            })
-            .await
-            .map_err(RendererError::Adapter)?;
-        let adapter = if adapter_supports_window_transparency(
-            &surface,
-            &preferred_adapter,
-            transparency_mode,
-        ) {
-            preferred_adapter
-        } else {
+        let requested_name = std::env::var("WGPU_ADAPTER_NAME")
+            .ok()
+            .filter(|name| !name.trim().is_empty());
+        let adapter = if let Some(name) = requested_name {
+            let query = name.trim().to_lowercase();
             let candidates = instance
                 .enumerate_adapters(wgpu::Backends::all())
                 .await
                 .into_iter()
+                .filter(|adapter| adapter.get_info().name.to_lowercase().contains(&query))
                 .filter(|adapter| adapter.is_surface_supported(&surface))
                 .filter(|adapter| {
                     adapter_supports_window_transparency(&surface, adapter, transparency_mode)
                 });
-            select_fallback_adapter(candidates, power_preference).ok_or_else(|| {
-                RendererError::SurfaceAlpha(match transparency_mode {
-                    TransparencyMode::Transparent => {
-                        crate::surface::SurfaceAlphaError::TransparentCompositingUnsupported
-                    }
-                    TransparencyMode::Opaque => {
-                        crate::surface::SurfaceAlphaError::NoOpaqueCompositingMode
-                    }
+            // Unlike wgpu's convenience environment helper, a bad override
+            // returns a typed error. Never silently choose a different GPU.
+            select_fallback_adapter(candidates, power_preference)
+                .ok_or(RendererError::AdapterNameNotFound(name))?
+        } else {
+            let preferred_adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    compatible_surface: Some(&surface),
+                    power_preference,
+                    ..Default::default()
                 })
-            })?
+                .await
+                .map_err(RendererError::Adapter)?;
+            if adapter_supports_window_transparency(&surface, &preferred_adapter, transparency_mode)
+            {
+                preferred_adapter
+            } else {
+                let candidates = instance
+                    .enumerate_adapters(wgpu::Backends::all())
+                    .await
+                    .into_iter()
+                    .filter(|adapter| adapter.is_surface_supported(&surface))
+                    .filter(|adapter| {
+                        adapter_supports_window_transparency(&surface, adapter, transparency_mode)
+                    });
+                select_fallback_adapter(candidates, power_preference).ok_or_else(|| {
+                    RendererError::SurfaceAlpha(match transparency_mode {
+                        TransparencyMode::Transparent => {
+                            crate::surface::SurfaceAlphaError::TransparentCompositingUnsupported
+                        }
+                        TransparencyMode::Opaque => {
+                            crate::surface::SurfaceAlphaError::NoOpaqueCompositingMode
+                        }
+                    })
+                })?
+            }
         };
-        // Timestamp support is additive and optional: adapters that expose it
-        // get non-blocking GPU frame timing through wgpu-profiler, everyone
-        // else reports `GPU timing unavailable` instead of failing
-        // initialization.
+        // GPU timing is opt-in (enabled by desktop DevTools). Ordinary apps
+        // do not allocate query pools or readback buffers just to paint.
+        // Unsupported adapters still report unavailable instead of failing.
         let adapter_features = adapter.features();
         let mut required_features = wgpu::Features::default();
-        if adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY) {
+        if cfg!(feature = "gpu-profiling")
+            && adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
             required_features |= wgpu::Features::TIMESTAMP_QUERY;
         }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("incular shared device"),
                 required_features,
+                // DX12 eagerly allocates this descriptor heap. The WGPU
+                // default reserves one million live non-sampler bindings,
+                // far beyond retained UI caches, and costs substantial iGPU
+                // system RAM even when almost all descriptors are unused.
+                required_limits: wgpu::Limits {
+                    max_non_sampler_bindings: 65_536,
+                    ..Default::default()
+                },
+                // Begin with WGPU's smallest supported 4 MiB allocation
+                // blocks; grow to the same 64 MiB ceiling as MemoryUsage.
+                // This is a block-size hint, not a cap on app resources.
+                memory_hints: wgpu::MemoryHints::Manual {
+                    suballocated_device_memory_block_size: (4 << 20)..(64 << 20),
+                },
                 ..Default::default()
             })
             .await
             .map_err(RendererError::Device)?;
+        crate::driver_workarounds::bootstrap_presentation(
+            &surface,
+            &adapter,
+            &device,
+            &queue,
+            transparency_mode,
+        )
+        .await?;
         drop(surface);
         Ok(Self {
             inner: Arc::new(SharedGpuContextInner {
@@ -1051,6 +1129,7 @@ impl SharedGpuContext {
                     gradient_generation: 0,
                     glyph_atlas: GlyphAtlas::new(),
                     glyph_pages: Vec::new(),
+                    glyph_uploads: crate::glyph_uploads::GlyphUploads::default(),
                     glyph_prune_revision: 0,
                 }),
                 texture_upload_bytes: std::sync::atomic::AtomicU64::new(0),
@@ -1091,7 +1170,10 @@ impl SharedGpuContext {
         SharedGpuDiagnostics {
             device_generation: self.inner.device_generation,
             pipeline_variants: pipelines.len(),
-            pipeline_count: pipelines.len().saturating_mul(pipeline_contracts().len()),
+            pipeline_count: pipelines
+                .values()
+                .map(|resources| resources.created_count())
+                .sum(),
             shared_image_resources: resources.registry.image_count(),
             shared_glyph_resources: resources.registry.glyph_count(),
             shared_gradient_resources: resources.gradients.len(),
@@ -1345,18 +1427,16 @@ impl SharedGpuContext {
         run: &GlyphRun,
         glyph: u16,
         scale: f64,
+        phase: [u8; 2],
         protected_pages: &std::collections::HashSet<u16>,
     ) -> Option<RasterizedGlyph> {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
         let request = GlyphRasterRequest::new(run.font_size, scale);
-        let key = GlyphCacheKey {
-            font: run.font.id(),
-            glyph,
-            physical_size: request.physical_size,
-        };
-        let raster = resources
-            .glyph_atlas
-            .lookup_or_rasterize(run, glyph, scale, protected_pages);
+        let key = request.cache_key(run.font.id(), glyph, phase);
+        let raster =
+            resources
+                .glyph_atlas
+                .lookup_or_rasterize_at(run, glyph, scale, phase, protected_pages);
         // Split field borrows up front: the prune closure below observes
         // the atlas while retirement mutates the texture slots.
         let SharedGpuResources {
@@ -1373,6 +1453,22 @@ impl SharedGpuContext {
         if raster.is_some() {
             registry.glyph_identity(key);
         }
+        if let Some(raster) = &raster
+            && let Some(bitmap) = &raster.bitmap
+        {
+            let texture = self.glyph_texture_locked(
+                &mut resources,
+                raster.entry.page,
+                raster.entry.generation,
+            );
+            resources.glyph_uploads.push(
+                &self.inner.device,
+                &self.inner.queue,
+                texture,
+                raster.entry,
+                bitmap,
+            );
+        }
         raster
     }
 
@@ -1382,12 +1478,18 @@ impl SharedGpuContext {
         protected: &std::collections::HashSet<u16>,
     ) {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        resources
+            .glyph_uploads
+            .flush(&self.inner.device, &self.inner.queue);
         resources.glyph_atlas.set_max_pages(max_pages, protected);
         resources.retire_glyph_resources();
     }
 
     pub(crate) fn release_glyph_frame_protection(&self) {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        resources
+            .glyph_uploads
+            .flush(&self.inner.device, &self.inner.queue);
         resources.glyph_atlas.release_frame_protection();
         resources.retire_glyph_resources();
     }
@@ -1543,6 +1645,22 @@ impl SharedGpuResources {
 impl SharedGpuContext {
     pub(crate) fn shared_glyph_texture(&self, page: u16, generation: u64) -> wgpu::Texture {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        self.glyph_texture_locked(&mut resources, page, generation)
+    }
+
+    pub(crate) fn flush_glyph_uploads(&self) {
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        resources
+            .glyph_uploads
+            .flush(&self.inner.device, &self.inner.queue);
+    }
+
+    fn glyph_texture_locked(
+        &self,
+        resources: &mut SharedGpuResources,
+        page: u16,
+        generation: u64,
+    ) -> wgpu::Texture {
         while resources.glyph_pages.len() <= usize::from(page) {
             resources.glyph_pages.push(None);
         }

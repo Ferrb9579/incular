@@ -5,9 +5,11 @@ use super::*;
 pub struct GlyphCacheKey {
     pub font: FontId,
     pub glyph: u16,
-    /// Rounded physical ppem. Fontdue accepts a scalar size, while the cache
-    /// remains deterministic across equal logical size/DPI requests.
+    /// Whole physical pixels per em, with `fractional_size` in 1/64 pixel units.
     pub physical_size: u16,
+    pub fractional_size: u8,
+    /// Fractional device origin in quarter pixels (each component is 0..=3).
+    pub phase: [u8; 2],
 }
 /// Physical-pixel class used to select and explain raster behavior.  These
 /// bounds are intentionally expressed in ppem, never logical widget pixels.
@@ -47,6 +49,7 @@ pub struct GlyphRasterRequest {
     pub logical_font_size: f32,
     pub scale_factor: f32,
     pub physical_size: u16,
+    pub fractional_size: u8,
     pub supported: bool,
 }
 impl GlyphRasterRequest {
@@ -54,12 +57,30 @@ impl GlyphRasterRequest {
     pub fn new(logical_font_size: f32, scale_factor: f64) -> Self {
         let scale_factor = normalized_scale(scale_factor);
         let physical_size = logical_font_size * scale_factor;
+        let fixed_size = (physical_size * 64.).round().clamp(64., 4_194_239.) as u32;
         Self {
             logical_font_size,
             scale_factor,
-            physical_size: physical_size.round().clamp(1., f32::from(u16::MAX)) as u16,
+            physical_size: (fixed_size / 64) as u16,
+            fractional_size: (fixed_size % 64) as u8,
             supported: physical_size.is_finite()
                 && (1. ..=MAX_GLYPH_RASTER_PPEM).contains(&physical_size),
+        }
+    }
+
+    #[must_use]
+    pub fn ppem(self) -> f32 {
+        f32::from(self.physical_size) + f32::from(self.fractional_size) / 64.
+    }
+
+    #[must_use]
+    pub fn cache_key(self, font: FontId, glyph: u16, phase: [u8; 2]) -> GlyphCacheKey {
+        GlyphCacheKey {
+            font,
+            glyph,
+            physical_size: self.physical_size,
+            fractional_size: self.fractional_size,
+            phase: phase.map(|value| value.min(3)),
         }
     }
 }
@@ -72,6 +93,7 @@ pub struct GlyphRasterDebug {
     pub logical_font_size: f32,
     pub scale_factor: f32,
     pub requested_physical_size: u16,
+    pub requested_fractional_size: u8,
     pub atlas_class: GlyphAtlasClass,
     pub bitmap_size: [u16; 2],
     pub bitmap_bytes: usize,
@@ -200,7 +222,7 @@ pub struct GlyphAtlasMemory {
 }
 /// One retained parsed rasterizer object with its recency stamp. The
 /// parsed `Font` is a CPU-only rasterizer built from application-owned
-/// source bytes; the atlas never retains those bytes. Dropping the entry
+/// source bytes; it retains a font-table parser and source copy, not all outlines. Dropping the entry
 /// releases cache ownership only — placements, pages, handles, and
 /// submitted work are unaffected, and the next miss re-parses.
 struct ParsedFont {
@@ -217,7 +239,7 @@ pub struct GlyphAtlas {
     pages: Vec<AtlasPage>,
     entries: HashMap<GlyphCacheKey, AtlasEntry>,
     /// Parsed rasterizer objects by stable font identity
-    /// (`FontSettings::collection_index` preserves TTC/OTC faces, and the
+    /// (the parser's face index preserves TTC/OTC faces, and the
     /// `FontId` itself hashes the face index, so faces never alias).
     /// Bounded by [`Self::max_fonts`] least-recently-used entries: every
     /// resolve — hit or miss, across all renderer clients sharing this
@@ -332,11 +354,7 @@ impl GlyphAtlas {
     /// index, matching the `FontId` identity, and parse failures (including
     /// out-of-range faces) yield `None` with existing error behavior.
     fn parse_font(run: &GlyphRun) -> Option<Font> {
-        let settings = FontSettings {
-            collection_index: run.font.face_index(),
-            ..FontSettings::default()
-        };
-        Font::from_bytes(run.font.bytes().as_ref(), settings).ok()
+        Font::new(run.font.bytes().as_ref(), run.font.face_index())
     }
 
     /// Replaces the page budget and immediately retires resident
@@ -451,6 +469,19 @@ impl GlyphAtlas {
         scale: f64,
         protected: &std::collections::HashSet<u16>,
     ) -> Option<RasterizedGlyph> {
+        self.lookup_or_rasterize_at(run, glyph, scale, [0, 0], protected)
+    }
+
+    /// Resolves a mask rasterized at a quarter-pixel device origin. The caller
+    /// places its quad on the integer device grid; the mask contains the phase.
+    pub fn lookup_or_rasterize_at(
+        &mut self,
+        run: &GlyphRun,
+        glyph: u16,
+        scale: f64,
+        phase: [u8; 2],
+        protected: &std::collections::HashSet<u16>,
+    ) -> Option<RasterizedGlyph> {
         // Pending tightening enforces against this resolve's protection
         // set first — even on a cache hit — so released protection sheds
         // excess residency without waiting for an unrelated allocation.
@@ -468,11 +499,7 @@ impl GlyphAtlas {
             self.counters.glyphs_skipped += 1;
             return None;
         }
-        let key = GlyphCacheKey {
-            font: run.font.id(),
-            glyph,
-            physical_size: request.physical_size,
-        };
+        let key = request.cache_key(run.font.id(), glyph, phase);
         if let Some(entry) = self.entries.get(&key).copied() {
             // Generation validation: the slot may have been evicted and
             // reused for different content since this placement resolved. A
@@ -551,7 +578,7 @@ impl GlyphAtlas {
                 .font
         };
         let started = Instant::now();
-        let (metrics, bitmap) = font.rasterize_indexed(key.glyph, f32::from(key.physical_size));
+        let (metrics, bitmap) = font.rasterize_indexed(key.glyph, request.ppem(), key.phase)?;
         self.counters.raster_time_total = self
             .counters
             .raster_time_total
@@ -613,17 +640,14 @@ impl GlyphAtlas {
     #[must_use]
     pub fn debug_glyph(&self, run: &GlyphRun, glyph: u16, scale: f64) -> Option<GlyphRasterDebug> {
         let request = GlyphRasterRequest::new(run.font_size, scale);
-        let entry = self.entry(GlyphCacheKey {
-            font: run.font.id(),
-            glyph,
-            physical_size: request.physical_size,
-        })?;
+        let entry = self.entry(request.cache_key(run.font.id(), glyph, [0, 0]))?;
         Some(GlyphRasterDebug {
             font: run.font.id(),
             glyph,
             logical_font_size: request.logical_font_size,
             scale_factor: request.scale_factor,
             requested_physical_size: request.physical_size,
+            requested_fractional_size: request.fractional_size,
             atlas_class: entry.atlas_class,
             bitmap_size: [entry.width, entry.height],
             bitmap_bytes: usize::from(entry.width) * usize::from(entry.height),

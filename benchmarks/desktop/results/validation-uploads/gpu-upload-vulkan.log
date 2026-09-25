@@ -1,0 +1,9 @@
+   Compiling incular-wgpu v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-wgpu)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.77s
+     Running tests\glyph_uploads.rs (target\debug\deps\glyph_uploads-7d4f8f95ac0e3ebf.exe)
+
+running 2 tests
+test sparse_uploads_preserve_neighbors_and_zero_padding_across_page_generations ... ok
+test upload_budget_flushes_automatically_and_subsequent_copies_remain_ordered ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s

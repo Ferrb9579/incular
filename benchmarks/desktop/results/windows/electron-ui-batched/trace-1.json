@@ -1,0 +1,330 @@
+[
+  {
+    "elapsedSeconds": 0.013021100000000008,
+    "privateWorkingSetBytes": 112054272,
+    "workingSetBytes": 156934144,
+    "privateCommitBytes": 149209088,
+    "cpuSeconds": 0.375,
+    "cpuPercent": null
+  },
+  {
+    "elapsedSeconds": 1.0264957,
+    "privateWorkingSetBytes": 112054272,
+    "workingSetBytes": 165150720,
+    "privateCommitBytes": 149209088,
+    "cpuSeconds": 0.40625,
+    "cpuPercent": 3.083451721434361
+  },
+  {
+    "elapsedSeconds": 2.0385987,
+    "privateWorkingSetBytes": 112054272,
+    "workingSetBytes": 165150720,
+    "privateCommitBytes": 149209088,
+    "cpuSeconds": 0.40625,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 3.0542585,
+    "privateWorkingSetBytes": 112054272,
+    "workingSetBytes": 165150720,
+    "privateCommitBytes": 149209088,
+    "cpuSeconds": 0.40625,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 4.0699814,
+    "privateWorkingSetBytes": 112054272,
+    "workingSetBytes": 165150720,
+    "privateCommitBytes": 149209088,
+    "cpuSeconds": 0.40625,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 5.097769899999999,
+    "privateWorkingSetBytes": 112070656,
+    "workingSetBytes": 165171200,
+    "privateCommitBytes": 149241856,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 1.5202544103188549
+  },
+  {
+    "elapsedSeconds": 6.115441499999999,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 7.1315952,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 8.1504087,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 9.1645388,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 10.178555900000001,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 11.196060000000001,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 12.2083025,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 13.2250682,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 14.2391523,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 15.267529,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 16.2875376,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 17.3061377,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 18.3322502,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 19.3499483,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 20.374789,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 21.4027845,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 22.4261525,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 23.4399965,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 24.4534041,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 25.472105,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 26.4891516,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 27.508227,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 28.524812700000002,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 29.5527358,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164515840,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 30.5656973,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 31.591148800000003,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 32.604894099999996,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 33.618886499999995,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 34.631888599999996,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 35.6446754,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 36.6588022,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 37.6743889,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 38.6995947,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 39.7254435,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  },
+  {
+    "elapsedSeconds": 40.738945699999995,
+    "privateWorkingSetBytes": 111415296,
+    "workingSetBytes": 164524032,
+    "privateCommitBytes": 148586496,
+    "cpuSeconds": 0.421875,
+    "cpuPercent": 0.0
+  }
+]

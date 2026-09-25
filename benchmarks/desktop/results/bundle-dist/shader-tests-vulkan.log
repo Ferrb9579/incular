@@ -1,0 +1,34 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.86s
+     Running tests\built_in_shaders.rs (target\debug\deps\built_in_shaders-d71b2d887cae2b2c.exe)
+
+running 1 test
+test embedded_modules_match_sources_and_validate_on_gpu ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests\deferred_pipeline.rs (target\debug\deps\deferred_pipeline-e7ada270cd1943e4.exe)
+
+running 1 test
+test first_use_is_shared_and_validation_failures_are_cached_without_panicking ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests\indirect_validation.rs (target\debug\deps\indirect_validation-e64caf6eb69001e5.exe)
+
+running 1 test
+timestamp readback: start=0, end=0; nonzero=false
+test indirect_dispatch_clamps_invalid_workgroups_and_preserves_valid_dispatches ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests\pipeline_contracts.rs (target\debug\deps\pipeline_contracts-ad8dfc117375803b.exe)
+
+running 6 tests
+test public_blend_contracts_are_unique_and_destination_reads_are_explicit ... ok
+test public_effect_contracts_emit_balanced_isolated_commands ... ok
+test public_glyph_pipeline_contract_keeps_cache_identity_and_dpi_variants ... ok
+test public_path_contract_accepts_fill_and_stroke_geometry ... ok
+test public_pipeline_inputs_preserve_painter_order ... ok
+test public_resource_identity_contract_separates_images_and_glyph_sizes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s

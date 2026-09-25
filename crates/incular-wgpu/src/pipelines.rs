@@ -1,6 +1,7 @@
 use super::prelude::*;
 use super::resources::SharedGpuImage;
 use super::*;
+use crate::built_in_shaders::*;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -128,302 +129,8 @@ pub(crate) struct GpuGradient {
     pub(crate) bind_group: wgpu::BindGroup,
 }
 
-pub(crate) const RECT_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f32> };
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) color: vec4<f32>) -> Out { var out: Out; out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.); out.color = color; return out; }
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> { return input.color; }
-"#;
-pub(crate) const TEXT_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) color: vec4<f32> };
-@group(0) @binding(0) var atlas: texture_2d<f32>;
-@group(0) @binding(1) var atlas_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) affine: vec4<f32>, @location(3) translation: vec4<f32>, @location(4) surface: vec4<f32>, @location(5) uv: vec4<f32>, @location(6) color: vec4<f32>) -> Out { var out: Out; let local=rect.xy+quad*rect.zw; let p=vec2<f32>(affine.x*local.x+affine.z*local.y+translation.x,affine.y*local.x+affine.w*local.y+translation.y); out.position=vec4<f32>(p.x/surface.x*2.-1.,1.-p.y/surface.y*2.,0.,1.); out.uv=uv.xy+quad*(uv.zw-uv.xy); out.color=color; return out; }
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> { let coverage = textureSample(atlas, atlas_sampler, input.uv).r; return vec4<f32>(input.color.rgb, input.color.a * coverage); }
-"#;
-pub(crate) const IMAGE_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
-@group(0) @binding(0) var image: texture_2d<f32>;
-@group(0) @binding(1) var image_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) affine: vec4<f32>, @location(3) translation: vec4<f32>, @location(4) surface: vec4<f32>, @location(5) uv: vec4<f32>) -> Out { var out: Out; let local=rect.xy+quad*rect.zw; let p=vec2<f32>(affine.x*local.x+affine.z*local.y+translation.x,affine.y*local.x+affine.w*local.y+translation.y); out.position=vec4<f32>(p.x/surface.x*2.-1.,1.-p.y/surface.y*2.,0.,1.); out.uv=uv.xy+quad*(uv.zw-uv.xy); return out; }
-// The image texture decodes sRGB into linear sample values. Source pixels are
-// straight alpha, and ALPHA_BLENDING is straight source-over blending.
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> { return textureSample(image, image_sampler, input.uv); }
-"#;
-pub(crate) const RRECT_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) local: vec2<f32>, @location(1) radii: vec4<f32>, @location(2) a: vec4<f32>, @location(3) b: vec4<f32>, @location(4) gradient: vec4<f32>, @location(5) options: vec4<f32> };
-@group(0) @binding(0) var gradient_lut: texture_2d<f32>;
-@group(0) @binding(1) var gradient_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) affine: vec4<f32>, @location(3) translation: vec4<f32>, @location(4) surface: vec4<f32>, @location(5) radii: vec4<f32>, @location(6) a: vec4<f32>, @location(7) b: vec4<f32>, @location(8) gradient: vec4<f32>, @location(9) options: vec4<f32>) -> Out { var o: Out; let local=rect.xy+quad*rect.zw; let p=vec2<f32>(affine.x*local.x+affine.z*local.y+translation.x,affine.y*local.x+affine.w*local.y+translation.y); o.position=vec4(p.x/surface.x*2.-1.,1.-p.y/surface.y*2.,0.,1.); o.local=quad*options.zw; o.radii=radii; o.a=a; o.b=b; o.gradient=gradient; o.options=options; return o; }
-fn radius_at(p: vec2<f32>, size: vec2<f32>, r: vec4<f32>) -> f32 { if (p.y < size.y*.5) { if (p.x < size.x*.5) { return r.x; } return r.y; } if (p.x >= size.x*.5) { return r.z; } return r.w; }
-fn rounded_distance(p: vec2<f32>, size: vec2<f32>, r: vec4<f32>) -> f32 { let q=p-size*.5; let radius=radius_at(p,size,r); let d=abs(q)-(size*.5-vec2(radius)); return length(max(d,vec2(0.)))+min(max(d.x,d.y),0.)-radius; }
-fn lookup(t: f32) -> vec4<f32> { let p=textureSampleLevel(gradient_lut,gradient_sampler,vec2(clamp(t,0.,1.),.5),0.); return select(vec4(0.),vec4(p.rgb/max(p.a,.00001),p.a),p.a>0.); }
-@fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { let size=i.options.zw; let outer=rounded_distance(i.local,size,i.radii); var edge=1.-smoothstep(-1.,1.,outer); if(i.options.y>0.) { let width=i.options.y; let inner=rounded_distance(i.local-vec2(width), max(size-vec2(2.*width),vec2(0.)), max(i.radii-vec4(width),vec4(0.))); edge*=smoothstep(-1.,1.,inner); } var t=0.; if(i.options.x==1.) { let v=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,v)/max(dot(v,v),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } else if(i.options.x==3.) { t=fract((atan2(i.local.y-i.gradient.y,i.local.x-i.gradient.x)-i.gradient.z)/6.2831853); } let color=select(i.a,lookup(t),i.options.x>0.); return vec4(color.rgb,color.a*edge); }
-"#;
-pub(crate) const PATH_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) local: vec2<f32>, @location(1) color: vec4<f32>, @location(2) gradient: vec4<f32>, @location(3) options: vec4<f32> };
-@group(0) @binding(0) var gradient_lut: texture_2d<f32>;
-@group(0) @binding(1) var gradient_sampler: sampler;
-@vertex fn vs_main(@location(0) local: vec2<f32>, @location(1) affine: vec4<f32>, @location(2) translation: vec4<f32>, @location(3) surface: vec4<f32>, @location(4) color: vec4<f32>, @location(5) gradient: vec4<f32>, @location(6) options: vec4<f32>) -> Out {
-  var out: Out;
-  let physical = vec2<f32>(
-    affine.x * local.x + affine.z * local.y + translation.x,
-    affine.y * local.x + affine.w * local.y + translation.y,
-  );
-  out.position = vec4<f32>(physical.x / surface.x * 2. - 1., 1. - physical.y / surface.y * 2., 0., 1.);
-  out.color = color;
-  out.local = local;
-  out.gradient = gradient;
-  out.options = options;
-  return out;
-}
-fn lookup(t: f32) -> vec4<f32> { let p=textureSampleLevel(gradient_lut,gradient_sampler,vec2(clamp(t,0.,1.),.5),0.); return select(vec4(0.),vec4(p.rgb/max(p.a,.00001),p.a),p.a>0.); }
-@fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { var t=0.; if(i.options.x==1.) { let d=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,d)/max(dot(d,d),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } else if(i.options.x==3.) { t=fract((atan2(i.local.y-i.gradient.y,i.local.x-i.gradient.x)-i.gradient.z)/6.2831853); } return select(i.color,lookup(t),i.options.x>0.); }
-"#;
-pub(crate) const COMPOSITE_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32, @location(2) color: vec4<f32>, @location(3) mode: f32 };
-@group(0) @binding(0) var group_texture: texture_2d<f32>;
-@group(0) @binding(1) var target_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) alpha: vec4<f32>, @location(4) color: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
-  out.uv = uv.xy + quad * (uv.zw - uv.xy);
-  out.alpha = alpha.x;
-  out.color = color;
-  out.mode = options.x;
-  return out;
-}
-// Offscreen color is premultiplied. Multiplying both stored RGB and alpha by
-// the group alpha exactly once preserves overlap semantics at the parent.
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let sample = textureSample(group_texture, target_sampler, input.uv);
-  if (input.mode > 0.5) {
-    let a = sample.a * input.color.a * input.alpha;
-    return vec4<f32>(input.color.rgb * a, a);
-  }
-  return vec4<f32>(sample.rgb * input.alpha, sample.a * input.alpha);
-}
-"#;
-
-/// Final presentation conversion for native surfaces whose compositor expects
-/// straight (postmultiplied) RGB. Incular's retained scene is accumulated as
-/// premultiplied RGB, so this pass unpremultiplies exactly once immediately
-/// before presentation.
-pub(crate) const STRAIGHT_ALPHA_PRESENT_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var source_sampler: sampler;
-@vertex fn vs_main(
-  @location(0) quad: vec2<f32>,
-  @location(1) rect: vec4<f32>,
-  @location(2) uv: vec4<f32>,
-  @location(3) alpha: vec4<f32>,
-  @location(4) color: vec4<f32>,
-  @location(5) options: vec4<f32>,
-) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
-  out.uv = uv.xy + quad * (uv.zw - uv.xy);
-  return out;
-}
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let sample = textureSampleLevel(source, source_sampler, input.uv, 0.);
-  let alpha = clamp(sample.a, 0., 1.);
-  let rgb = clamp(sample.rgb / max(alpha, .000001), vec3<f32>(0.), vec3<f32>(1.));
-  return select(vec4<f32>(0.), vec4<f32>(rgb, alpha), alpha > .000001);
-}
-"#;
-
-pub(crate) const FIXED_BLEND_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32 };
-@group(0) @binding(0) var group_texture: texture_2d<f32>;
-@group(0) @binding(1) var target_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) alpha: vec4<f32>, @location(4) color: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
-  out.uv = uv.xy + quad * (uv.zw - uv.xy);
-  out.alpha = alpha.x;
-  return out;
-}
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let sample = textureSample(group_texture, target_sampler, input.uv);
-  return sample * input.alpha;
-}
-"#;
-
-pub(crate) const BLUR_SHADER: &str = r#"
-struct Params {
-  source_origin: vec2<f32>,
-  source_size: vec2<f32>,
-  output_size: vec2<f32>,
-  direction: vec2<f32>,
-  radius: u32,
-  mode: u32,
-  _padding: vec2<u32>,
-  weights: array<vec4<f32>, 16>,
-};
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var source_sampler: sampler;
-@group(0) @binding(2) var<uniform> params: Params;
-@vertex fn vs_main(@location(0) quad: vec2<f32>) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(quad * 2. - 1., 0., 1.);
-  out.uv = quad;
-  return out;
-}
-fn sample_transparent(px: vec2<f32>) -> vec4<f32> {
-  if (px.x < 0. || px.y < 0. || px.x >= params.source_size.x || px.y >= params.source_size.y) {
-    return vec4<f32>(0.);
-  }
-  return textureSampleLevel(source, source_sampler, (px + vec2<f32>(0.5)) / params.source_size, 0.);
-}
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let out_px = input.uv * params.output_size;
-  var result = vec4<f32>(0.);
-  for (var i: i32 = -48; i <= 48; i = i + 1) {
-    if (abs(i) <= i32(params.radius)) {
-      let px = out_px + params.direction * f32(i) - params.source_origin;
-      let weight_index = abs(i);
-      result += sample_transparent(px) * params.weights[weight_index / 4][weight_index % 4];
-    }
-  }
-  return result;
-}
-"#;
-
-pub(crate) const RESAMPLE_SHADER: &str = r#"
-struct Params {
-  source_origin: vec2<f32>,
-  source_size: vec2<f32>,
-  output_size: vec2<f32>,
-  direction: vec2<f32>,
-  radius: u32,
-  mode: u32,
-  _padding: vec2<u32>,
-  weights: array<vec4<f32>, 16>,
-};
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var source_sampler: sampler;
-@group(0) @binding(2) var<uniform> params: Params;
-@vertex fn vs_main(@location(0) quad: vec2<f32>) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(quad * 2. - 1., 0., 1.);
-  out.uv = quad;
-  return out;
-}
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let out_px = input.uv * params.output_size;
-  let px = out_px * params.direction - params.source_origin;
-  if (px.x < 0. || px.y < 0. || px.x >= params.source_size.x || px.y >= params.source_size.y) {
-    return vec4<f32>(0.);
-  }
-  return textureSampleLevel(source, source_sampler, (px + vec2<f32>(0.5)) / params.source_size, 0.);
-}
-"#;
-
-pub(crate) const COLOR_MATRIX_SHADER: &str = r#"
-struct Params { matrix: array<vec4<f32>, 5> };
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var source_sampler: sampler;
-@group(0) @binding(2) var<uniform> params: Params;
-@vertex fn vs_main(@location(0) quad: vec2<f32>) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(quad * 2. - 1., 0., 1.);
-  out.uv = quad;
-  return out;
-}
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let sample = textureSampleLevel(source, source_sampler, input.uv, 0.);
-  let a = clamp(sample.a, 0., 1.);
-  let straight_rgb = clamp(sample.rgb / max(a, .000001), vec3<f32>(0.), vec3<f32>(1.));
-  let straight = select(vec4<f32>(0., 0., 0., a), vec4<f32>(straight_rgb, a), a > .000001);
-  let c0 = params.matrix[0];
-  let c1 = params.matrix[1];
-  let c2 = params.matrix[2];
-  let c3 = params.matrix[3];
-  let c4 = params.matrix[4];
-  let filtered = vec4<f32>(
-    dot(c0, straight) + c1.x,
-    c1.y * straight.x + c1.z * straight.y + c1.w * straight.z + c2.x * straight.w + c2.y,
-    c2.z * straight.x + c2.w * straight.y + c3.x * straight.z + c3.y * straight.w + c3.z,
-    c3.w * straight.x + c4.x * straight.y + c4.y * straight.z + c4.z * straight.w + c4.w
-  );
-  let out_a = clamp(filtered.a, 0., 1.);
-  let out_rgb = clamp(filtered.rgb, vec3<f32>(0.), vec3<f32>(1.)) * out_a;
-  return vec4<f32>(out_rgb, out_a);
-}
-"#;
-
-pub(crate) const BLEND_SHADER: &str = r#"
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32, @location(2) color: vec4<f32>, @location(3) options: vec4<f32> };
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var destination: texture_2d<f32>;
-@group(0) @binding(2) var blend_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) alpha: vec4<f32>, @location(4) color: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
-  var out: Out;
-  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
-  out.uv = uv.xy + quad * (uv.zw - uv.xy);
-  out.alpha = alpha.x;
-  out.color = color;
-  out.options = options;
-  return out;
-}
-fn straight_rgb(value: vec4<f32>) -> vec3<f32> {
-  let alpha = clamp(value.a, 0., 1.);
-  let rgb = clamp(value.rgb / max(alpha, .000001), vec3<f32>(0.), vec3<f32>(1.));
-  return select(vec3<f32>(0.), rgb, alpha > .000001);
-}
-fn artistic(mode: u32, s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
-  var out = s;
-  if (mode == 11u) { out = s * d; }
-  else if (mode == 12u) { out = s + d - s * d; }
-  else if (mode == 13u) { out = select(2. * s * d, 1. - 2. * (1. - s) * (1. - d), d > vec3<f32>(.5)); }
-  else if (mode == 14u) { out = min(s, d); }
-  else if (mode == 15u) { out = max(s, d); }
-  else if (mode == 16u) { out = select(min(d / max(1. - s, vec3<f32>(.000001)), vec3<f32>(1.)), vec3<f32>(1.), s >= vec3<f32>(1.)); }
-  else if (mode == 17u) { out = select(max(1. - (1. - d) / max(s, vec3<f32>(.000001)), vec3<f32>(0.)), vec3<f32>(0.), s <= vec3<f32>(0.)); }
-  else if (mode == 18u) { out = select(2. * s * d, 1. - 2. * (1. - s) * (1. - d), s > vec3<f32>(.5)); }
-  else if (mode == 19u) {
-    let low = d - (1. - 2. * s) * d * (1. - d);
-    let g = select(sqrt(d), ((16. * d - 12.) * d + 4.) * d, d <= vec3<f32>(.25));
-    out = select(low, d + (2. * s - 1.) * (g - d), s > vec3<f32>(.5));
-  }
-  else if (mode == 20u) { out = abs(d - s); }
-  else if (mode == 21u) { out = s + d - 2. * s * d; }
-  return clamp(out, vec3<f32>(0.), vec3<f32>(1.));
-}
-@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
-  let src_sample = textureSampleLevel(source, blend_sampler, input.uv, 0.) * input.alpha;
-  let dst_uv = input.position.xy / max(input.options.yz, vec2<f32>(1.));
-  let dst_sample = textureSampleLevel(destination, blend_sampler, dst_uv, 0.);
-  let mode = u32(input.options.x + .5);
-  let as_ = clamp(src_sample.a, 0., 1.);
-  let ad = clamp(dst_sample.a, 0., 1.);
-  let ao = clamp(as_ + ad - as_ * ad, 0., 1.);
-  var out = vec4<f32>(0.);
-  if (mode == 0u) { out = vec4<f32>(src_sample.rgb + dst_sample.rgb * (1. - as_), ao); }
-  else if (mode == 1u) { out = src_sample; }
-  else if (mode == 2u) { out = vec4<f32>(dst_sample.rgb + src_sample.rgb * (1. - ad), ao); }
-  else if (mode == 3u) { out = vec4<f32>(src_sample.rgb * ad, as_ * ad); }
-  else if (mode == 4u) { out = vec4<f32>(dst_sample.rgb * as_, ad * as_); }
-  else if (mode == 5u) { out = vec4<f32>(src_sample.rgb * (1. - ad), as_ * (1. - ad)); }
-  else if (mode == 6u) { out = vec4<f32>(dst_sample.rgb * (1. - as_), ad * (1. - as_)); }
-  else if (mode == 7u) { out = vec4<f32>(src_sample.rgb * ad + dst_sample.rgb * (1. - as_), ad); }
-  else if (mode == 8u) { out = vec4<f32>(dst_sample.rgb * as_ + src_sample.rgb * (1. - ad), as_); }
-  else if (mode == 9u) { out = vec4<f32>(src_sample.rgb * (1. - ad) + dst_sample.rgb * (1. - as_), clamp(as_ + ad - 2. * as_ * ad, 0., 1.)); }
-  else if (mode == 10u) { out = vec4<f32>(min(src_sample.rgb + dst_sample.rgb, vec3<f32>(1.)), min(as_ + ad, 1.)); }
-  else {
-    let blended = artistic(mode, straight_rgb(src_sample), straight_rgb(dst_sample));
-    out = vec4<f32>(clamp(src_sample.rgb * (1. - ad) + dst_sample.rgb * (1. - as_) + as_ * ad * blended, vec3<f32>(0.), vec3<f32>(1.)), ao);
-  }
-  return clamp(out, vec4<f32>(0.), vec4<f32>(1.));
-}
-"#;
-
 pub(crate) struct GpuAtlasPage {
-    pub(crate) texture: wgpu::Texture,
+    pub(crate) _texture: wgpu::Texture,
     pub(crate) bind_group: wgpu::BindGroup,
 }
 pub(crate) struct GpuImage {
@@ -435,22 +142,22 @@ pub(crate) struct GpuImage {
 /// same `wgpu` object, not a duplicate GPU allocation.
 #[derive(Clone)]
 pub(crate) struct SharedPipelineResources {
-    pub(crate) rectangle_pipeline: wgpu::RenderPipeline,
-    pub(crate) text_pipeline: wgpu::RenderPipeline,
-    pub(crate) image_pipeline: wgpu::RenderPipeline,
-    pub(crate) rounded_rect_pipeline: wgpu::RenderPipeline,
-    pub(crate) path_pipeline: wgpu::RenderPipeline,
-    pub(crate) composite_pipeline: wgpu::RenderPipeline,
-    pub(crate) straight_alpha_present_pipeline: wgpu::RenderPipeline,
-    pub(crate) fixed_blend_pipelines: Vec<wgpu::RenderPipeline>,
-    pub(crate) blur_pipeline: wgpu::RenderPipeline,
-    pub(crate) resample_pipeline: wgpu::RenderPipeline,
-    pub(crate) color_matrix_pipeline: wgpu::RenderPipeline,
-    pub(crate) blend_pipeline: wgpu::RenderPipeline,
-    pub(crate) stencil_rrect_increment_pipeline: wgpu::RenderPipeline,
-    pub(crate) stencil_rrect_decrement_pipeline: wgpu::RenderPipeline,
-    pub(crate) stencil_path_increment_pipeline: wgpu::RenderPipeline,
-    pub(crate) stencil_path_decrement_pipeline: wgpu::RenderPipeline,
+    pub(crate) rectangle_pipeline: DeferredPipeline,
+    pub(crate) text_pipeline: DeferredPipeline,
+    pub(crate) image_pipeline: DeferredPipeline,
+    pub(crate) rounded_rect_pipeline: DeferredPipeline,
+    pub(crate) path_pipeline: DeferredPipeline,
+    pub(crate) composite_pipeline: DeferredPipeline,
+    pub(crate) straight_alpha_present_pipeline: DeferredPipeline,
+    pub(crate) fixed_blend_pipelines: Vec<DeferredPipeline>,
+    pub(crate) blur_pipeline: DeferredPipeline,
+    pub(crate) resample_pipeline: DeferredPipeline,
+    pub(crate) color_matrix_pipeline: DeferredPipeline,
+    pub(crate) blend_pipeline: DeferredPipeline,
+    pub(crate) stencil_rrect_increment_pipeline: DeferredPipeline,
+    pub(crate) stencil_rrect_decrement_pipeline: DeferredPipeline,
+    pub(crate) stencil_path_increment_pipeline: DeferredPipeline,
+    pub(crate) stencil_path_decrement_pipeline: DeferredPipeline,
     pub(crate) mesh: wgpu::Buffer,
     pub(crate) gradient_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) gradient_sampler: wgpu::Sampler,
@@ -468,6 +175,31 @@ pub(crate) struct SharedPipelineResources {
     pub(crate) blend_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) blend_sampler: wgpu::Sampler,
 }
+impl SharedPipelineResources {
+    pub(crate) fn created_count(&self) -> usize {
+        [
+            &self.rectangle_pipeline,
+            &self.text_pipeline,
+            &self.image_pipeline,
+            &self.rounded_rect_pipeline,
+            &self.path_pipeline,
+            &self.composite_pipeline,
+            &self.straight_alpha_present_pipeline,
+            &self.blur_pipeline,
+            &self.resample_pipeline,
+            &self.color_matrix_pipeline,
+            &self.blend_pipeline,
+            &self.stencil_rrect_increment_pipeline,
+            &self.stencil_rrect_decrement_pipeline,
+            &self.stencil_path_increment_pipeline,
+            &self.stencil_path_decrement_pipeline,
+        ]
+        .into_iter()
+        .chain(self.fixed_blend_pipelines.iter())
+        .filter(|pipeline| pipeline.is_created())
+        .count()
+    }
+}
 /// Direction of a clip mask's stencil write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ClipStencilDirection {
@@ -484,10 +216,9 @@ impl From<ClipStencilDirection> for wgpu::StencilOperation {
 }
 
 /// Identifies exactly one production render pipeline class. This enum is the
-/// single registry of what the renderer builds per target format; renderer
-/// initialization, shared-resource diagnostics, and the headless/Naga
-/// validation tests all consume [`pipeline_contracts`], so contract tests
-/// cannot drift from the pipelines that actually render.
+/// registry of deferred descriptors the renderer retains per target format.
+/// Each entry in [`pipeline_contracts`] supplies the complete GPU state used
+/// when that pipeline first renders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PipelineClass {
     Rectangle,
@@ -563,16 +294,15 @@ pub(crate) enum StencilRequirement {
 
 /// The complete declarative description of one production render pipeline.
 ///
-/// Production creation ([`create_validated_contract_pipelines`]) and the
-/// GPU-independent Naga interface tests consume the same list produced by
-/// [`pipeline_contracts`], making it the one source of truth for shader
+/// Production creation ([`create_shared_pipeline_resources`]) consumes the
+/// list produced by [`pipeline_contracts`], the source of truth for shader
 /// entry points, vertex/instance layouts, bindings, blending, and stencil
 /// state.
 pub(crate) struct PipelineContract {
     pub(crate) class: PipelineClass,
     pub(crate) label: &'static str,
     pub(crate) shader_module_label: &'static str,
-    pub(crate) shader: &'static str,
+    pub(crate) shader: &'static [u8],
     pub(crate) resources: ResourceSet,
     pub(crate) streams: VertexStreams,
     pub(crate) blend: ColorBlend,
@@ -606,9 +336,8 @@ pub(crate) const CLIP_STENCIL_DIRECTIONS: [ClipStencilDirection; 2] = [
 ];
 
 /// Every render pipeline the retained renderer creates for one target format.
-/// Completeness against `SharedPipelineResources` is asserted by tests, and
-/// creation is eager so validation failures surface at initialization rather
-/// than at first draw.
+/// Entries describe deferred pipelines. The first draw using an entry compiles
+/// and validates it; unused effects do not allocate driver pipeline resources.
 pub(crate) fn pipeline_contracts() -> Vec<PipelineContract> {
     let mut contracts = vec![
         PipelineContract {
@@ -994,7 +723,7 @@ pub(crate) fn create_contract_pipeline(
     });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(contract.shader_module_label),
-        source: wgpu::ShaderSource::Wgsl(contract.shader.into()),
+        source: crate::built_in_shaders::decode(contract.shader),
     });
     let buffers = stream_layouts(contract.streams);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1024,35 +753,10 @@ pub(crate) fn create_contract_pipeline(
     })
 }
 
-/// Creates every production pipeline for `format`, validating each one inside
-/// a `wgpu` validation error scope so an invalid contract becomes a typed
-/// [`RendererError::PipelineCreation`] naming the pipeline instead of an
-/// uncaptured-error panic during application startup.
-pub(crate) async fn create_validated_contract_pipelines(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    layouts: &SharedBindGroupLayouts<'_>,
-) -> Result<HashMap<PipelineClass, wgpu::RenderPipeline>, RendererError> {
-    let mut created = HashMap::with_capacity(pipeline_contracts().len());
-    for contract in pipeline_contracts() {
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let pipeline = create_contract_pipeline(device, format, &contract, layouts);
-        if let Some(error) = scope.pop().await {
-            return Err(RendererError::PipelineCreation {
-                label: contract.label.to_owned(),
-                reason: error.to_string(),
-            });
-        }
-        created.insert(contract.class, pipeline);
-    }
-    Ok(created)
-}
-
 /// Creates every device-level render resource for one target format: shared
 /// bind-group layouts, samplers, the unit quad mesh, the solid-gradient LUT,
-/// and all production pipelines. This single constructor is consumed by both
-/// renderer initialization and the headless validation tests, so they can
-/// never assemble different GPU state.
+/// and deferred production pipeline descriptors. Shader modules and pipelines
+/// are compiled on first use and shared by all windows using this format.
 pub(crate) async fn create_shared_pipeline_resources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1162,16 +866,24 @@ pub(crate) async fn create_shared_pipeline_resources(
             }),
         );
     }
-    let bind_group_layouts = owned_bind_group_layouts.borrowed();
-    // Every pipeline is created eagerly here, once per target format, so a
-    // contract regression fails initialization with a labeled error rather
-    // than panicking on the first affected draw.
-    let mut created_pipelines =
-        create_validated_contract_pipelines(device, format, &bind_group_layouts).await?;
-    let mut take_pipeline = |class: PipelineClass| -> wgpu::RenderPipeline {
+    let layouts = Arc::new(owned_bind_group_layouts);
+    let mut created_pipelines: HashMap<_, _> = pipeline_contracts()
+        .into_iter()
+        .map(|contract| {
+            let class = contract.class;
+            let label = contract.label;
+            let pipeline_device = device.clone();
+            let layouts = layouts.clone();
+            let pipeline = DeferredPipeline::new(device, label, move || {
+                create_contract_pipeline(&pipeline_device, format, &contract, &layouts.borrowed())
+            });
+            (class, pipeline)
+        })
+        .collect();
+    let mut take_pipeline = |class: PipelineClass| -> DeferredPipeline {
         created_pipelines
             .remove(&class)
-            .expect("every pipeline class is created from contracts")
+            .expect("every pipeline class has a deferred contract")
     };
     let rectangle_pipeline = take_pipeline(PipelineClass::Rectangle);
     let text_pipeline = take_pipeline(PipelineClass::Text);

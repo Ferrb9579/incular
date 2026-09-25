@@ -1,0 +1,6 @@
+Electron launch 1: idle at 47.1s, 4 processes
+{'privateWorkingSetBytes': 104398848.0, 'workingSetBytes': 327843840.0, 'privateCommitBytes': 179449856.0, 'cpuPercent': 0.0}
+Electron launch 2: idle at 92.1s, 4 processes
+{'privateWorkingSetBytes': 104308736.0, 'workingSetBytes': 348606464.0, 'privateCommitBytes': 196976640.0, 'cpuPercent': 0.0}
+Electron launch 3: idle at 46.0s, 4 processes
+{'privateWorkingSetBytes': 105988096.0, 'workingSetBytes': 353685504.0, 'privateCommitBytes': 203608064.0, 'cpuPercent': 0.0}

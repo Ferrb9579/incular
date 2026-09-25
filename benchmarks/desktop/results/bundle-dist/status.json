@@ -1,0 +1,26 @@
+{
+  "build": 0,
+  "format": 0,
+  "workspaceCheck": 0,
+  "pythonCompile": 0,
+  "interactionSmoke": 0,
+  "identicalScreenshotStates": 5,
+  "fullTestSuiteRerun": false,
+  "bundleBytes": 11789752,
+  "profilerDependencyAbsentByDefault": true,
+  "profilerEnabledCheck": 0,
+  "defaultClippy": 0,
+  "profilerEnabledClippy": 0,
+  "codeReductionBytes": 72192,
+  "shaderParsingReductionBytes": 375296,
+  "shaderGpuTests": {
+    "dx12": "passed",
+    "vulkan": "passed",
+    "gl": "passed"
+  },
+  "nativeWindowRegressionChecks": "passed",
+  "targetedClippy": "passed",
+  "vulkanTimestamps": "zero on this AMD host; also reproduced on upstream wgpu-core 30.0.1",
+  "patchedWgpuVersion": "30.0.0",
+  "patchedWgpuCoreVersion": "30.0.0"
+}

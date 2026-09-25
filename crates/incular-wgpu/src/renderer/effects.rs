@@ -42,7 +42,7 @@ impl WgpuRenderer {
         height: u32,
         layer: incular_painting::LayerId,
         label: &'static str,
-    ) {
+    ) -> Result<(), RendererError> {
         if batches.iter().any(|batch| {
             matches!(
                 batch,
@@ -61,14 +61,14 @@ impl WgpuRenderer {
                 .get(&layer)
                 .map(|entry| entry.target.clone())
             else {
-                return;
+                return Ok(());
             };
             self.ensure_destination_targets(width, height);
             let mut targets = self
                 .destination_targets
                 .take()
                 .expect("destination targets after ensure");
-            let (current_first, _, _, passes) = self.render_destination_batches(
+            let rendered = self.render_destination_batches(
                 batches,
                 scale,
                 width,
@@ -77,6 +77,13 @@ impl WgpuRenderer {
                 label,
                 wgpu::Color::TRANSPARENT,
             );
+            let (current_first, _, _, passes) = match rendered {
+                Ok(result) => result,
+                Err(error) => {
+                    self.destination_targets = Some(targets);
+                    return Err(error);
+                }
+            };
             let final_target = if current_first {
                 &targets.first
             } else {
@@ -91,7 +98,7 @@ impl WgpuRenderer {
             );
             self.destination_targets = Some(targets);
             self.counters.offscreen_render_passes += u64::from(passes);
-            return;
+            return Ok(());
         }
         let rectangles = count_rectangles(batches);
         let glyphs = count_glyphs(batches);
@@ -116,7 +123,7 @@ impl WgpuRenderer {
         self.upload_instance_data(batches, scale, width, height);
         self.prepare_image_bind_groups(batches);
         let Some(entry) = self.offscreen_cache.get(&layer) else {
-            return;
+            return Ok(());
         };
         let color_view = entry.target.color_view.clone();
         let stencil_view = entry.target.stencil_view.clone();
@@ -134,9 +141,10 @@ impl WgpuRenderer {
             wgpu::Color::TRANSPARENT,
             None,
             false,
-        );
+        )?;
         self.queue.submit(Some(encoder.finish()));
         self.counters.offscreen_render_passes += 1;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -335,7 +343,7 @@ impl WgpuRenderer {
             .target
             .color_view
             .clone();
-        self.run_color_matrix_pass(&source_view, &target.color_view, filter);
+        self.run_color_matrix_pass(&source_view, &target.color_view, filter)?;
         let bind_group =
             self.create_composite_bind_group(&target, "incular color matrix bind group");
         let bytes = target.bytes();
@@ -573,7 +581,7 @@ impl WgpuRenderer {
                 [low_width as f32, low_height as f32],
                 [factor, factor],
                 None,
-            );
+            )?;
             self.counters.blur_downsample_passes += 1;
         }
         let blur_source_view = if downsample_factor > 1 {
@@ -605,7 +613,7 @@ impl WgpuRenderer {
             blur_output_size,
             [1., 0.],
             Some(&kernel_x),
-        );
+        )?;
         self.counters.blur_horizontal_passes += 1;
         let vertical_target = vertical_for_large.as_ref().unwrap_or(&final_target);
         self.run_effect_pass(
@@ -616,7 +624,7 @@ impl WgpuRenderer {
             blur_output_size,
             [0., 1.],
             Some(&kernel_y),
-        );
+        )?;
         self.counters.blur_vertical_passes += 1;
         if downsample_factor > 1 {
             self.run_effect_pass(
@@ -627,7 +635,7 @@ impl WgpuRenderer {
                 output_size,
                 [1. / factor, 1. / factor],
                 None,
-            );
+            )?;
             self.counters.blur_upsample_passes += 1;
         }
         self.recycle_effect_temp(horizontal);
@@ -690,7 +698,7 @@ impl WgpuRenderer {
         source: &wgpu::TextureView,
         destination: &wgpu::TextureView,
         filter: ColorFilter,
-    ) {
+    ) -> Result<(), RendererError> {
         let params = GpuColorMatrixParams {
             matrix: filter.to_matrix(),
         };
@@ -736,12 +744,13 @@ impl WgpuRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.color_matrix_pipeline);
+            pass.set_pipeline(self.color_matrix_pipeline.get()?);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.set_vertex_buffer(0, self.mesh.slice(..));
             pass.draw(0..6, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
+        Ok(())
     }
     pub(super) fn add_effect_cache_bytes(&mut self, bytes: usize) {
         self.counters.offscreen_cached_bytes =
@@ -798,7 +807,7 @@ impl WgpuRenderer {
         output_size: [f32; 2],
         direction: [f32; 2],
         kernel: Option<&BlurKernel>,
-    ) {
+    ) -> Result<(), RendererError> {
         let mut weights = [0.; BLUR_WEIGHT_SLOTS];
         let radius = kernel.map_or(0, |kernel| {
             weights = kernel.weights;
@@ -857,9 +866,9 @@ impl WgpuRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(if kernel.is_some() {
-                &self.blur_pipeline
+                self.blur_pipeline.get()?
             } else {
-                &self.resample_pipeline
+                self.resample_pipeline.get()?
             });
             pass.set_bind_group(0, &bind_group, &[]);
             pass.set_vertex_buffer(0, self.mesh.slice(..));
@@ -867,5 +876,6 @@ impl WgpuRenderer {
         }
         self.queue.submit(Some(encoder.finish()));
         self.counters.offscreen_render_passes += 1;
+        Ok(())
     }
 }

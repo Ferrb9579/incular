@@ -106,10 +106,19 @@ impl WgpuRenderer {
                         continue;
                     }
                     for glyph in run.glyphs.iter() {
+                        let glyph_surface = GlyphSurface {
+                            transform,
+                            width: self.target_width as f32,
+                            height: self.target_height as f32,
+                            scale,
+                        };
+                        let phase =
+                            glyph_phase(glyph_device_origin(run, glyph.offset, glyph_surface));
                         let Some(raster) = self.shared.rasterize_glyph(
                             run,
                             glyph.id,
                             f64::from(scale),
+                            phase,
                             &self.frame_pinned_glyph_pages,
                         ) else {
                             self.counters.glyphs_skipped += 1;
@@ -133,12 +142,7 @@ impl WgpuRenderer {
                                     glyph.offset,
                                     raster.entry,
                                     *color,
-                                    GlyphSurface {
-                                        transform,
-                                        width: self.target_width as f32,
-                                        height: self.target_height as f32,
-                                        scale,
-                                    },
+                                    glyph_surface,
                                 ),
                             );
                             // Pin the page for the rest of this frame: shared
@@ -908,7 +912,7 @@ impl WgpuRenderer {
                 entry.target.stencil_view.clone(),
             )
         };
-        self.encode_batches(
+        let encoded = self.encode_batches(
             &mut encoder,
             &target_view,
             &target_stencil,
@@ -920,12 +924,13 @@ impl WgpuRenderer {
             None,
             false,
         );
-        self.queue.submit(Some(encoder.finish()));
-        self.counters.offscreen_render_passes += 1;
         self.target_width = saved_target.0;
         self.target_height = saved_target.1;
         self.target_origin = saved_target.2;
         self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+        encoded?;
+        self.queue.submit(Some(encoder.finish()));
+        self.counters.offscreen_render_passes += 1;
         Ok(Some(DrawBatch::Offscreen {
             clip: parent_clip,
             layer,
@@ -1090,7 +1095,7 @@ impl WgpuRenderer {
             self.counters.effect_stage_cache_misses += 1;
             self.counters.effect_stage_rerenders += 1;
         }
-        self.render_cached_batches(
+        let rendered = self.render_cached_batches(
             &child_batches,
             scale,
             width,
@@ -1102,6 +1107,7 @@ impl WgpuRenderer {
         self.target_height = saved_target.1;
         self.target_origin = saved_target.2;
         self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+        rendered?;
         Ok(Some(CachedSource {
             origin: target_origin,
             width,

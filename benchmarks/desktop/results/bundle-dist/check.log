@@ -1,0 +1,38 @@
+    Checking incular-config v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-config)
+   Compiling serde v1.0.229
+   Compiling thiserror v2.0.20
+   Compiling zerocopy v0.8.56
+    Checking naga-types v30.0.0
+    Checking incular-image v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-image)
+   Compiling cobs v0.3.0
+   Compiling naga v30.0.0
+    Checking codespan-reporting v0.13.1
+    Checking incular-rendering v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-rendering)
+   Compiling postcard v1.1.3
+    Checking half v2.7.1
+    Checking parley v0.7.0
+    Checking incular-platform v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-platform)
+    Checking wgpu-types v30.0.0
+    Checking incular-text v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-text)
+    Checking incular-layout v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-layout)
+    Checking incular-scroll v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-scroll)
+    Checking incular-widgets v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-widgets)
+   Compiling wgpu v30.0.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\vendor\wgpu)
+    Checking incular-navigation v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-navigation)
+    Checking incular-controls v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-controls)
+    Checking incular-runtime v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-runtime)
+    Checking wgpu-naga-bridge v30.0.0
+    Checking wgpu-hal v30.0.0
+    Checking incular-material v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-material)
+    Checking incular-devtools v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-devtools)
+    Checking wgpu-core-deps-windows-linux-android v30.0.0
+   Compiling wgpu-core v30.0.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\vendor\wgpu-core)
+   Compiling incular-wgpu v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-wgpu)
+    Checking wgpu-profiler v0.28.0
+    Checking incular-desktop v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-desktop)
+    Checking incular-macos v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-macos)
+    Checking incular-linux v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-linux)
+    Checking incular-windows v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-windows)
+    Checking incular v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular)
+    Checking incular-devtools-ui v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\tools\incular-devtools)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 33.55s

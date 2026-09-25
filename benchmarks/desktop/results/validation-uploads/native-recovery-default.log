@@ -1,0 +1,17 @@
+   Compiling incular-desktop v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-desktop)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.83s
+     Running tests\unsupported_effect_execution.rs (target\debug\deps\unsupported_effect_execution-59fbce8818b5d265.exe)
+effect: waiting for mask frame
+Incular renderer error: shader masks are not executed by this backend; remove the mask or await backend support
+Incular renderer error: shader masks are not executed by this backend; remove the mask or await backend support
+effect: mask frame failed typed
+effect: waiting for backdrop frame
+Incular renderer error: enabled backdrop filters are not executed by this backend; disable the filter or await backend support
+Incular renderer error: enabled backdrop filters are not executed by this backend; disable the filter or await backend support
+Incular renderer error: enabled backdrop filters are not executed by this backend; disable the filter or await backend support
+effect: backdrop frame failed typed
+effect: waiting for plain frame
+effect: plain frame presented
+effect: closing window
+effect: worker done
+effect: event loop returned

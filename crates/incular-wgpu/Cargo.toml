@@ -20,6 +20,10 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+gpu-profiling = ["dep:wgpu-profiler"]
+
 [dependencies]
 incular-config = { workspace = true }
 incular-core = { workspace = true }
@@ -28,20 +32,30 @@ incular-image = { workspace = true }
 incular-rendering = { workspace = true }
 incular-platform = { workspace = true }
 wgpu = { workspace = true }
-wgpu-profiler = { workspace = true }
+wgpu-profiler = { workspace = true, optional = true }
+pollster = { workspace = true }
 bytemuck = { workspace = true }
-fontdue = { workspace = true }
+ab_glyph = { workspace = true }
 lyon_tessellation = { workspace = true }
 kurbo = { workspace = true }
 
+naga = { version = "30", default-features = false, features = ["deserialize"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+
+[build-dependencies]
+naga = { version = "30", default-features = false, features = ["wgsl-in", "serialize"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+
 [dev-dependencies]
+wgpu = { workspace = true, features = ["wgsl"] }
+naga = { version = "30", default-features = false, features = ["wgsl-in", "serialize"] }
+fontdue = { workspace = true }
 raw-window-handle = { workspace = true }
 trybuild = { workspace = true }
 incular-text = { workspace = true }
 criterion = { workspace = true }
 # Backend residency tests acquire a headless device for real page
 # textures; dev-dependencies are excluded from the reviewed boundary.
-pollster = { workspace = true }
 
 [[bench]]
 name = "path_tessellation"
