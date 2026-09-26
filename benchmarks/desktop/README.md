@@ -28,6 +28,10 @@ The readiness worker waits for three presented frames, writes a marker, then exi
 
 From the repository root, with Rust, Node.js and Python 3.9+:
 
+The dataset generator writes both the reference JSON and its lossless compressed
+copy embedded by Incular. Regenerate both together when changing the workload;
+the `issue_dataset` integration test verifies their exact byte equality.
+
 ```powershell
 node benchmarks/desktop/generate-dataset.mjs
 cargo build --release -p incular --example issue_tracker --no-default-features --features desktop,controls
@@ -109,3 +113,5 @@ Reference sources:
 - [Windows process memory counters](https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters_ex).
 
 See [distribution bundle sizing](BUNDLE-SIZE.md) for the optional smaller build and [latest retained evidence](results/README.md).
+
+The [80 MB investigation](MEMORY-80.md) records the AMD/DX12 isolation probes and their limitations; the target has not yet been reached.

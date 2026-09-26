@@ -6,7 +6,7 @@
   "interactionSmoke": 0,
   "identicalScreenshotStates": 5,
   "fullTestSuiteRerun": false,
-  "bundleBytes": 11789752,
+  "bundleBytes": 10992056,
   "profilerDependencyAbsentByDefault": true,
   "profilerEnabledCheck": 0,
   "defaultClippy": 0,
@@ -22,5 +22,6 @@
   "targetedClippy": "passed",
   "vulkanTimestamps": "zero on this AMD host; also reproduced on upstream wgpu-core 30.0.1",
   "patchedWgpuVersion": "30.0.0",
-  "patchedWgpuCoreVersion": "30.0.0"
+  "patchedWgpuCoreVersion": "30.0.0",
+  "latestMemoryDiskValidation": "../memory-disk/status.json"
 }

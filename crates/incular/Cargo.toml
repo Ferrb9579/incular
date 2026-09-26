@@ -303,6 +303,7 @@ incular-windows = { workspace = true, optional = true }
 incular-macos = { workspace = true, optional = true }
 
 [dev-dependencies]
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 directories = { workspace = true }
 keyboard-types = { workspace = true }
 serde = { workspace = true }
@@ -325,4 +326,9 @@ required-features = ["desktop"]
 [[example]]
 name = "issue_tracker"
 path = "../../examples/issue_tracker/main.rs"
+required-features = ["desktop", "controls"]
+
+[[example]]
+name = "issue_tracker_memory_profile"
+path = "../../examples/issue_tracker/tests/memory_profile.rs"
 required-features = ["desktop", "controls"]

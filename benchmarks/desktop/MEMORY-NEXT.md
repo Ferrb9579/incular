@@ -32,15 +32,13 @@ six stream writes. Five UI captures remain byte-identical. Three strict launches
 
 ## Candidates identified in code, not yet measured or implemented
 
-1. **Share font source bytes with the parsed rasterizer.**
-   `incular-assets::FontHandle` already owns `Arc<[u8]>`, but
-   `incular-wgpu/src/glyph_rasterizer.rs` copies it into `FontVec`.
-   The installed Arial regular and bold files total 2,035,500 bytes. A safely
-   lifetime-bound borrowed table parser over the original shared allocation
-   could avoid those copies without parsing tables on every cache miss.
-   This is a byte-allocation opportunity, not a claimed resident-memory saving.
-   Collection faces, cache eviction, custom font lifetime and multi-window use
-   must remain correct.
+1. **Font source sharing implemented.**
+   The rasterizer now retains the `FontHandle`'s existing `Arc<[u8]>` and a
+   lifetime-bound `ab_glyph::FontRef` using `self_cell`, instead of copying
+   the file into `FontVec`. Tables are still parsed once per cache entry.
+   This avoids 2,035,500 bytes of duplicated Arial regular/bold source data.
+   Ownership, movement, eviction, face-index isolation and rasterization are
+   covered by focused tests. See [the latest measurements](MEMORY-DISK.md).
 
 2. **Allocate stencil attachments only for scenes that need them.**
    `create_stencil_attachment` creates a full-size `Depth24PlusStencil8`

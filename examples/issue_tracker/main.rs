@@ -233,8 +233,17 @@ fn scroll_area(
         .into()
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let issues: Vec<Issue> = serde_json::from_str(include_str!("issues.json"))?;
+pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let issues: Vec<Issue> = {
+        // Preserve the reference workload exactly while keeping the embedded
+        // asset small. Release the temporary JSON buffer before creating UI.
+        let json = miniz_oxide::inflate::decompress_to_vec_with_limit(
+            include_bytes!("issues.json.deflate"),
+            1_048_576,
+        )
+        .map_err(|_| std::io::Error::other("invalid embedded issue dataset"))?;
+        serde_json::from_slice(&json)?
+    };
     assert_eq!(issues.len(), 1000);
     let notes = Rc::new(RefCell::new((
         0_usize,

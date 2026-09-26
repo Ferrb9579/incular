@@ -1,0 +1,134 @@
+[
+  {
+    "backend": "dx12",
+    "stage": "configure",
+    "readySeconds": 0.5549151,
+    "probeEnvironment": {
+      "INCULAR_GPU_PROBE_BINDINGS": "65536",
+      "INCULAR_GPU_PROBE_SMALL_ALLOCATIONS": "1",
+      "INCULAR_GPU_PROBE_STAGE": "configure"
+    },
+    "samples": [
+      {
+        "elapsedSeconds": 0.004579700000000297,
+        "privateWorkingSetBytes": 32550912,
+        "workingSetBytes": 63238144,
+        "privateCommitBytes": 52162560,
+        "cpuSeconds": 0.375,
+        "cpuPercent": null
+      },
+      {
+        "elapsedSeconds": 1.0212457000000006,
+        "privateWorkingSetBytes": 32550912,
+        "workingSetBytes": 63238144,
+        "privateCommitBytes": 52162560,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 2.0361742000000005,
+        "privateWorkingSetBytes": 32665600,
+        "workingSetBytes": 63356928,
+        "privateCommitBytes": 52305920,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 3.0459637000000006,
+        "privateWorkingSetBytes": 32665600,
+        "workingSetBytes": 63356928,
+        "privateCommitBytes": 52305920,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 4.058961,
+        "privateWorkingSetBytes": 32665600,
+        "workingSetBytes": 63356928,
+        "privateCommitBytes": 52305920,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 5.071651999999999,
+        "privateWorkingSetBytes": 32665600,
+        "workingSetBytes": 63356928,
+        "privateCommitBytes": 52305920,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      }
+    ],
+    "medians": {
+      "privateWorkingSetBytes": 32665600,
+      "workingSetBytes": 63356928,
+      "privateCommitBytes": 52305920,
+      "cpuPercent": 0.0
+    }
+  },
+  {
+    "backend": "dx12",
+    "stage": "compile",
+    "readySeconds": 0.5633409999999994,
+    "probeEnvironment": {
+      "INCULAR_GPU_PROBE_BINDINGS": "65536",
+      "INCULAR_GPU_PROBE_SMALL_ALLOCATIONS": "1",
+      "INCULAR_GPU_PROBE_STAGE": "compile"
+    },
+    "samples": [
+      {
+        "elapsedSeconds": 0.0035968000000003997,
+        "privateWorkingSetBytes": 32968704,
+        "workingSetBytes": 64155648,
+        "privateCommitBytes": 52858880,
+        "cpuSeconds": 0.375,
+        "cpuPercent": null
+      },
+      {
+        "elapsedSeconds": 1.0093329000000004,
+        "privateWorkingSetBytes": 32968704,
+        "workingSetBytes": 64155648,
+        "privateCommitBytes": 52858880,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 2.0265512,
+        "privateWorkingSetBytes": 33005568,
+        "workingSetBytes": 64196608,
+        "privateCommitBytes": 52924416,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 3.038435700000001,
+        "privateWorkingSetBytes": 33005568,
+        "workingSetBytes": 64196608,
+        "privateCommitBytes": 52924416,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 4.050643299999999,
+        "privateWorkingSetBytes": 33005568,
+        "workingSetBytes": 64196608,
+        "privateCommitBytes": 52924416,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      },
+      {
+        "elapsedSeconds": 5.0647453,
+        "privateWorkingSetBytes": 33005568,
+        "workingSetBytes": 64196608,
+        "privateCommitBytes": 52924416,
+        "cpuSeconds": 0.375,
+        "cpuPercent": 0.0
+      }
+    ],
+    "medians": {
+      "privateWorkingSetBytes": 33005568,
+      "workingSetBytes": 64196608,
+      "privateCommitBytes": 52924416,
+      "cpuPercent": 0.0
+    }
+  }
+]

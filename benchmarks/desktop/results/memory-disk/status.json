@@ -1,0 +1,16 @@
+{
+  "build": 0,
+  "format": 0,
+  "workspaceCheck": 0,
+  "rendererClippyAllTargetsAllFeatures": 0,
+  "fontTestsPassed": 10,
+  "datasetIntegrityTestsPassed": 1,
+  "interactionSmoke": 0,
+  "identicalScreenshotStates": 5,
+  "qualifiedBeforeLaunches": 3,
+  "qualifiedAfterLaunches": 3,
+  "fullTestSuiteRerun": false,
+  "beforeBundleBytes": 11789752,
+  "afterBundleBytes": 10992056,
+  "bundleReductionBytes": 797696
+}

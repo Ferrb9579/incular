@@ -1,0 +1,88 @@
+   Compiling smallvec v1.15.2
+   Compiling syn v3.0.3
+   Compiling num-traits v0.2.19
+   Compiling bitflags v2.13.1
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling arrayvec v0.7.8
+   Compiling polycool v0.4.0
+   Compiling approx v0.5.1
+   Compiling palette v0.7.6
+   Compiling kurbo v0.13.1
+   Compiling serde_json v1.0.151
+   Compiling displaydoc v0.2.7
+   Compiling zerovec-derive v0.11.5
+   Compiling zerotrie v0.2.5
+   Compiling zerovec v0.11.7
+   Compiling bytemuck_derive v1.12.0
+   Compiling serde_derive v1.0.229
+   Compiling tinystr v0.8.4
+   Compiling potential_utf v0.1.6
+   Compiling icu_locale_core v2.2.0
+   Compiling icu_collections v2.2.0
+   Compiling bytemuck v1.25.2
+   Compiling keyboard-types v0.8.3
+   Compiling icu_provider v2.2.0
+   Compiling fixed_decimal v0.7.2
+   Compiling icu_locale v2.2.0
+   Compiling calendrical_calculations v0.2.4
+   Compiling windows-sys v0.61.2
+   Compiling icu_calendar v2.2.1
+   Compiling incular-core v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-core)
+   Compiling icu_decimal v2.2.0
+   Compiling icu_plurals v2.2.0
+   Compiling icu_time v2.2.0
+   Compiling icu_pattern v0.4.2
+   Compiling icu_datetime v2.2.0
+   Compiling font-types v0.10.1
+   Compiling read-fonts v0.35.0
+   Compiling font-types v0.12.3
+   Compiling moxcms v0.7.11
+   Compiling read-fonts v0.41.0
+   Compiling incular-config v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-config)
+   Compiling png v0.18.1
+   Compiling icu_properties v2.2.0
+   Compiling icu_normalizer v2.2.0
+   Compiling idna_adapter v1.2.2
+   Compiling image v0.25.9
+   Compiling skrifa v0.44.0
+   Compiling windows v0.58.0
+   Compiling dirs-sys v0.5.0
+   Compiling swash v0.2.10
+   Compiling fontique v0.7.0
+   Compiling incular-image v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-image)
+   Compiling idna v1.1.0
+   Compiling harfrust v0.3.2
+   Compiling skrifa v0.37.0
+   Compiling incular-rendering v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-rendering)
+   Compiling icu_segmenter v2.2.0
+   Compiling url v2.5.8
+   Compiling parley v0.7.0
+   Compiling directories v6.0.0
+   Compiling incular-semantics v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-semantics)
+   Compiling incular-platform v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-platform)
+   Compiling stacker v0.1.25
+   Compiling incular-text v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-text)
+   Compiling incular-scroll v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-scroll)
+   Compiling incular-layout v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-layout)
+   Compiling incular-animation v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-animation)
+   Compiling incular-gestures v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-gestures)
+   Compiling uuid v1.24.1
+   Compiling socket2 v0.6.5
+   Compiling incular-widgets v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-widgets)
+   Compiling accesskit v0.24.1
+   Compiling mio v1.2.2
+   Compiling tempfile v3.27.0
+   Compiling incular-accessibility v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-accessibility)
+   Compiling tokio v1.53.1
+   Compiling incular-navigation v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-navigation)
+   Compiling incular-runtime v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-runtime)
+   Compiling incular v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 35s
+     Running tests\issue_dataset.rs (target\debug\deps\issue_dataset-761f1c96a274faef.exe)
+
+running 1 test
+test compressed_issue_dataset_matches_reference_bytes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

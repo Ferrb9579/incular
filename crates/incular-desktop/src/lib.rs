@@ -1197,7 +1197,19 @@ impl DesktopHost {
                 .map(|state| {
                     let counters = state.renderer.counters();
                     let shared = self.shared_gpu.as_ref().map(|shared| shared.diagnostics());
+                    let allocator = self
+                        .shared_gpu
+                        .as_ref()
+                        .and_then(|shared| shared.allocator_report());
                     incular_runtime::GpuResourceSummary {
+                        window_stencil_creations: counters.stencil_texture_creations,
+                        window_stencil_recreations: counters.stencil_texture_recreations,
+                        allocator_live_bytes: allocator
+                            .as_ref()
+                            .map(|report| report.total_allocated_bytes),
+                        allocator_reserved_bytes: allocator
+                            .as_ref()
+                            .map(|report| report.total_reserved_bytes),
                         shared_image_entries: shared
                             .map(|diagnostics| diagnostics.shared_image_resources as u64)
                             .unwrap_or_default(),

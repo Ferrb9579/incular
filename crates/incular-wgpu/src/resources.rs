@@ -1154,6 +1154,14 @@ impl SharedGpuContext {
         )
         .await
     }
+    /// Snapshot of the backend allocator, when supported. Reserved blocks may
+    /// exceed live resource bytes. This excludes driver and presentation memory
+    /// and is intentionally queried on demand rather than once per frame.
+    #[must_use]
+    pub fn allocator_report(&self) -> Option<wgpu::AllocatorReport> {
+        self.inner.device.generate_allocator_report()
+    }
+
     #[must_use]
     pub fn diagnostics(&self) -> SharedGpuDiagnostics {
         let pipelines = self.inner.pipelines.lock().expect("shared pipeline lock");

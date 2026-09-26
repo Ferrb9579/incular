@@ -1,0 +1,8 @@
+   Compiling self_cell v1.3.0
+   Compiling incular-wgpu v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-wgpu)
+   Compiling incular-desktop v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-desktop)
+   Compiling incular-linux v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-linux)
+   Compiling incular-macos v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-macos)
+   Compiling incular-windows v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-windows)
+   Compiling incular v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular)
+    Finished `dist` profile [optimized] target(s) in 1m 12s

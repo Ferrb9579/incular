@@ -222,7 +222,7 @@ pub struct GlyphAtlasMemory {
 }
 /// One retained parsed rasterizer object with its recency stamp. The
 /// parsed `Font` is a CPU-only rasterizer built from application-owned
-/// source bytes; it retains a font-table parser and source copy, not all outlines. Dropping the entry
+/// source bytes; it retains a font-table parser and shared bytes, not all outlines. Dropping the entry
 /// releases cache ownership only — placements, pages, handles, and
 /// submitted work are unaffected, and the next miss re-parses.
 struct ParsedFont {
@@ -354,7 +354,7 @@ impl GlyphAtlas {
     /// index, matching the `FontId` identity, and parse failures (including
     /// out-of-range faces) yield `None` with existing error behavior.
     fn parse_font(run: &GlyphRun) -> Option<Font> {
-        Font::new(run.font.bytes().as_ref(), run.font.face_index())
+        Font::new(run.font.bytes().clone(), run.font.face_index())
     }
 
     /// Replaces the page budget and immediately retires resident

@@ -1,7 +1,16 @@
 //! Parse font tables once; decode outlines only for requested atlas glyphs.
-use ab_glyph::{Font, FontVec, GlyphId, point};
+use ab_glyph::{Font, FontRef, GlyphId, point};
+use std::sync::Arc;
 
-pub(crate) struct RasterFont(FontVec);
+self_cell::self_cell! {
+    struct SharedFont {
+        owner: Arc<[u8]>,
+        #[covariant]
+        dependent: FontRef,
+    }
+}
+
+pub(crate) struct RasterFont(SharedFont);
 
 #[derive(Default)]
 pub(crate) struct RasterMetrics {
@@ -12,12 +21,14 @@ pub(crate) struct RasterMetrics {
 }
 
 impl RasterFont {
-    pub fn new(bytes: &[u8], face_index: u32) -> Option<Self> {
-        // FontVec owns its table parser. Retaining source bytes is much smaller
-        // than eagerly retaining flattened outlines for every glyph in a face.
-        FontVec::try_from_vec_and_index(bytes.to_vec(), face_index)
-            .ok()
-            .map(Self)
+    pub fn new(bytes: Arc<[u8]>, face_index: u32) -> Option<Self> {
+        // Keep the parsed tables tied to the original immutable allocation.
+        // The cell moves safely and drops the parser before its shared owner.
+        SharedFont::try_new(bytes, |bytes| {
+            FontRef::try_from_slice_and_index(bytes, face_index)
+        })
+        .ok()
+        .map(Self)
     }
 
     pub fn rasterize_indexed(
@@ -26,7 +37,7 @@ impl RasterFont {
         ppem: f32,
         phase: [u8; 2],
     ) -> Option<(RasterMetrics, Vec<u8>)> {
-        let font = &self.0;
+        let font = self.0.borrow_dependent();
         if usize::from(glyph) >= font.glyph_count() {
             return None;
         }

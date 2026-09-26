@@ -48,6 +48,34 @@ fn resolve(
     atlas.lookup_or_rasterize(run, glyph, 1.0, &HashSet::new())
 }
 
+#[test]
+fn parsed_font_shares_source_allocation_and_releases_it_on_eviction() {
+    let mut text = TextEngine::new();
+    let (source, id_a, id_b) = shaped_source(&mut text);
+    // Own a fresh allocation so the text engine cannot keep this one alive.
+    let bytes: Arc<[u8]> = Arc::from(source.as_ref());
+    let weak = Arc::downgrade(&bytes);
+    let run = run_with(FontHandle::new(FontId(601), bytes.clone()), id_a);
+    let mut atlas = GlyphAtlas::new();
+    let owners_before = Arc::strong_count(&bytes);
+    resolve(&mut atlas, &run, id_a).expect("first glyph");
+    assert_eq!(Arc::strong_count(&bytes), owners_before + 1);
+    // Moving the atlas and resolving another outline must keep the borrowed
+    // parser valid, without another copy or another parser construction.
+    let mut moved = Box::new(atlas);
+    resolve(&mut moved, &run, id_b).expect("second glyph after move");
+    assert_eq!(moved.counters().font_parser_cache_misses, 1);
+    assert_eq!(Arc::strong_count(&bytes), owners_before + 1);
+    drop(run);
+    drop(bytes);
+    assert!(
+        weak.upgrade().is_some(),
+        "parser owns shared source lifetime"
+    );
+    moved.set_max_fonts(0);
+    assert!(weak.upgrade().is_none(), "eviction releases the source");
+}
+
 /// Repeated requests reuse one parsed font: one miss, then hits, with a
 /// single retained entry.
 #[test]

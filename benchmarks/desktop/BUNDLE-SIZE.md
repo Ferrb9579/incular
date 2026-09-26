@@ -15,13 +15,16 @@ Measured installed bytes include the executable and VC runtime DLL; PDB files ar
 | Previous release | 16.79 MB |
 | Size-optimized distribution, before profiler separation | 12.24 MB |
 | Distribution, profiler code excluded | 12.17 MB |
-| Distribution, build-time shader parsing | **11.79 MB** |
+| Distribution, build-time shader parsing | 11.79 MB |
+| Distribution, shared fonts and compressed dataset | **10.99 MB** |
 
-The current bundle is 11,789,752 bytes, approximately 29.8% smaller than the original release. Making GPU profiling truly optional saved 72,192 bytes. Moving built-in and WGPU-internal shader parsing to build time then saved another 375,296 bytes (3.1%) with the same distribution compiler settings and capabilities. See [shader implementation and validation](SHADER-PRECOMPILATION.md).
+The current bundle is 10,992,056 bytes, approximately 34.5% smaller than the original release. Making GPU profiling truly optional saved 72,192 bytes. Moving built-in and WGPU-internal shader parsing to build time then saved another 375,296 bytes (3.1%) with the same distribution compiler settings and capabilities. See [shader implementation and validation](SHADER-PRECOMPILATION.md).
+
+The latest change shares font source bytes and losslessly compresses the example's embedded dataset, reducing the installed bundle by another 797,696 bytes (6.8%). The exact 817,825-byte reference JSON is stored as 15,132 bytes of DEFLATE data; it is decoded once with a 1 MiB output limit, and the temporary buffer is dropped after parsing. No records or features were removed. This asset saving belongs to the benchmark application, not every Incular application. The normal library gains font source sharing. See [paired memory and disk measurements](MEMORY-DISK.md).
 
 All five captured UI states are pixel-identical to the previous release; the initial capture clears hover deterministically. Exact bytes and hashes are in the [manifest](results/bundle-dist/bundle-manifest.json). The supplied chart lists QuickGUI Rust at 13.7 MB and GPUI at 6.3 MB on macOS; these are directional targets, not same-platform wins.
 
-Validation includes the distribution build, five-state screenshot comparison and interaction smoke, formatting, workspace compilation, targeted WGPU tests on DX12/Vulkan/OpenGL, native-window regression checks and targeted Clippy. No full test suite was rerun. The existing 111.22 MB resident-memory result belongs to the previous release build; memory and frame throughput of the distribution profile have not been rebenchmarked.
+Validation of the shader changes included DX12/Vulkan/OpenGL and native-window regressions. The latest font and asset changes use focused font-cache/rasterization tests, an exact dataset round-trip test, a distribution build, five-state screenshot comparison and interaction smoke, formatting, workspace compilation and targeted Clippy. No full test suite was rerun. Current distribution memory measurements are recorded separately in [the paired report](MEMORY-DISK.md).
 
 Further size investigations should attribute linked code before changing capabilities: WGPU backend selection, text shaping/font fallback and image decoders. Optional GPU profiling has now been separated. Neither measured change establishes that Incular can reach the chart's GPUI size while retaining all native backends. No feature set was reduced for these measurements. Removing Vulkan fallback or supported codecs merely to lower this number would change the supported feature set.
 

@@ -1,0 +1,27 @@
+[
+  {
+    "name": "complete.png",
+    "identical": true,
+    "sha256": "564d118a86211326f05096d5ffe7926e5d8de4e06d4562134a55483e73b533f0"
+  },
+  {
+    "name": "completed.png",
+    "identical": true,
+    "sha256": "1bf500add6181a9dfc5411f5804022e3ce796b96413e3d9b21a669e4bdd1d413"
+  },
+  {
+    "name": "empty.png",
+    "identical": true,
+    "sha256": "80f14649c4ecd80eaf38e7ee4303c4a75ee945148e6727c98b7e5d1b99c7b401"
+  },
+  {
+    "name": "issue-tracker.png",
+    "identical": true,
+    "sha256": "dba13375d5395e174a45baf172d59317e4626a5a7a3bf33c007bd9f9b8f983a3"
+  },
+  {
+    "name": "search.png",
+    "identical": true,
+    "sha256": "220b249d8980830be7da6e997bad0981d385fadcc225ac3416ed041a620b167a"
+  }
+]

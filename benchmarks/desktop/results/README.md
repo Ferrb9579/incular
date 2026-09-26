@@ -2,7 +2,8 @@
 
 Superseded result directories were moved to the Windows Recycle Bin on September 25, 2026. Historical measurements remain summarized in the reports; their raw artifacts have been removed.
 
-- [Incular strict benchmark](windows/electron-ui-batched/incular-windows.json)
+- [Latest paired distribution memory/disk results](../MEMORY-DISK.md)
+- [Previous release strict benchmark](windows/electron-ui-batched/incular-windows.json)
 - [Electron strict benchmark](windows/electron-ui-electron-final/electron-windows.json)
 - [Incular after interactions](windows/electron-ui-batched-after-smoke/incular-windows.json)
 - [Latest complete workspace/GPU validation](validation-uploads/status.json)

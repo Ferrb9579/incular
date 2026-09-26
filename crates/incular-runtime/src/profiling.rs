@@ -335,6 +335,14 @@ pub struct RenderFrameMetrics {
 /// hosts can separate what is retained now from what has happened.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct GpuResourceSummary {
+    /// Backend allocator's live resource bytes, if reporting is supported.
+    pub allocator_live_bytes: Option<u64>,
+    /// Backend allocator's reserved block bytes; excludes driver/swapchain data.
+    pub allocator_reserved_bytes: Option<u64>,
+    /// Full-window stencil attachments allocated for this window.
+    pub window_stencil_creations: u64,
+    /// Existing full-window stencil attachments rebuilt after resize.
+    pub window_stencil_recreations: u64,
     /// Shared image textures currently retained.
     pub shared_image_entries: u64,
     /// Shared image entries dropped by budget eviction (cumulative).

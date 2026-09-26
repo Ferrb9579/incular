@@ -1,0 +1,28 @@
+Launch 1: idle at 30.9s
+Launch 1: {'privateWorkingSetBytes': 109133824.0, 'workingSetBytes': 149753856.0, 'privateCommitBytes': 147259392.0, 'cpuPercent': 0.0}
+Launch 2: idle at 30.9s
+Launch 2: {'privateWorkingSetBytes': 109953024.0, 'workingSetBytes': 150568960.0, 'privateCommitBytes': 148054016.0, 'cpuPercent': 0.0}
+Launch 3: idle at 30.9s
+Launch 3: {'privateWorkingSetBytes': 109543424.0, 'workingSetBytes': 150142976.0, 'privateCommitBytes': 152141824.0, 'cpuPercent': 0.0}
+{
+  "privateWorkingSetBytes": {
+    "median": 109543424.0,
+    "min": 109133824.0,
+    "max": 109953024.0
+  },
+  "workingSetBytes": {
+    "median": 150142976.0,
+    "min": 149753856.0,
+    "max": 150568960.0
+  },
+  "privateCommitBytes": {
+    "median": 148054016.0,
+    "min": 147259392.0,
+    "max": 152141824.0
+  },
+  "cpuPercent": {
+    "median": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  }
+}

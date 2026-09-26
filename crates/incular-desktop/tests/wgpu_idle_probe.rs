@@ -81,12 +81,30 @@ impl ApplicationHandler for Probe {
             ready();
             return;
         }
-        let (device, queue) = pollster::block_on(self.adapter.as_ref().unwrap().request_device(
-            &wgpu::DeviceDescriptor {
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(
+            self.adapter
+                .as_ref()
+                .unwrap()
+                .request_device(&wgpu::DeviceDescriptor {
+                    required_limits: wgpu::Limits {
+                        max_non_sampler_bindings: std::env::var("INCULAR_GPU_PROBE_BINDINGS")
+                            .ok()
+                            .and_then(|value| value.parse().ok())
+                            .unwrap_or(1_000_000),
+                        ..Default::default()
+                    },
+                    memory_hints: if std::env::var("INCULAR_GPU_PROBE_SMALL_ALLOCATIONS").as_deref()
+                        == Ok("1")
+                    {
+                        wgpu::MemoryHints::Manual {
+                            suballocated_device_memory_block_size: (4 << 20)..(64 << 20),
+                        }
+                    } else {
+                        wgpu::MemoryHints::MemoryUsage
+                    },
+                    ..Default::default()
+                }),
+        )
         .unwrap();
         self.device = Some(device);
         self.queue = Some(queue);

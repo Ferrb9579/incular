@@ -1,0 +1,11 @@
+    Blocking waiting for file lock on build directory
+    Checking incular-runtime v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-runtime)
+    Checking incular-wgpu v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-wgpu)
+    Checking incular-devtools v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-devtools)
+    Checking incular-desktop v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-desktop)
+    Checking incular-windows v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-windows)
+    Checking incular-linux v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-linux)
+    Checking incular-macos v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular-macos)
+    Checking incular v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\crates\incular)
+    Checking incular-devtools-ui v0.1.0 (D:\CODEBASE\PROJECTS\INCULAR\incular\tools\incular-devtools)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.88s
